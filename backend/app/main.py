@@ -164,7 +164,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.66"
+API_VERSION = "3.0.67"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -9253,10 +9253,30 @@ def cost_entry_resource(entry_kind: str | None) -> str:
     return PROJECT_COST_KIND_RESOURCES[project_cost_kind(entry_kind)]
 
 
+LABOR_BUDGET_PREDICATES = (
+    lambda item: item.code == "LABOR_COST",
+    lambda item: item.source_kind == "LABOR",
+    lambda item: "人工" in (item.name or ""),
+)
+
+
 def labor_budget_item(db: Session, project_id: int) -> ProjectBudgetItem | None:
-    """返回项目的人工费用预算项；人工成本结转固定归入该项。"""
+    """返回项目的人工费用预算项；人工成本结转固定归入该项，不依赖界面选择。
+
+    按「预算项编码 -> 来源类型 -> 名称含人工」逐级匹配，每级优先取启用项，
+    避免模板被改名或排序调整后把人工成本归到别的预算项上。
+    """
     items = db.scalars(select(ProjectBudgetItem).where(ProjectBudgetItem.project_id == project_id).order_by(ProjectBudgetItem.sort_order, ProjectBudgetItem.id)).all()
-    return next((item for item in items if item.source_kind == "LABOR"), items[0] if items else None)
+    # 先按优先级找启用项；该级全被停用就往下走一级，而不是硬塞一个已停用的项。
+    for predicate in LABOR_BUDGET_PREDICATES:
+        active = next((item for item in items if predicate(item) and item.is_active), None)
+        if active:
+            return active
+    for predicate in LABOR_BUDGET_PREDICATES:
+        inactive = next((item for item in items if predicate(item)), None)
+        if inactive:
+            return inactive
+    return next((item for item in items if item.is_active), items[0] if items else None)
 
 
 def apply_cost_entry_snapshot(entry: ProjectCostEntry, item: ProjectBudgetItem) -> None:

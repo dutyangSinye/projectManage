@@ -6848,7 +6848,10 @@ const resetCostEntryForm = () => {
   });
   pendingExpenseFiles.value = [];
   selectedExpense.value = null;
-  if (costEntryForm.project_id) void loadProjectBudgetItems(costEntryForm.project_id);
+  // 人工成本结转不需要预算项候选，避免无谓请求。
+  if (costEntryForm.project_id && costEntryForm.entry_kind !== "PERSONNEL_COST") {
+    void loadProjectBudgetItems(costEntryForm.project_id);
+  }
 };
 const openExpenseForm = () => {
   resetCostEntryForm();
@@ -6877,7 +6880,8 @@ const saveCostEntry = async (submit = false) => {
     const payload = {
       entry_kind: form.entry_kind,
       project_id: form.project_id,
-      budget_item_id: form.budget_item_id || null,
+      // 人工成本结转固定归集到人工费用，不提交预算项（后端同样忽略该字段）。
+      budget_item_id: form.entry_kind === "PERSONNEL_COST" ? null : form.budget_item_id || null,
       amount: form.amount,
       occurred_on: form.entry_kind === "PERSONNEL_COST" ? null : form.occurred_on,
       accounting_month: form.entry_kind === "PERSONNEL_COST" ? form.accounting_month : null,
@@ -6924,7 +6928,7 @@ const editCostEntry = (item: ProjectCostEntry) => {
     version: item.version,
   });
   pendingExpenseFiles.value = [];
-  void loadProjectBudgetItems(item.project_id);
+  if (item.entry_kind !== "PERSONNEL_COST") void loadProjectBudgetItems(item.project_id);
   expenseFormOpen.value = true;
 };
 const submitCostEntry = async () => {
@@ -10506,7 +10510,7 @@ onMounted(() => {
             <section class="modal-card expense-form-modal">
               <div class="modal-head"><div><span class="eyebrow">COST ENTRY DRAFT</span><h2>{{ selectedExpense ? '编辑成本单' : (page === 'laborCosts' ? '新增人工成本结转' : '新增项目费用') }}</h2></div><button class="modal-close" aria-label="关闭" @click="expenseFormOpen=false">×</button></div>
               <div class="expense-form-section"><h3>基本信息</h3><div class="form-grid three-cols"><label>项目<select v-model.number="costEntryForm.project_id" @change="loadProjectBudgetItems(costEntryForm.project_id)"><option :value="0" disabled>请选择项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'">会计期间<input v-model="costEntryForm.accounting_month" type="month" /></label><label v-else>发生日期<input v-model="costEntryForm.occurred_on" type="date" /></label><label>金额<input v-model.number="costEntryForm.amount" type="number" min="0.01" step="0.01" /></label></div></div>
-              <div class="expense-form-section"><h3>预算归集</h3><div class="form-grid three-cols"><label>预算项<select v-model.number="costEntryForm.budget_item_id"><option :value="0">{{ projectBudgetLoading ? '正在加载预算项…' : '不归集' }}</option><option v-for="item in budgetOptionsForExpense" :key="item.id" :value="item.id">{{ item.name }}</option></select></label></div></div>
+              <div class="expense-form-section"><h3>预算归集</h3><div class="form-grid three-cols"><label v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'">预算项<input value="人工费用" disabled /><small>人工成本结转固定归集到「人工费用」，无需选择</small></label><label v-else>预算项<select v-model.number="costEntryForm.budget_item_id"><option :value="0">{{ projectBudgetLoading ? '正在加载预算项…' : '不归集' }}</option><option v-for="item in budgetOptionsForExpense" :key="item.id" :value="item.id">{{ item.name }}</option></select></label></div></div>
               <div class="expense-form-section"><h3>附件与说明</h3><div class="form-grid"><label class="span-2">说明<textarea v-model.trim="costEntryForm.description" rows="3"></textarea></label><label class="file-drop span-2">选择凭证<input type="file" multiple accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.pdf,.png,.jpg,.jpeg,.webp" @change="chooseExpenseFiles" /><span>{{ pendingExpenseFiles.length ? `已选择 ${pendingExpenseFiles.length} 个文件` : '点击选择附件，保存后自动上传' }}</span></label></div></div>
               <div class="form-footer"><button class="secondary" @click="expenseFormOpen=false">取消</button><button class="secondary" :disabled="expenseFormSaving" @click="saveCostEntry(false)">保存草稿</button><button class="primary" :disabled="expenseFormSaving" @click="saveCostEntry(true)">{{ expenseFormSaving ? '正在保存…' : '提交复核' }}</button></div>
             </section>
