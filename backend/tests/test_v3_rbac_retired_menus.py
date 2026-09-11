@@ -69,6 +69,33 @@ class RetiredMenuGrantTest(unittest.TestCase):
         self.assertIsNotNone(menu)
         self.assertFalse(menu.is_active)
 
+    def test_project_budget_is_retired_and_not_seeded(self):
+        """项目预算项不再作为独立授权项：菜单停用，且内置角色不再被写入该授权。"""
+        db = self.db
+        self.assertIn("project_budget", m.RETIRED_MENU_SEED)
+        menu = db.scalar(select(Menu).where(Menu.code == "project_budget"))
+        self.assertIsNotNone(menu)
+        self.assertFalse(menu.is_active)
+
+        admin_role = db.scalar(select(Role).where(Role.code == "system_admin"))
+        if admin_role is None:
+            self.skipTest("临时库缺少 system_admin 角色")
+        granted = db.scalar(
+            select(RolePermission.id).where(
+                RolePermission.role_id == admin_role.id, RolePermission.menu_id == menu.id
+            )
+        )
+        self.assertIsNone(granted)
+
+    def test_budget_item_endpoints_are_guarded_by_projects(self):
+        """预算项接口沿用 projects 鉴权，停用 project_budget 菜单不会影响功能。"""
+        import inspect
+
+        for handler in (m.list_project_budget_items, m.initialize_project_budget_items, m.update_project_budget_item):
+            source = inspect.getsource(handler)
+            self.assertIn('require_access(db, "projects"', source)
+            self.assertNotIn('require_access(db, "project_budget"', source)
+
     def test_drop_retired_menu_grants_cleans_history_rows(self):
         db = self.db
         role = db.scalar(select(Role).order_by(Role.id))

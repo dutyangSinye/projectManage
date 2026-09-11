@@ -164,7 +164,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.65"
+API_VERSION = "3.0.66"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -202,8 +202,10 @@ RBAC_MENU_SEED = [
     ("approval_workflows", None, "审批流程", "approvalWorkflows", 92, ["VIEW", "CREATE", "EDIT", "PUBLISH", "DISABLE"]),
 ]
 # v3.0.59 起不再作为新单据入口的内置菜单：保留菜单行与授权，仅从导航下线。
-# 注意：这些 code 必须同时存在于 RBAC_MENU_SEED，否则 require_access 会因未知资源直接报错。
-RETIRED_MENU_SEED = ["personnel_costs", "approval_workflows", "budget_templates"]
+# 注意：这些 code 必须同时存在于 RBAC_MENU_SEED，否则历史授权行会因找不到菜单而解析失败。
+# project_budget（项目预算项）：预算项接口的鉴权实际走 projects，该菜单只在权限管理里多出一个
+# 勾选项，容易让人以为预算项需要单独授权，v3.0.66 起下线。
+RETIRED_MENU_SEED = ["personnel_costs", "approval_workflows", "budget_templates", "project_budget"]
 RBAC_ROLE_SEED = {
     "system_admin": ("系统管理员", "拥有全部菜单、操作和数据范围", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED}, "ALL"),
     "project_manager": ("项目经营管理员", "维护项目经营主数据、预算、成本和收付款", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED if code in {"projects", "project_budget", "contracts", "receipts", "payments", "project_expenses", "labor_costs", "cost_review", "project_board", "counterparties"}}, "ALL"),
@@ -1082,6 +1084,10 @@ def seed_rbac(db: Session) -> None:
             db.add(role)
             db.flush()
         for menu_code, actions in permissions.items():
+            # 已下线菜单不再写入默认授权：写了也会被 drop_retired_menu_grants 清掉，
+            # 中途还可能被前端回传判为非法菜单。
+            if menu_code in RETIRED_MENU_SEED:
+                continue
             menu = menus_by_code.get(menu_code)
             if not menu:
                 continue

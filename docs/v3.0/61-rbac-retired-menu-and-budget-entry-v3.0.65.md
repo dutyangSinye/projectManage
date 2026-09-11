@@ -80,3 +80,39 @@ v3.0.58/3.0.63 起把不再作为入口的菜单停用（`personnel_costs`、`ap
 ## 四、发布注意
 
 生产库 role 1/2/8 存在失效授权行，发布后首次启动会由 `drop_retired_menu_grants()` 自动清理，无需手工处理数据库。清理只影响已下线菜单（`personnel_costs`、`approval_workflows`、`budget_templates`）的授权，这些菜单界面已不可见、接口鉴权也不再依赖它们。
+
+## 五、v3.0.66 补充：下线 `project_budget` 菜单
+
+上一节只下线了「预算项**模板**」，而权限管理里还留着一个「**项目预算项**」
+（`project_budget`，menus.id=20，挂在「项目管理」下），发布后仍然可见，与
+「预算项只在项目管理里维护」的口径不一致。
+
+### 为什么它是多余的
+
+项目预算项的三个接口鉴权全部走 `projects`，没有一处用到 `project_budget`：
+
+| 接口 | 鉴权 |
+| --- | --- |
+| `GET /api/v1/projects/{id}/budget-items` | `projects` + VIEW |
+| `POST /api/v1/projects/{id}/budget-items/initialize` | `projects` + EDIT |
+| `PATCH /api/v1/projects/{id}/budget-items/{item_id}` | `projects` + EDIT |
+
+也就是说，这一项勾不勾都不影响能不能维护预算项，只会误导人以为需要单独授权。
+
+### 变更
+
+- `project_budget` 加入 `RETIRED_MENU_SEED`：随启动停用，权限管理里不再显示，
+  `role_permissions` / `role_data_scopes` / `user_role_scopes` 里的历史授权由
+  `drop_retired_menu_grants()` 一并清理。
+- `seed_rbac()` 的角色授权循环**跳过已下线菜单**，内置角色（含 system_admin）不再被
+  写入这些授权，避免「seed 写入 → drop 删除」的无谓往返。
+- 菜单行本身保留（仍需在 `RBAC_MENU_SEED` 中），历史数据才可继续解析。
+
+### 回归用例
+
+`backend/tests/test_v3_rbac_retired_menus.py` 新增 2 项：
+
+- `project_budget` 属于已下线菜单、库中已停用，且 `system_admin` 不再被写入该授权；
+- 预算项三个处理函数的源码里鉴权资源均为 `projects`，不出现 `project_budget`。
+
+后端全量测试 **69 项通过**；前端无改动（未硬编码该菜单 code）。
