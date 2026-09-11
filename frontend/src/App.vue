@@ -1045,7 +1045,20 @@ type NotificationPolicy = {
   enabled: boolean;
   send_channel: string;
   remind_days_before: number;
+  schedule_time: string | null;
+  target_scope: "ALL" | "DEPARTMENT" | "USER";
+  target_ids: string | null;
+  only_unfilled: boolean;
   updated_at: string;
+};
+type NotificationPolicyDraft = NotificationPolicy & {
+  target_id_list: number[];
+};
+type WorklogFillReminderResult = {
+  scanned: number;
+  sent: number;
+  failed: number;
+  skipped: number;
 };
 type OrgSyncLog = {
   id: number;
@@ -1437,8 +1450,9 @@ const selectedIntegrationSync = ref<OrgSyncLog | null>(null);
 const selectedBoardAgingBucket = ref<{ title: string; bucket: ProjectBoardAgingBucket } | null>(null);
 const integrationPolicies = ref<NotificationPolicy[]>([]);
 const integrationPolicyEditOpen = ref(false);
-const integrationPolicyDraft = ref<NotificationPolicy[]>([]);
+const integrationPolicyDraft = ref<NotificationPolicyDraft[]>([]);
 const integrationPolicyBatchSaving = ref(false);
+const worklogReminderRunning = ref(false);
 const selectedTask = ref<ApprovalTask | null>(null);
 const selectedStatus = ref("");
 const projectQuery = ref("");
@@ -6158,6 +6172,7 @@ const directoryHealthLabel = (value: string) =>
 const integrationNotificationTypeLabel = (value: string) =>
   ({
     WORKLOG_APPROVAL: "工时审批提醒",
+    WORKLOG_FILL_REMINDER: "工时填报提醒",
     SETTLEMENT_APPROVED: "合同收付款审批结果",
     PAYMENT_RESULT: "合同付款单审批结果",
     EXPENSE_APPROVAL: "项目费用审批提醒",
@@ -6201,13 +6216,21 @@ const integrationPolicyGroups = computed(() => {
       description: "预算接近上限或超支时提醒项目负责人。",
       items: [],
     },
+    {
+      key: "worklog",
+      label: "填报提醒",
+      description: "每个工作日按设定时刻提醒成员填报工时。",
+      items: [],
+    },
   ];
   for (const policy of integrationPolicies.value) {
-    const group = policy.notification_type.startsWith("STAGE_")
-      ? groups[1]
-      : policy.notification_type.startsWith("COST_")
-        ? groups[2]
-        : groups[0];
+    const group = policy.notification_type === WORKLOG_FILL_REMINDER
+      ? groups[3]
+      : policy.notification_type.startsWith("STAGE_")
+        ? groups[1]
+        : policy.notification_type.startsWith("COST_")
+          ? groups[2]
+          : groups[0];
     group.items.push(policy);
   }
   return groups.filter((group) => group.items.length);
@@ -6242,7 +6265,46 @@ const notificationPolicyDescription = (type: string) =>
     PENDING_RECEIPT: "存在待审批合同收款单时通知有权限的出纳人员。",
     PENDING_PAYMENT: "合同付款进入新审批节点时通知该节点全部候选人。",
     PAYMENT_RESULT: "合同付款被驳回或由出纳确认支付后通知申请人。",
+    WORKLOG_FILL_REMINDER: "每个工作日按设定时刻提醒成员填报工时，已填报的人员自动跳过。",
   } as Record<string, string>)[type] || "该业务事件的飞书通知策略。";
+const WORKLOG_FILL_REMINDER = "WORKLOG_FILL_REMINDER";
+const parseReminderTargets = (raw: string | null): number[] => {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "number") : [];
+  } catch {
+    return [];
+  }
+};
+const reminderTimeText = (policy: NotificationPolicy) => {
+  const slots = (policy.schedule_time || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return slots.length ? slots.join("、") : "未设置时刻";
+};
+const reminderScopeText = (policy: NotificationPolicy) => {
+  const count = parseReminderTargets(policy.target_ids).length;
+  if (policy.target_scope === "DEPARTMENT") return `指定部门 ${count} 个`;
+  if (policy.target_scope === "USER") return `指定人员 ${count} 人`;
+  return "全部在职人员";
+};
+const runWorklogFillReminder = async () => {
+  if (worklogReminderRunning.value) return;
+  worklogReminderRunning.value = true;
+  try {
+    const result = await api<WorklogFillReminderResult>("/api/v1/integrations/worklog-fill-reminder/run", {
+      method: "POST",
+    });
+    successMessage.value = `填报提醒已发送：成功 ${result.sent} 条，失败 ${result.failed} 条，跳过 ${result.skipped} 人`;
+    await refreshIntegrationOverview();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "填报提醒发送失败";
+  } finally {
+    worklogReminderRunning.value = false;
+  }
+};
 const openIntegrationNotificationSource = async () => {
   const item = selectedIntegrationNotification.value;
   if (!item || !item.source_id) return;
@@ -6339,7 +6401,11 @@ const changeIntegrationSyncPage = (pageNumber: number) => {
   });
 };
 const openIntegrationPolicyEditor = () => {
-  integrationPolicyDraft.value = integrationPolicies.value.map((policy) => ({ ...policy }));
+  integrationPolicyDraft.value = integrationPolicies.value.map((policy) => ({
+    ...policy,
+    schedule_time: policy.schedule_time ?? "",
+    target_id_list: parseReminderTargets(policy.target_ids),
+  }));
   integrationPolicyEditOpen.value = true;
 };
 const closeIntegrationPolicyEditor = () => {
@@ -6354,11 +6420,15 @@ const saveIntegrationPolicies = async () => {
     const result = await api<{ items: NotificationPolicy[] }>("/api/v1/integrations/policies", {
       method: "PUT",
       body: JSON.stringify({
-        items: integrationPolicyDraft.value.map(({ notification_type, enabled, send_channel, remind_days_before }) => ({
-          notification_type,
-          enabled,
-          send_channel,
-          remind_days_before,
+        items: integrationPolicyDraft.value.map((policy) => ({
+          notification_type: policy.notification_type,
+          enabled: policy.enabled,
+          send_channel: policy.send_channel,
+          remind_days_before: policy.remind_days_before,
+          schedule_time: policy.schedule_time ?? "",
+          target_scope: policy.target_scope || "ALL",
+          target_ids: JSON.stringify(policy.target_id_list || []),
+          only_unfilled: Boolean(policy.only_unfilled),
         })),
       }),
     });
@@ -11545,7 +11615,7 @@ onMounted(() => {
             <section class="card integration-policy-card">
               <div class="section-head">
                 <div><span class="integration-section-label">NOTIFICATION POLICY</span><h2>通知策略</h2><p class="muted">统一查看业务提醒配置，修改时一次保存全部策略。</p></div>
-                <div class="actions"><span class="tag" :class="integrationHealth.notification === 'app' ? 'success' : 'warning'">{{ notificationHealthLabel(integrationHealth.notification) }}</span><button class="secondary" type="button" @click="openIntegrationPolicyEditor">修改</button></div>
+                <div class="actions"><span class="tag" :class="integrationHealth.notification === 'app' ? 'success' : 'warning'">{{ notificationHealthLabel(integrationHealth.notification) }}</span><button class="secondary" type="button" :disabled="worklogReminderRunning" @click="runWorklogFillReminder">{{ worklogReminderRunning ? '发送中…' : '立即发送一次' }}</button><button class="secondary" type="button" @click="openIntegrationPolicyEditor">修改</button></div>
               </div>
               <div class="integration-policy-groups">
                 <section v-for="group in integrationPolicyGroups" :key="group.key" class="integration-policy-group">
@@ -11553,7 +11623,7 @@ onMounted(() => {
                   <div class="integration-policy-list">
                     <div v-for="policy in group.items" :key="policy.notification_type" class="integration-policy-row">
                       <div class="integration-policy-toggle"><span class="integration-policy-status-dot" :class="policy.enabled ? 'enabled' : 'disabled'"></span><span><strong>{{ policy.label }}</strong><small>{{ notificationPolicyDescription(policy.notification_type) }}</small></span></div>
-                      <div class="integration-policy-readonly-controls"><span class="tag" :class="policy.enabled ? 'success' : 'neutral'">{{ policy.enabled ? '已启用' : '已停用' }}</span><span class="integration-policy-channel">{{ policy.send_channel === 'mock' ? '仅记录' : notificationHealthLabel(policy.send_channel) }}</span><span v-if="policy.notification_type.startsWith('STAGE_')" class="integration-policy-remind">提前 {{ policy.remind_days_before }} 天</span></div>
+                      <div class="integration-policy-readonly-controls"><span class="tag" :class="policy.enabled ? 'success' : 'neutral'">{{ policy.enabled ? '已启用' : '已停用' }}</span><span class="integration-policy-channel">{{ policy.send_channel === 'mock' ? '仅记录' : notificationHealthLabel(policy.send_channel) }}</span><span v-if="policy.notification_type.startsWith('STAGE_')" class="integration-policy-remind">提前 {{ policy.remind_days_before }} 天</span><span v-if="policy.notification_type === WORKLOG_FILL_REMINDER" class="integration-policy-remind">工作日 {{ reminderTimeText(policy) }} · {{ reminderScopeText(policy) }}{{ policy.only_unfilled ? ' · 仅未填报' : '' }}</span></div>
                     </div>
                   </div>
                 </section>
@@ -11569,6 +11639,13 @@ onMounted(() => {
                     <div v-for="policy in integrationPolicyDraft.filter((item) => group.items.some((groupItem) => groupItem.notification_type === item.notification_type))" :key="policy.notification_type" class="integration-policy-edit-row">
                       <div><strong>{{ policy.label }}</strong><small>{{ notificationPolicyDescription(policy.notification_type) }}</small></div>
                       <div class="integration-policy-edit-controls"><label class="check-line"><input v-model="policy.enabled" type="checkbox" />启用</label><label>通道<select v-model="policy.send_channel"><option value="app">飞书应用</option><option value="webhook">群机器人</option><option value="mock">仅记录</option></select></label><label v-if="policy.notification_type.startsWith('STAGE_')">提前天数<input v-model.number="policy.remind_days_before" type="number" min="0" max="365" /></label></div>
+                      <div v-if="policy.notification_type === WORKLOG_FILL_REMINDER" class="integration-policy-schedule">
+                        <label class="integration-policy-schedule-time">提醒时间<input v-model="policy.schedule_time" type="text" placeholder="09:00, 17:30" /><small>每个工作日生效，多个时刻用逗号分隔</small></label>
+                        <label>通知范围<select v-model="policy.target_scope"><option value="ALL">全部在职人员</option><option value="DEPARTMENT">指定部门</option><option value="USER">指定人员</option></select></label>
+                        <label v-if="policy.target_scope === 'DEPARTMENT'" class="integration-policy-schedule-target">选择部门<select v-model="policy.target_id_list" multiple size="5"><option v-for="item in departments" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+                        <label v-else-if="policy.target_scope === 'USER'" class="integration-policy-schedule-target">选择人员<select v-model="policy.target_id_list" multiple size="6"><option v-for="item in demoUsers" :key="item.id" :value="item.id">{{ item.name }} · {{ item.department_name }}</option></select></label>
+                        <label class="check-line"><input v-model="policy.only_unfilled" type="checkbox" />只提醒当天未填报的人</label>
+                      </div>
                     </div>
                   </section>
                 </div>

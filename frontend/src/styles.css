@@ -1075,6 +1075,53 @@ textarea {
   border-radius: 6px;
   background: var(--color-bg-soft);
 }
+/* v3.0.64 定时填报提醒配置 */
+.integration-policy-schedule {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px 14px;
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-soft);
+}
+.integration-policy-schedule label {
+  display: grid;
+  gap: 5px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+.integration-policy-schedule small {
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  font-size: 10px;
+  line-height: 1.4;
+}
+.integration-policy-schedule input[type="text"],
+.integration-policy-schedule select {
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+.integration-policy-schedule .integration-policy-schedule-target {
+  grid-column: 1 / -1;
+}
+.integration-policy-schedule select[multiple] {
+  min-height: 116px;
+  padding: 6px 8px;
+}
+.integration-policy-schedule .check-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
 .integration-page .integration-boundary {
   margin-top: 14px;
   padding-top: 11px;

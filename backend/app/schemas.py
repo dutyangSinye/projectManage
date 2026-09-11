@@ -1331,6 +1331,10 @@ class NotificationPolicyView(BaseModel):
     enabled: bool
     send_channel: str
     remind_days_before: int = 0
+    schedule_time: str | None = None
+    target_scope: str = "ALL"
+    target_ids: str | None = None
+    only_unfilled: bool = True
     updated_at: datetime
 
 
@@ -1338,6 +1342,18 @@ class NotificationPolicyUpdate(BaseModel):
     enabled: bool
     send_channel: Literal["app", "webhook", "mock"] = "app"
     remind_days_before: int = Field(default=0, ge=0, le=365)
+    # v3.0.64 定时填报提醒配置；其它策略忽略这三个字段。
+    schedule_time: str | None = Field(default=None, max_length=200)
+    target_scope: Literal["ALL", "DEPARTMENT", "USER"] | None = None
+    target_ids: str | None = None
+    only_unfilled: bool | None = None
+
+
+class WorklogFillReminderRunResult(BaseModel):
+    scanned: int = 0
+    sent: int = 0
+    failed: int = 0
+    skipped: int = 0
 
 
 class NotificationPolicyBatchItem(NotificationPolicyUpdate):

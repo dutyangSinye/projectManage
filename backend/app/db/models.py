@@ -612,6 +612,11 @@ class NotificationPolicy(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     send_channel: Mapped[str] = mapped_column(String(30), default="app", nullable=False)
     remind_days_before: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
+    # v3.0.64 定时填报提醒：只有带定时语义的策略（WORKLOG_FILL_REMINDER）使用这几个字段。
+    schedule_time: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    target_scope: Mapped[str] = mapped_column(String(20), default="ALL", nullable=False)
+    target_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+    only_unfilled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
 

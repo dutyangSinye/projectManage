@@ -79,6 +79,7 @@ from .schemas import (
     NotificationPolicyBatchUpdate,
     NotificationPolicyView,
     NotificationPolicyList,
+    WorklogFillReminderRunResult,
     ProjectBoardAgingBucket,
     ProjectBoardAgingItem,
     ProjectBoardInsights,
@@ -324,7 +325,16 @@ DEFAULT_NOTIFICATION_POLICIES = [
     ("PENDING_EXPENSE_REVIEW", "项目费用待复核", True, 0),
     ("PENDING_LABOR_REVIEW", "人工成本待复核", True, 0),
     ("COST_REVIEW_RESULT", "费用复核结果", True, 0),
+    # v3.0.64：定时填报提醒默认停用，管理员配置提醒时间和通知范围后启用。
+    ("WORKLOG_FILL_REMINDER", "工时填报提醒", False, 0),
 ]
+# 工时填报提醒：默认每个工作日 09:00 提醒一次，未配置时回落到该默认值。
+WORKLOG_FILL_REMINDER_TYPE = "WORKLOG_FILL_REMINDER"
+WORKLOG_FILL_REMINDER_DEFAULT_TIME = "09:00"
+# 扫描器按分钟推进，命中窗口覆盖扫描间隔，保证配置时刻一定会被扫到且只发一次。
+WORKLOG_FILL_REMINDER_MATCH_WINDOW_MINUTES = 10
+# 工时只统计周一至周五，定时提醒同样跳过周末。
+WORKDAY_WEEKDAYS = (0, 1, 2, 3, 4)
 # v3.0.59 多级审批与出纳确认口径作废，对应通知策略随之下线（保留记录不再触发）。
 RETIRED_NOTIFICATION_TYPES = [
     "PENDING_PAYMENT",
@@ -1000,9 +1010,18 @@ def seed_notification_policies(db: Session) -> None:
     for notification_type, label, enabled, remind_days_before in DEFAULT_NOTIFICATION_POLICIES:
         policy = db.scalar(select(NotificationPolicy).where(NotificationPolicy.notification_type == notification_type))
         if not policy:
-            db.add(NotificationPolicy(notification_type=notification_type, label=label, enabled=enabled, send_channel="app", remind_days_before=remind_days_before))
+            policy = NotificationPolicy(notification_type=notification_type, label=label, enabled=enabled, send_channel="app", remind_days_before=remind_days_before)
+            if notification_type == WORKLOG_FILL_REMINDER_TYPE:
+                policy.schedule_time = WORKLOG_FILL_REMINDER_DEFAULT_TIME
+            db.add(policy)
         elif policy.label != label:
             policy.label = label
+    # 会话关闭了自动刷新，先落盘再补默认值，避免刚插入的策略查不到。
+    db.flush()
+    # 定时填报提醒首次出现时补默认时刻；管理员改过以后不再覆盖。
+    fill_policy = db.scalar(select(NotificationPolicy).where(NotificationPolicy.notification_type == WORKLOG_FILL_REMINDER_TYPE))
+    if fill_policy and not (fill_policy.schedule_time or "").strip():
+        fill_policy.schedule_time = WORKLOG_FILL_REMINDER_DEFAULT_TIME
     # v3.0.59：多级审批相关的旧策略不再触发，改为停用而非删除，便于追溯历史通知。
     for policy in db.scalars(select(NotificationPolicy).where(NotificationPolicy.notification_type.in_(RETIRED_NOTIFICATION_TYPES))).all():
         policy.enabled = False
@@ -1352,6 +1371,12 @@ def upgrade_schema() -> None:
         ],
         "system_notifications": [
             ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
+        ],
+        "notification_policies": [
+            ("schedule_time", "VARCHAR(200)"),
+            ("target_scope", "VARCHAR(20) NOT NULL DEFAULT 'ALL'"),
+            ("target_ids", "TEXT"),
+            ("only_unfilled", "BOOLEAN NOT NULL DEFAULT 1"),
         ],
         "org_sync_logs": [
             ("added_user_count", "INTEGER NOT NULL DEFAULT 0"),
@@ -3639,15 +3664,154 @@ def run_stage_reminder_scan_once() -> dict[str, int]:
         db.close()
 
 
+def parse_reminder_times(raw: str | None) -> list[str]:
+    """解析提醒时刻配置；支持“09:00,17:30”这类多时刻写法，非法片段直接丢弃。"""
+    slots: list[str] = []
+    for piece in (raw or "").replace("；", ",").replace("，", ",").replace("：", ":").replace(" ", "").split(","):
+        if not piece:
+            continue
+        try:
+            hour_text, minute_text = piece.split(":")
+            hour, minute = int(hour_text), int(minute_text)
+        except ValueError:
+            continue
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            slot = f"{hour:02d}:{minute:02d}"
+            if slot not in slots:
+                slots.append(slot)
+    return slots
+
+
+def worklog_fill_reminder_due(policy: NotificationPolicy, now: datetime) -> str | None:
+    """判断当前时刻是否命中填报提醒，返回命中的时刻；周末或不在窗口内返回 None。"""
+    if now.weekday() not in WORKDAY_WEEKDAYS:
+        return None
+    slots = parse_reminder_times(policy.schedule_time) or parse_reminder_times(WORKLOG_FILL_REMINDER_DEFAULT_TIME)
+    now_minutes = now.hour * 60 + now.minute
+    for slot in slots:
+        hour, minute = (int(part) for part in slot.split(":"))
+        if 0 <= now_minutes - (hour * 60 + minute) < WORKLOG_FILL_REMINDER_MATCH_WINDOW_MINUTES:
+            return slot
+    return None
+
+
+def _policy_id_list(value: str | None) -> list[int]:
+    """读取策略里以 JSON 数组保存的 id 列表；数据损坏时按空集合处理。"""
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    result: list[int] = []
+    for item in parsed:
+        text = str(item).strip()
+        if text.isdigit():
+            result.append(int(text))
+    return result
+
+
+def worklog_reminder_recipients(db: Session, policy: NotificationPolicy) -> list[User]:
+    """按策略范围解析提醒对象；离职或停用人员不会收到提醒。"""
+    scope = policy.target_scope or "ALL"
+    if scope == "ALL":
+        return list(db.scalars(select(User).where(User.employment_status == "ACTIVE").order_by(User.id)).all())
+    ids = _policy_id_list(policy.target_ids)
+    if not ids:
+        return []
+    query = select(User).where(User.employment_status == "ACTIVE")
+    query = query.where(User.department_id.in_(ids) if scope == "DEPARTMENT" else User.id.in_(ids))
+    return list(db.scalars(query.order_by(User.id)).all())
+
+
+def has_worklog_on(db: Session, user_id: int, day: date) -> bool:
+    """判断某人在指定日期已有工时记录（含草稿）；区间填报按覆盖该日计算。"""
+    return bool(
+        db.scalar(
+            select(Worklog.id)
+            .where(Worklog.user_id == user_id, Worklog.start_date <= day, Worklog.end_date >= day)
+            .limit(1)
+        )
+    )
+
+
+def run_worklog_fill_reminder_scan_once(force: bool = False) -> dict[str, int]:
+    """按策略在每个工作日的指定时刻提醒填报工时；同一时刻每人只发一次。"""
+    db = SessionLocal()
+    try:
+        policy = notification_policy(db, WORKLOG_FILL_REMINDER_TYPE)
+        if not policy or not policy.enabled:
+            return {"scanned": 0, "sent": 0, "failed": 0, "skipped": 0}
+        now = now_local()
+        slot = f"manual{now:%H%M}" if force else worklog_fill_reminder_due(policy, now)
+        if slot is None:
+            return {"scanned": 0, "sent": 0, "failed": 0, "skipped": 0}
+        today = today_local()
+        recipients = worklog_reminder_recipients(db, policy)
+        base = os.getenv("SYSTEM_PUBLIC_URL", "http://localhost:8088").rstrip("/")
+        channel = notification_policy_channel(db, WORKLOG_FILL_REMINDER_TYPE)
+        weekday_label = "一二三四五六日"[today.weekday()]
+        sent = 0
+        failed = 0
+        skipped = 0
+        for user in recipients:
+            key = f"worklog-fill-reminder:{user.id}:{today.isoformat()}:{slot}"
+            if db.scalar(select(SystemNotification.id).where(SystemNotification.idempotency_key == key)):
+                skipped += 1
+                continue
+            if policy.only_unfilled and has_worklog_on(db, user.id, today):
+                skipped += 1
+                continue
+            result = feishu.notify_worklog_fill_reminder(
+                user.name,
+                f"{today.isoformat()}（周{weekday_label}）",
+                f"{base}/?page=worklogs",
+                user.open_id,
+                channel=channel,
+            )
+            db.add(
+                SystemNotification(
+                    notification_type=WORKLOG_FILL_REMINDER_TYPE,
+                    source_type="WORKLOG_REMINDER",
+                    source_id=user.id,
+                    recipient_user_id=user.id,
+                    channel=channel or feishu.notification_mode,
+                    idempotency_key=key,
+                    status=result.status,
+                    message_id=result.message_id,
+                    error_message=result.error_message,
+                    sent_at=now_local() if result.status == "SENT" else None,
+                )
+            )
+            if result.status == "SENT":
+                sent += 1
+            else:
+                failed += 1
+        db.commit()
+        return {"scanned": len(recipients), "sent": sent, "failed": failed, "skipped": skipped}
+    finally:
+        db.close()
+
+
 def reminder_scan_loop() -> None:
-    """后台守护任务：按配置间隔扫描，默认每 10 分钟一次。"""
+    """后台守护任务：合同类提醒按配置间隔扫描（默认 10 分钟），填报提醒按分钟精度检查。"""
     interval = max(30, int(os.getenv("REMINDER_SCAN_INTERVAL_SECONDS", "600")))
+    tick = min(interval, 60)
+    last_stage_scan = 0.0
     while True:
         try:
-            run_stage_reminder_scan_once()
+            run_worklog_fill_reminder_scan_once()
         except Exception:
             pass
-        time.sleep(interval)
+        try:
+            if time.time() - last_stage_scan >= interval:
+                run_stage_reminder_scan_once()
+                last_stage_scan = time.time()
+        except Exception:
+            pass
+        time.sleep(tick)
 
 
 def approver_for_project(db: Session, project: Project) -> User:
@@ -7475,6 +7639,46 @@ def list_notification_policies(x_demo_user_id: int | None = Header(default=None)
     return NotificationPolicyList(items=[NotificationPolicyView.model_validate(item) for item in rows])
 
 
+def validated_schedule_time(raw: str | None) -> str | None:
+    """校验提醒时刻；空值表示沿用默认时刻，非法值直接拒绝保存。"""
+    if raw is None:
+        return None
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    if not parse_reminder_times(text):
+        raise HTTPException(400, "NOTIFICATION_POLICY_REMIND_TIME_INVALID")
+    return text
+
+
+def validated_target_ids(raw: str | None) -> str | None:
+    """校验提醒对象 id 列表，必须是整数数组文本。"""
+    if raw is None:
+        return None
+    text = (raw or "").strip()
+    if not text:
+        return "[]"
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        raise HTTPException(400, "NOTIFICATION_POLICY_TARGET_IDS_INVALID")
+    if not isinstance(parsed, list) or any(not isinstance(item, int) for item in parsed):
+        raise HTTPException(400, "NOTIFICATION_POLICY_TARGET_IDS_INVALID")
+    return json.dumps(parsed)
+
+
+def apply_policy_schedule_fields(policy: NotificationPolicy, payload: NotificationPolicyUpdate) -> None:
+    """把定时填报提醒相关字段写入策略；未提交的字段保持原值。"""
+    if payload.schedule_time is not None:
+        policy.schedule_time = validated_schedule_time(payload.schedule_time)
+    if payload.target_scope:
+        policy.target_scope = payload.target_scope
+    if payload.target_ids is not None:
+        policy.target_ids = validated_target_ids(payload.target_ids)
+    if payload.only_unfilled is not None:
+        policy.only_unfilled = payload.only_unfilled
+
+
 @app.put("/api/v1/integrations/policies", response_model=NotificationPolicyList)
 def update_notification_policies(payload: NotificationPolicyBatchUpdate, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> NotificationPolicyList:
     """一次性更新全部通知策略；校验完整后才提交，避免策略处于半保存状态。"""
@@ -7494,6 +7698,7 @@ def update_notification_policies(payload: NotificationPolicyBatchUpdate, x_demo_
         policy.enabled = item.enabled
         policy.send_channel = item.send_channel
         policy.remind_days_before = item.remind_days_before
+        apply_policy_schedule_fields(policy, item)
         audit(db, "notification_policy", policy.id, "UPDATE_BATCH", admin.id, None, "ENABLED" if policy.enabled else "DISABLED")
     db.commit()
     rows = db.scalars(
@@ -7515,10 +7720,22 @@ def update_notification_policy(notification_type: str, payload: NotificationPoli
     policy.enabled = payload.enabled
     policy.send_channel = payload.send_channel
     policy.remind_days_before = payload.remind_days_before
+    apply_policy_schedule_fields(policy, payload)
     audit(db, "notification_policy", policy.id, "UPDATE", admin.id, None, "ENABLED" if policy.enabled else "DISABLED")
     db.commit()
     db.refresh(policy)
     return NotificationPolicyView.model_validate(policy)
+
+
+@app.post("/api/v1/integrations/worklog-fill-reminder/run", response_model=WorklogFillReminderRunResult)
+def run_worklog_fill_reminder(x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> WorklogFillReminderRunResult:
+    """按当前策略立即发送一次填报提醒，用于配置完成后验证通知对象和渠道。"""
+    require_admin_permission(db, "integrations", x_demo_user_id)
+    require_access(db, "integrations", "CONFIGURE", x_demo_user_id)
+    policy = notification_policy(db, WORKLOG_FILL_REMINDER_TYPE)
+    if not policy or not policy.enabled:
+        raise HTTPException(409, "WORKLOG_FILL_REMINDER_DISABLED")
+    return WorklogFillReminderRunResult(**run_worklog_fill_reminder_scan_once(force=True))
 
 
 def integration_notification_rows(
