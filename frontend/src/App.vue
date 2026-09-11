@@ -458,16 +458,6 @@ type ProjectAnalysis = {
     source_id: number | null;
   }>;
 };
-type BudgetItemTemplate = {
-  id: number;
-  project_category: "BUSINESS_PROJECT" | "RND_PROJECT";
-  code: string;
-  name: string;
-  source_kind: "LABOR" | "CONTRACT_PAYMENT" | "PROJECT_EXPENSE" | "MIXED";
-  sort_order: number;
-  is_active: boolean;
-  is_builtin: boolean;
-};
 type ProjectBudgetItem = {
   id: number;
   project_id: number;
@@ -1537,19 +1527,6 @@ const projectBudgetModalOpen = ref(false);
 const projectBudgetLoading = ref(false);
 const selectedBudgetProject = ref<Project | null>(null);
 const projectBudgetItems = ref<ProjectBudgetItem[]>([]);
-const budgetTemplateLoading = ref(false);
-const budgetTemplateCategory = ref<"BUSINESS_PROJECT" | "RND_PROJECT">("BUSINESS_PROJECT");
-const budgetItemTemplates = ref<BudgetItemTemplate[]>([]);
-const budgetTemplateFormOpen = ref(false);
-const editingBudgetTemplateId = ref<number | null>(null);
-const budgetTemplateForm = reactive({
-  project_category: "BUSINESS_PROJECT" as "BUSINESS_PROJECT" | "RND_PROJECT",
-  code: "",
-  name: "",
-  source_kind: "MIXED" as "LABOR" | "CONTRACT_PAYMENT" | "PROJECT_EXPENSE" | "MIXED",
-  sort_order: 0,
-  is_active: true,
-});
 const stageFormOpen = ref(false);
 const stageListOpen = ref(false);
 const stageContractId = ref(0);
@@ -4865,7 +4842,6 @@ const refreshAdminConfiguration = async () => {
       api<ClassificationCatalog>("/api/v1/admin/config/classifications").catch(
         () => null,
       ),
-      loadBudgetItemTemplates(),
     ]);
     adminConfigOptions.value = result.options;
     if (classifications) classificationCatalog.value = classifications;
@@ -5055,18 +5031,6 @@ const visibleConfigOptions = computed(
 );
 const budgetCategoryLabel = (category: "BUSINESS_PROJECT" | "RND_PROJECT") =>
   category === "RND_PROJECT" ? "研发项目" : "经营项目";
-const visibleBudgetItemTemplates = computed(() =>
-  budgetItemTemplates.value
-    .filter((item) => item.project_category === budgetTemplateCategory.value)
-    .sort((left, right) => left.sort_order - right.sort_order || left.id - right.id),
-);
-const budgetTemplateErrorMessage = (error: unknown) =>
-  (
-    ({
-      BUDGET_TEMPLATE_NOT_FOUND: "预算项模板不存在",
-      PERMISSION_REQUIRED: "你没有维护预算项模板的权限",
-    }) as Record<string, string>
-  )[error instanceof Error ? error.message : ""] || (error instanceof Error ? error.message : "预算项模板保存失败");
 const configOptionErrorMessage = (error: unknown) =>
   (
     ({
@@ -5076,61 +5040,6 @@ const configOptionErrorMessage = (error: unknown) =>
       INVALID_CONFIG_CATEGORY: "配置分类无效",
     }) as Record<string, string>
   )[error instanceof Error ? error.message : ""] || "配置项保存失败";
-const loadBudgetItemTemplates = async () => {
-  if (!canManage("configuration")) return;
-  budgetTemplateLoading.value = true;
-  try {
-    budgetItemTemplates.value = await api<BudgetItemTemplate[]>(
-      "/api/v1/admin/budget-item-templates?include_inactive=true",
-    );
-  } catch (error) {
-    errorMessage.value = budgetTemplateErrorMessage(error);
-  } finally {
-    budgetTemplateLoading.value = false;
-  }
-};
-const resetBudgetTemplateForm = () => {
-  budgetTemplateFormOpen.value = false;
-  editingBudgetTemplateId.value = null;
-  Object.assign(budgetTemplateForm, {
-    project_category: budgetTemplateCategory.value,
-    code: "",
-    name: "",
-    source_kind: "MIXED",
-    sort_order: (visibleBudgetItemTemplates.value.length + 1) * 10,
-    is_active: true,
-  });
-};
-const editBudgetTemplate = (template: BudgetItemTemplate) => {
-  editingBudgetTemplateId.value = template.id;
-  Object.assign(budgetTemplateForm, {
-    project_category: template.project_category,
-    code: template.code,
-    name: template.name,
-    source_kind: template.source_kind,
-    sort_order: template.sort_order,
-    is_active: template.is_active,
-  });
-  budgetTemplateFormOpen.value = true;
-};
-/* 预算项已固定为统一 8 项：只允许切换启用状态，其余字段后端一概不接受修改 */
-const saveBudgetTemplate = async () => {
-  if (!editingBudgetTemplateId.value) {
-    errorMessage.value = "预算项已固定为统一 8 项，不支持新增";
-    return;
-  }
-  try {
-    await api<BudgetItemTemplate>(
-      `/api/v1/admin/budget-item-templates/${editingBudgetTemplateId.value}`,
-      { method: "PATCH", body: JSON.stringify({ is_active: budgetTemplateForm.is_active }) },
-    );
-    resetBudgetTemplateForm();
-    await loadBudgetItemTemplates();
-    successMessage.value = "预算项模板已保存";
-  } catch (error) {
-    errorMessage.value = budgetTemplateErrorMessage(error);
-  }
-};
 const resetConfigurationForm = () => {
   configurationFormOpen.value = false;
   configurationEditingId.value = null;
@@ -9274,7 +9183,7 @@ onMounted(() => {
             </div>
             <div class="table-toolbar">
               <button class="secondary compact-button" :disabled="projectBudgetLoading" @click="initializeProjectBudgetItems">按后台模板补齐</button>
-              <span class="muted">经营项目和研发项目的模板在“系统管理 / 基础配置”维护。</span>
+              <span class="muted">预算项统一固定为 8 项，在这里维护本项目的预算金额与启用状态。</span>
             </div>
             <div v-if="projectBudgetLoading" class="empty-state">正在加载预算项…</div>
             <div v-else class="table-wrap">
@@ -11896,64 +11805,6 @@ onMounted(() => {
               </div>
             </div>
           </section>
-          <section class="card budget-template-card">
-            <div class="section-head">
-              <div>
-                <h2>预算项模板</h2>
-                <p class="muted">
-                  经营项目和研发项目默认使用同一套 8 个预算项；新建项目时会按项目大类自动生成项目预算项。
-                </p>
-              </div>
-              <span class="tag neutral">固定 8 项 · 不支持新增或删除</span>
-            </div>
-            <div class="budget-template-tabs">
-              <button
-                type="button"
-                :class="{ active: budgetTemplateCategory === 'BUSINESS_PROJECT' }"
-                @click="budgetTemplateCategory = 'BUSINESS_PROJECT'"
-              >
-                经营项目模板
-              </button>
-              <button
-                type="button"
-                :class="{ active: budgetTemplateCategory === 'RND_PROJECT' }"
-                @click="budgetTemplateCategory = 'RND_PROJECT'"
-              >
-                研发项目模板
-              </button>
-            </div>
-            <div v-if="budgetTemplateLoading" class="empty">正在读取预算项模板…</div>
-            <div v-else class="table-wrap">
-              <table class="v3-ops-table budget-template-table">
-                <thead>
-                  <tr>
-                    <th>预算项</th>
-                    <th>适用来源</th>
-                    <th>排序</th>
-                    <th>状态</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="item in visibleBudgetItemTemplates" :key="item.id" :class="{ inactive: !item.is_active }">
-                    <td><strong>{{ item.name }}</strong><small>{{ item.code }}{{ item.is_builtin ? ' · 系统默认' : '' }}</small></td>
-                    <td>{{ budgetSourceLabel(item.source_kind) }}</td>
-                    <td>{{ item.sort_order }}</td>
-                    <td><span class="tag" :class="item.is_active ? 'success' : 'neutral'">{{ item.is_active ? '启用' : '停用' }}</span></td>
-                    <td>
-                      <div class="table-actions">
-                        <button class="text-button" @click="editBudgetTemplate(item)">编辑</button>
-                        <button class="text-button danger-button" disabled title="预算项已固定为统一 8 项">删除</button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <p class="muted budget-template-note">
-              当前标准项：人工费用、材料/设备采购、水电燃气、委托/分包/外包、差旅、包装运输、租赁折旧、其他费用。
-            </p>
-          </section>
           <div v-if="configurationFormOpen" class="modal-backdrop">
             <section
               class="modal-card configuration-modal"
@@ -12100,74 +11951,6 @@ onMounted(() => {
                   取消</button
                 ><button class="primary" @click="saveClassificationNode">
                   保存分类项
-                </button>
-              </div>
-            </section>
-          </div>
-          <div v-if="budgetTemplateFormOpen" class="modal-backdrop">
-            <section
-              class="modal-card configuration-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="budget-template-modal-title"
-            >
-              <div class="modal-head">
-                <div>
-                  <div class="eyebrow">BUDGET ITEM TEMPLATE</div>
-                  <h2 id="budget-template-modal-title">
-                    {{ editingBudgetTemplateId ? "编辑预算项模板" : "预算项模板" }}
-                  </h2>
-                  <p class="muted">预算项已统一固定为 8 项，不支持新增/删除/改名，只能切换启用状态。</p>
-                </div>
-                <button
-                  class="modal-close"
-                  aria-label="关闭预算项模板弹窗"
-                  @click="resetBudgetTemplateForm"
-                >
-                  ×
-                </button>
-              </div>
-              <div class="form-grid">
-                <label
-                  >项目类别<select v-model="budgetTemplateForm.project_category" disabled>
-                    <option value="BUSINESS_PROJECT">经营项目</option>
-                    <option value="RND_PROJECT">研发项目</option>
-                  </select></label
-                ><label
-                  >预算项编码<input
-                    v-model.trim="budgetTemplateForm.code"
-                    disabled
-                    placeholder="留空则自动生成" /></label
-                ><label
-                  >预算项名称<input
-                    v-model.trim="budgetTemplateForm.name"
-                    placeholder="如 人工费用" readonly /></label
-                ><label
-                  >适用来源<select v-model="budgetTemplateForm.source_kind" disabled>
-                    <option value="LABOR">人工费用</option>
-                    <option value="MIXED">合同/费用通用</option>
-                    <option value="CONTRACT_PAYMENT">仅合同付款</option>
-                    <option value="PROJECT_EXPENSE">仅项目费用</option>
-                  </select></label
-                ><label
-                  >排序<input
-                    v-model.number="budgetTemplateForm.sort_order"
-                    type="number"
-                    min="0"
-                    step="1"
-                    disabled /></label
-                ><label class="configuration-active-field"
-                  ><input
-                    v-model="budgetTemplateForm.is_active"
-                    type="checkbox"
-                  />启用此模板</label
-                >
-              </div>
-              <div class="form-footer">
-                <button class="secondary" @click="resetBudgetTemplateForm">
-                  取消</button
-                ><button class="primary" @click="saveBudgetTemplate">
-                  保存预算项模板
                 </button>
               </div>
             </section>

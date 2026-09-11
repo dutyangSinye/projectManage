@@ -164,7 +164,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.63"
+API_VERSION = "3.0.65"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -203,7 +203,7 @@ RBAC_MENU_SEED = [
 ]
 # v3.0.59 起不再作为新单据入口的内置菜单：保留菜单行与授权，仅从导航下线。
 # 注意：这些 code 必须同时存在于 RBAC_MENU_SEED，否则 require_access 会因未知资源直接报错。
-RETIRED_MENU_SEED = ["personnel_costs", "approval_workflows"]
+RETIRED_MENU_SEED = ["personnel_costs", "approval_workflows", "budget_templates"]
 RBAC_ROLE_SEED = {
     "system_admin": ("系统管理员", "拥有全部菜单、操作和数据范围", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED}, "ALL"),
     "project_manager": ("项目经营管理员", "维护项目经营主数据、预算、成本和收付款", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED if code in {"projects", "project_budget", "contracts", "receipts", "payments", "project_expenses", "labor_costs", "cost_review", "project_board", "counterparties"}}, "ALL"),
@@ -1033,6 +1033,20 @@ def disable_retired_menus(db: Session) -> None:
         menu.is_active = False
 
 
+def drop_retired_menu_grants(db: Session) -> None:
+    """删除已下线菜单的历史授权。
+
+    菜单停用后界面不再展示，用户无法自行取消勾选；若保留这些授权行，
+    前端保存时会把它们原样回传，被后端判为非法菜单并拒绝整单提交，
+    导致该角色的权限永远改不动。这里随启动统一清理。
+    """
+    retired_menu_ids = [item.id for item in db.scalars(select(Menu).where(Menu.code.in_(RETIRED_MENU_SEED))).all()]
+    if retired_menu_ids:
+        db.query(RolePermission).filter(RolePermission.menu_id.in_(retired_menu_ids)).delete(synchronize_session=False)
+    db.query(RoleDataScope).filter(RoleDataScope.resource.in_(RETIRED_MENU_SEED)).delete(synchronize_session=False)
+    db.query(UserRoleScope).filter(UserRoleScope.resource.in_(RETIRED_MENU_SEED)).delete(synchronize_session=False)
+
+
 def _json_list(value: str | None) -> list[str]:
     """读取权限 JSON；旧数据损坏时按空权限处理，避免阻断应用启动。"""
     try:
@@ -1558,6 +1572,7 @@ def seed_data() -> None:
         seed_rbac(db)
         seed_approval_workflows(db)
         disable_retired_menus(db)
+        drop_retired_menu_grants(db)
         grant_cost_review_permissions(db)
         normalize_project_categories(db)
         ensure_all_project_budget_items(db)
@@ -4182,9 +4197,19 @@ def validate_scope_input(db: Session, scope: DataScopeInput) -> None:
 def role_permissions_view(db: Session, role: Role) -> RolePermissionsView:
     """读取角色的菜单操作和默认数据范围配置。"""
     menus = {item.id: item for item in db.scalars(select(Menu)).all()}
+    # 只回传启用的菜单；已下线的菜单界面上不可见，回传只会在保存时被判为非法。
+    active_codes = {item.code for item in menus.values() if item.is_active}
     permission_rows = db.scalars(select(RolePermission).where(RolePermission.role_id == role.id).order_by(RolePermission.id)).all()
-    permissions = [RolePermissionInput(menu_code=menus[item.menu_id].code, actions=_json_list(item.actions)) for item in permission_rows if item.menu_id in menus and _json_list(item.actions)]
-    scopes = [DataScopeInput(resource=item.resource, scope_type=item.scope_type, department_id=item.department_id) for item in db.scalars(select(RoleDataScope).where(RoleDataScope.role_id == role.id).order_by(RoleDataScope.id)).all()]
+    permissions = [
+        RolePermissionInput(menu_code=menus[item.menu_id].code, actions=_json_list(item.actions))
+        for item in permission_rows
+        if item.menu_id in menus and menus[item.menu_id].code in active_codes and _json_list(item.actions)
+    ]
+    scopes = [
+        DataScopeInput(resource=item.resource, scope_type=item.scope_type, department_id=item.department_id)
+        for item in db.scalars(select(RoleDataScope).where(RoleDataScope.role_id == role.id).order_by(RoleDataScope.id)).all()
+        if item.resource in active_codes
+    ]
     return RolePermissionsView(role_id=role.id, permissions=permissions, scopes=scopes)
 
 
@@ -4307,7 +4332,8 @@ def update_role_permissions(role_id: int, payload: RolePermissionsUpdate, x_demo
     for item in payload.permissions:
         menu = menus.get(item.menu_code)
         if not menu:
-            raise HTTPException(400, "INVALID_MENU")
+            # 已下线菜单的残留授权直接丢弃，避免历史数据让整份权限无法保存。
+            continue
         actions = sorted(set(item.actions), key=lambda value: RBAC_ACTIONS.index(value) if value in RBAC_ACTIONS else len(RBAC_ACTIONS))
         if any(action not in _json_list(menu.actions) for action in actions):
             raise HTTPException(400, "INVALID_MENU_ACTION")
@@ -4316,7 +4342,7 @@ def update_role_permissions(role_id: int, payload: RolePermissionsUpdate, x_demo
     db.query(RoleDataScope).filter(RoleDataScope.role_id == role.id).delete(synchronize_session=False)
     for scope in payload.scopes:
         if scope.resource not in menus:
-            raise HTTPException(400, "INVALID_SCOPE_RESOURCE")
+            continue
         validate_scope_input(db, scope)
         db.add(RoleDataScope(role_id=role.id, resource=scope.resource, scope_type=scope.scope_type, department_id=scope.department_id))
     db.add(PermissionAudit(actor_id=actor.id, role_id=role.id, action="UPDATE_ROLE_PERMISSIONS", before_json=json.dumps(before, ensure_ascii=False, default=str), after_json=json.dumps(payload.model_dump(), ensure_ascii=False, default=str)))
@@ -4354,6 +4380,8 @@ def update_user_roles(user_id: int, payload: UserRoleUpdate, x_demo_user_id: int
     for scope in payload.scopes:
         if scope.resource not in {item[0] for item in RBAC_MENU_SEED}:
             raise HTTPException(400, "INVALID_SCOPE_RESOURCE")
+        if scope.resource in RETIRED_MENU_SEED:
+            continue
         validate_scope_input(db, scope)
         for role in roles:
             if db.scalar(select(RoleDataScope.id).where(RoleDataScope.role_id == role.id, RoleDataScope.resource == scope.resource)):
