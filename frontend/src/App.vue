@@ -310,6 +310,9 @@ type ProjectBoardRow = {
   code: string;
   name: string;
   project_type: string;
+  project_sub_category: string | null;
+  project_category_label: string | null;
+  project_sub_category_label: string | null;
   status: string;
   owner_name: string;
   department_path: string;
@@ -462,6 +465,7 @@ type BudgetItemTemplate = {
   name: string;
   cost_major: string;
   cost_minor: string | null;
+  cost_minor_options: string[];
   source_kind: "LABOR" | "CONTRACT_PAYMENT" | "PROJECT_EXPENSE" | "MIXED";
   sort_order: number;
   is_active: boolean;
@@ -475,6 +479,7 @@ type ProjectBudgetItem = {
   name: string;
   cost_major: string;
   cost_minor: string | null;
+  cost_minor_options: string[];
   source_kind: "LABOR" | "CONTRACT_PAYMENT" | "PROJECT_EXPENSE" | "MIXED";
   sort_order: number;
   budget_amount: number;
@@ -489,6 +494,9 @@ type WorkbenchProjectRow = {
   code: string;
   name: string;
   project_type: string;
+  project_sub_category: string | null;
+  project_category_label: string | null;
+  project_sub_category_label: string | null;
   status: string;
   owner_name: string;
   department_path: string;
@@ -542,6 +550,9 @@ type Project = {
   code: string;
   name: string;
   project_type: string;
+  project_sub_category: string | null;
+  project_category_label: string | null;
+  project_sub_category_label: string | null;
   owner_name: string;
   owner_user_id: number | null;
   approver_name: string | null;
@@ -804,9 +815,30 @@ type ConfigOption = {
   category: string;
   value: string;
   label: string;
+  parent_id: number | null;
+  level: number;
+  path: string | null;
+  is_leaf: boolean;
   sort_order: number;
   is_active: boolean;
   is_builtin: boolean;
+};
+type ClassificationNode = {
+  id: number;
+  value: string;
+  label: string;
+  parent_id: number | null;
+  level: number;
+  path: string | null;
+  is_leaf: boolean;
+  is_active: boolean;
+  is_builtin: boolean;
+  sort_order: number;
+  children: ClassificationNode[];
+};
+type ClassificationCatalog = {
+  project_category: ClassificationNode[];
+  cost_category: ClassificationNode[];
 };
 type ConfigCatalog = { options: Record<string, ConfigOption[]> };
 type AdminPermissionList = { items: AdminPermission[]; total: number };
@@ -1121,12 +1153,30 @@ const projectListLoading = ref(false);
 const projectListTotal = ref(0);
 const configOptions = ref<Record<string, ConfigOption[]>>({});
 const adminConfigOptions = ref<Record<string, ConfigOption[]>>({});
-const configurationCategory = ref("project_type");
+const configurationCategory = ref("project_stage");
 const configurationLoading = ref(false);
 const configurationFormOpen = ref(false);
 const configurationEditingId = ref<number | null>(null);
+const classificationCatalog = ref<ClassificationCatalog>({
+  project_category: [],
+  cost_category: [],
+});
+const classificationLoading = ref(false);
+const classificationTreeKey = ref<"project_category" | "cost_category">(
+  "project_category",
+);
+const classificationFormOpen = ref(false);
+const classificationEditingId = ref<number | null>(null);
+const classificationForm = reactive({
+  tree: "project_category" as "project_category" | "cost_category",
+  parent_id: null as number | null,
+  value: "",
+  label: "",
+  sort_order: 10,
+  is_active: true,
+});
 const configurationForm = reactive({
-  category: "project_type",
+  category: "project_stage",
   value: "",
   label: "",
   sort_order: 1,
@@ -1326,6 +1376,7 @@ const activeUserId = ref(1);
 const editingProjectId = ref<number | null>(null);
 const projectFormOpen = ref(false);
 const projectFilterType = ref("");
+const projectFilterSubCategory = ref("");
 const projectFilterStatus = ref("");
 const projectFilterDepartment = ref(0);
 const projectFilterOwner = ref(0);
@@ -1402,6 +1453,7 @@ const budgetTemplateForm = reactive({
   name: "",
   cost_major: "",
   cost_minor: "",
+  cost_minor_options: [] as string[],
   source_kind: "MIXED" as "LABOR" | "CONTRACT_PAYMENT" | "PROJECT_EXPENSE" | "MIXED",
   sort_order: 0,
   is_active: true,
@@ -1547,6 +1599,7 @@ const user = ref<DemoUser>({
 });
 const form = reactive({
   project_id: 0,
+  project_type: "",
   stage: "开发",
   work_type: "PROJECT",
   work_status: "LOCAL",
@@ -1560,6 +1613,7 @@ const projectForm = reactive({
   code: "",
   name: "",
   project_type: "RND_PROJECT",
+  project_sub_category: null as string | null,
   owner_user_id: 0,
   department_id: 0,
   approver_user_id: 0,
@@ -2284,6 +2338,48 @@ watch(
       form.project_id = 0;
   },
 );
+// 项目大类切换后，原先选中的小类可能不再属于该大类，需按新大类重新校验。
+watch(
+  () => projectForm.project_type,
+  (major) => {
+    if (
+      projectForm.project_sub_category &&
+      !projectSubCategoryOptions(major).some(
+        (option) => option.value === projectForm.project_sub_category,
+      )
+    ) {
+      projectForm.project_sub_category = null;
+    }
+  },
+);
+/* 列表筛选的大类变化时，清掉不属于新大类的小类条件 */
+watch(projectFilterType, (major) => {
+  if (
+    projectFilterSubCategory.value &&
+    !projectSubCategoryOptions(major).some(
+      (option) => option.value === projectFilterSubCategory.value,
+    )
+  ) {
+    projectFilterSubCategory.value = "";
+  }
+});
+/* 预算项模板的成本大类变化时，小类及其候选集合都要按新大类收敛 */
+watch(
+  () => budgetTemplateForm.cost_major,
+  (majorLabel) => {
+    const labels = costMinorOptions(majorLabel).map((item) => item.label);
+    if (
+      budgetTemplateForm.cost_minor &&
+      !labels.includes(budgetTemplateForm.cost_minor)
+    ) {
+      budgetTemplateForm.cost_minor = "";
+    }
+    budgetTemplateForm.cost_minor_options =
+      budgetTemplateForm.cost_minor_options.filter((label) =>
+        labels.includes(label),
+      );
+  },
+);
 onBeforeUnmount(() => {
   document.body.style.overflow = "";
   disposeCharts();
@@ -2314,6 +2410,7 @@ const refresh = async () => {
       processed,
       workbench,
       optionCatalog,
+      classificationCatalogResult,
     ] = await Promise.all([
       api<DemoUser[]>("/api/v1/org/users?active_only=true"),
       api<OrgDepartment[]>("/api/v1/org/departments?active_only=true"),
@@ -2329,6 +2426,9 @@ const refresh = async () => {
         : Promise.resolve([]),
       api<WorkbenchOverview>("/api/v1/workbench/overview"),
       api<ConfigCatalog>("/api/v1/config/options"),
+      api<ClassificationCatalog>("/api/v1/config/classifications").catch(
+        () => null,
+      ),
     ]);
     demoUsers.value = users;
     departments.value = departmentList;
@@ -2340,6 +2440,9 @@ const refresh = async () => {
     processedApprovals.value = processed;
     workbenchOverview.value = workbench;
     configOptions.value = optionCatalog.options;
+    if (classificationCatalogResult) {
+      classificationCatalog.value = classificationCatalogResult;
+    }
     const [reportResult, healthResult] = await Promise.allSettled([
       api<Report>(reportUrl()),
       api<IntegrationHealth>("/api/v1/integrations/health"),
@@ -4677,24 +4780,226 @@ const viewRbacEffectivePermissions = async (item: RbacUserRole) => {
 const refreshAdminConfiguration = async () => {
   if (!canManage("configuration")) return;
   configurationLoading.value = true;
+  classificationLoading.value = true;
   try {
-    const [result] = await Promise.all([
+    const [result, classifications] = await Promise.all([
       api<ConfigCatalog>("/api/v1/admin/config/options"),
+      api<ClassificationCatalog>("/api/v1/admin/config/classifications").catch(
+        () => null,
+      ),
       loadBudgetItemTemplates(),
     ]);
     adminConfigOptions.value = result.options;
+    if (classifications) classificationCatalog.value = classifications;
   } finally {
     configurationLoading.value = false;
+    classificationLoading.value = false;
   }
 };
 const configCategoryLabel = (category: string) =>
   ({
-    project_type: "项目类型",
     project_stage: "项目阶段",
     work_type: "工时类型",
     work_status: "工作状态",
     project_status: "项目状态",
+    project_category: "项目大类",
+    project_sub_category: "项目小类",
+    cost_category: "成本大类",
+    cost_sub_category: "成本小类",
   })[category] || category;
+/* 项目分类与成本分类改用树形卡片维护，不出现在左侧扁平静态列表里 */
+const classificationCategories = [
+  "project_category",
+  "project_sub_category",
+  "cost_category",
+  "cost_sub_category",
+];
+const classificationTreeKeys = ["project_category", "cost_category"] as const;
+const flatConfigCategories = computed(() =>
+  Object.keys(adminConfigOptions.value).filter(
+    (category) => !classificationCategories.includes(category),
+  ),
+);
+// 配置分类被下线或后端未返回时，把左侧选中项收敛到第一个可用分类，避免出现空白列表。
+watch(flatConfigCategories, (categories) => {
+  if (!categories.length) return;
+  if (!categories.includes(configurationCategory.value)) {
+    configurationCategory.value = categories[0];
+  }
+});
+const visibleClassificationTree = computed(
+  () => classificationCatalog.value[classificationTreeKey.value] || [],
+);
+const classificationTreeLabel = (key: "project_category" | "cost_category") =>
+  key === "project_category" ? "项目分类树" : "成本分类树";
+const classificationChildLabel = (key: "project_category" | "cost_category") =>
+  key === "project_category" ? "项目小类" : "成本小类";
+const classificationNodes = computed(() =>
+  classificationCatalog.value.project_category.concat(
+    classificationCatalog.value.cost_category,
+  ),
+);
+/* 项目大类 / 小类的内置兜底名称，分类树未加载时仍能正确展示 */
+const PROJECT_CATEGORY_FALLBACK_LABELS: Record<string, string> = {
+  BUSINESS_PROJECT: "经营项目",
+  RND_PROJECT: "研发项目",
+};
+const projectCategoryOptions = computed(() =>
+  classificationCatalog.value.project_category.filter(
+    (item) => item.is_active,
+  ),
+);
+const projectCategoryLabelOf = (value: string | null | undefined) => {
+  if (!value) return "—";
+  const node = classificationCatalog.value.project_category.find(
+    (item) => item.value === value,
+  );
+  return node?.label || PROJECT_CATEGORY_FALLBACK_LABELS[value] || value;
+};
+const projectSubCategoryLabelOf = (value: string | null | undefined) => {
+  if (!value) return "—";
+  for (const major of classificationCatalog.value.project_category) {
+    const child = major.children.find((item) => item.value === value);
+    if (child) return child.label;
+  }
+  return value;
+};
+/* 项目小类按所选项目大类联动 */
+const projectSubCategoryOptions = (major: string) => {
+  const node = classificationCatalog.value.project_category.find(
+    (item) => item.value === major,
+  );
+  return (node?.children || []).filter((child) => child.is_active);
+};
+/* 成本小类按所选成本大类联动 */
+const costMinorOptions = (majorLabel: string) => {
+  const node = classificationCatalog.value.cost_category.find(
+    (item) => item.label === majorLabel || item.value === majorLabel,
+  );
+  return (node?.children || []).filter((child) => child.is_active);
+};
+const costCategoryOptions = computed(() =>
+  classificationCatalog.value.cost_category.filter((item) => item.is_active),
+);
+/* 预算项允许归集到的成本小类，可多选；未勾选时按单据实际选择的小类归集 */
+const toggleBudgetTemplateMinorOption = (label: string) => {
+  const options = budgetTemplateForm.cost_minor_options;
+  const index = options.indexOf(label);
+  if (index >= 0) options.splice(index, 1);
+  else options.push(label);
+};
+const openClassificationForm = (
+  tree: "project_category" | "cost_category",
+  parent: ClassificationNode | null,
+) => {
+  classificationEditingId.value = null;
+  Object.assign(classificationForm, {
+    tree,
+    parent_id: parent ? parent.id : null,
+    value: "",
+    label: "",
+    sort_order:
+      ((parent
+        ? parent.children.length
+        : classificationCatalog.value[tree].length) +
+        1) *
+      10,
+    is_active: true,
+  });
+  classificationFormOpen.value = true;
+};
+const editClassificationNode = (
+  tree: "project_category" | "cost_category",
+  node: ClassificationNode,
+) => {
+  classificationEditingId.value = node.id;
+  Object.assign(classificationForm, {
+    tree,
+    parent_id: node.parent_id,
+    value: node.value,
+    label: node.label,
+    sort_order: node.sort_order,
+    is_active: node.is_active,
+  });
+  classificationFormOpen.value = true;
+};
+const classificationFormCategory = computed(() =>
+  classificationForm.parent_id
+    ? classificationForm.tree === "project_category"
+      ? "project_sub_category"
+      : "cost_sub_category"
+    : classificationForm.tree,
+);
+const saveClassificationNode = async () => {
+  const label = classificationForm.label.trim();
+  const value = classificationForm.value.trim();
+  if (!label || (!classificationEditingId.value && !value)) {
+    errorMessage.value = "请填写分类编码和显示名称";
+    return;
+  }
+  try {
+    if (classificationEditingId.value) {
+      await api<ConfigOption>(
+        `/api/v1/admin/config/options/${classificationEditingId.value}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            label,
+            parent_id: classificationForm.parent_id,
+            sort_order: Number(classificationForm.sort_order) || 0,
+            is_active: classificationForm.is_active,
+          }),
+        },
+      );
+      successMessage.value = "分类项已更新";
+    } else {
+      await api<ConfigOption>("/api/v1/admin/config/options", {
+        method: "POST",
+        body: JSON.stringify({
+          category: classificationFormCategory.value,
+          value,
+          label,
+          parent_id: classificationForm.parent_id,
+          sort_order: Number(classificationForm.sort_order) || 0,
+          is_active: classificationForm.is_active,
+        }),
+      });
+      successMessage.value = "分类项已保存";
+    }
+    classificationFormOpen.value = false;
+    classificationEditingId.value = null;
+    await refreshAdminConfiguration();
+  } catch (error) {
+    errorMessage.value = configOptionErrorMessage(error);
+  }
+};
+const toggleClassificationNode = async (node: ClassificationNode) => {
+  try {
+    await api<ConfigOption>(`/api/v1/admin/config/options/${node.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        label: node.label,
+        parent_id: node.parent_id,
+        sort_order: node.sort_order,
+        is_active: !node.is_active,
+      }),
+    });
+    successMessage.value = node.is_active ? "分类项已停用" : "分类项已启用";
+    await refreshAdminConfiguration();
+  } catch (error) {
+    errorMessage.value = configOptionErrorMessage(error);
+  }
+};
+const deleteClassificationNode = async (node: ClassificationNode) => {
+  if (!window.confirm(`确定删除分类“${node.label}”吗？`)) return;
+  try {
+    await api(`/api/v1/admin/config/options/${node.id}`, { method: "DELETE" });
+    successMessage.value = "分类项已删除";
+    await refreshAdminConfiguration();
+  } catch (error) {
+    errorMessage.value = configOptionErrorMessage(error);
+  }
+};
 const activeConfigOptions = (category: string) =>
   configOptions.value[category] || [];
 const visibleConfigOptions = computed(
@@ -4745,6 +5050,7 @@ const resetBudgetTemplateForm = () => {
     name: "",
     cost_major: "",
     cost_minor: "",
+    cost_minor_options: [],
     source_kind: "MIXED",
     sort_order: (visibleBudgetItemTemplates.value.length + 1) * 10,
     is_active: true,
@@ -4762,6 +5068,7 @@ const editBudgetTemplate = (template: BudgetItemTemplate) => {
     name: template.name,
     cost_major: template.cost_major,
     cost_minor: template.cost_minor || "",
+    cost_minor_options: [...(template.cost_minor_options || [])],
     source_kind: template.source_kind,
     sort_order: template.sort_order,
     is_active: template.is_active,
@@ -4780,6 +5087,7 @@ const saveBudgetTemplate = async () => {
       name: budgetTemplateForm.name.trim(),
       cost_major: budgetTemplateForm.cost_major.trim(),
       cost_minor: budgetTemplateForm.cost_minor.trim() || null,
+      cost_minor_options: budgetTemplateForm.cost_minor_options,
       source_kind: budgetTemplateForm.source_kind,
       sort_order: Number(budgetTemplateForm.sort_order) || 0,
       is_active: budgetTemplateForm.is_active,
@@ -5072,7 +5380,7 @@ const resetAdminWorklogForm = () => {
   Object.assign(adminForm, {
     project_id: 0,
     project_type:
-      activeConfigOptions("project_type")[0]?.value || "RND_PROJECT",
+      projectCategoryOptions.value[0]?.value || "RND_PROJECT",
     stage: activeConfigOptions("project_stage")[0]?.value || "开发",
     work_type: activeConfigOptions("work_type")[0]?.value || "PROJECT",
     work_status: activeConfigOptions("work_status")[0]?.value || "LOCAL",
@@ -5090,7 +5398,7 @@ const openAdminWorklogEditor = (item: AdminWorklog) => {
     project_type:
       projects.value.find((project) => project.id === item.project_id)
         ?.project_type ||
-      activeConfigOptions("project_type")[0]?.value ||
+      projectCategoryOptions.value[0]?.value ||
       "RND_PROJECT",
     stage: item.stage,
     work_type: item.work_type,
@@ -5259,6 +5567,8 @@ const projectListUrl = () => {
   });
   if (projectFilterType.value)
     params.set("project_type", projectFilterType.value);
+  if (projectFilterSubCategory.value)
+    params.set("project_sub_category", projectFilterSubCategory.value);
   if (projectFilterStatus.value)
     params.set("status", projectFilterStatus.value);
   if (projectFilterDepartment.value)
@@ -5293,6 +5603,7 @@ const queryProjects = () => {
 watch(
   [
     projectFilterType,
+    projectFilterSubCategory,
     projectFilterStatus,
     projectFilterDepartment,
     projectFilterOwner,
@@ -5365,6 +5676,7 @@ const selectProjectDepartment = (departmentId: number) => {
 };
 const resetProjectFilters = () => {
   projectFilterType.value = "";
+  projectFilterSubCategory.value = "";
   projectFilterStatus.value = "";
   projectFilterDepartment.value = 0;
   projectFilterOwner.value = 0;
@@ -6118,7 +6430,7 @@ const openEditor = (item?: Worklog) => {
       project_type:
         projects.value.find((project) => project.id === item.project_id)
           ?.project_type ||
-        activeConfigOptions("project_type")[0]?.value ||
+        projectCategoryOptions.value[0]?.value ||
         "RND_PROJECT",
       stage: item.stage,
       work_type: item.work_type,
@@ -6132,7 +6444,7 @@ const openEditor = (item?: Worklog) => {
   else
     Object.assign(form, {
       project_id: 0,
-      project_type: activeConfigOptions("project_type")[0]?.value || "",
+      project_type: projectCategoryOptions.value[0]?.value || "",
       stage: activeConfigOptions("project_stage")[0]?.value || "开发",
       work_type: activeConfigOptions("work_type")[0]?.value || "PROJECT",
       work_status: activeConfigOptions("work_status")[0]?.value || "LOCAL",
@@ -6304,7 +6616,8 @@ const resetProjectForm = () => {
     code: "",
     name: "",
     project_type:
-      activeConfigOptions("project_type")[0]?.value || "RND_PROJECT",
+      projectCategoryOptions.value[0]?.value || "RND_PROJECT",
+    project_sub_category: null,
     owner_user_id: 0,
     department_id: 0,
     approver_user_id: 0,
@@ -6328,6 +6641,7 @@ const editProject = (project: Project) => {
     code: project.code,
     name: project.name,
     project_type: project.project_type,
+    project_sub_category: project.project_sub_category,
     owner_user_id: project.owner_user_id || 0,
     department_id: project.department_id || 0,
     approver_user_id: project.approver_user_id || 0,
@@ -7125,7 +7439,7 @@ onMounted(() => {
                       <thead>
                         <tr>
                           <th>项目</th>
-                          <th>类型</th>
+                          <th>分类</th>
                           <th>预算执行</th>
                           <th>人员成本</th>
                           <th>已付 / 应付</th>
@@ -7143,7 +7457,17 @@ onMounted(() => {
                             <strong>{{ item.name }}</strong>
                             <small>{{ item.code }}</small>
                           </td>
-                          <td>{{ optionLabel("project_type", item.project_type) }}</td>
+                          <td>
+                            <span class="project-category-cell">{{
+                              projectCategoryLabelOf(item.project_type)
+                            }}</span>
+                            <small>{{
+                              item.project_sub_category_label ||
+                              projectSubCategoryLabelOf(
+                                item.project_sub_category,
+                              )
+                            }}</small>
+                          </td>
                           <td>
                             <div class="workbench-progress">
                               <span
@@ -7425,7 +7749,7 @@ onMounted(() => {
               <div class="eyebrow">WORKLOG EDITOR</div>
               <h1>{{ editingId ? "修改工时" : "新增工时" }}</h1>
               <p class="muted">
-                先选择项目类型，再选择该类型下的项目；每条工时独立审批。
+                先选择项目大类，再选择该大类下的项目；每条工时独立审批。
               </p>
             </div>
             <span class="tag teal">工作日天数</span>
@@ -7433,10 +7757,10 @@ onMounted(() => {
           <section class="card form-card">
             <div class="form-grid">
               <label
-                >项目类型<select v-model="form.project_type">
-                  <option value="" disabled>请选择项目类型</option>
+                >项目大类<select v-model="form.project_type">
+                  <option value="" disabled>请选择项目大类</option>
                   <option
-                    v-for="option in activeConfigOptions('project_type')"
+                    v-for="option in projectCategoryOptions"
                     :key="option.value"
                     :value="option.value"
                   >
@@ -7464,7 +7788,7 @@ onMounted(() => {
                     ><span v-else class="project-picker-placeholder">{{
                       form.project_type
                         ? "请选择可填报项目"
-                        : "请先选择项目类型"
+                        : "请先选择项目大类"
                     }}</span
                     ><span class="project-picker-chevron" aria-hidden="true"
                       >⌄</span
@@ -8288,10 +8612,28 @@ onMounted(() => {
             </div>
             <div class="project-filter-grid">
               <label
-                >项目类型<select v-model="projectFilterType">
-                  <option value="">全部类型</option>
+                >项目大类<select v-model="projectFilterType">
+                  <option value="">全部大类</option>
                   <option
-                    v-for="option in activeConfigOptions('project_type')"
+                    v-for="option in projectCategoryOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select></label
+              ><label
+                >项目小类<select
+                  v-model="projectFilterSubCategory"
+                  :disabled="!projectFilterType"
+                >
+                  <option value="">
+                    {{ projectFilterType ? "全部小类" : "请先选择大类" }}
+                  </option>
+                  <option
+                    v-for="option in projectSubCategoryOptions(
+                      projectFilterType,
+                    )"
                     :key="option.value"
                     :value="option.value"
                   >
@@ -8476,8 +8818,12 @@ onMounted(() => {
                     </td>
                     <td>
                       <span class="tag teal">{{
-                        optionLabel("project_type", project.project_type)
+                        projectCategoryLabelOf(project.project_type)
                       }}</span>
+                      <small class="project-sub-category">{{
+                        project.project_sub_category_label ||
+                        projectSubCategoryLabelOf(project.project_sub_category)
+                      }}</small>
                     </td>
                     <td>
                       <strong>{{ project.owner_name }}</strong>
@@ -8620,10 +8966,29 @@ onMounted(() => {
                     </option>
                   </select></label
                 ><label
-                  >项目类型<select v-model="projectForm.project_type">
-                    <option value="" disabled>请选择项目类型</option>
+                  >项目大类<select v-model="projectForm.project_type">
+                    <option value="" disabled>请选择项目大类</option>
                     <option
-                      v-for="option in activeConfigOptions('project_type')"
+                      v-for="option in projectCategoryOptions"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select></label
+                ><label
+                  >项目小类<select v-model="projectForm.project_sub_category">
+                    <option :value="null">
+                      {{
+                        projectForm.project_type
+                          ? "暂不指定小类"
+                          : "请先选择项目大类"
+                      }}
+                    </option>
+                    <option
+                      v-for="option in projectSubCategoryOptions(
+                        projectForm.project_type,
+                      )"
                       :key="option.value"
                       :value="option.value"
                     >
@@ -8765,7 +9130,12 @@ onMounted(() => {
                   <tr v-for="item in projectBudgetItems" :key="item.id">
                     <td><strong>{{ item.name }}</strong><small>{{ item.code }}</small></td>
                     <td>{{ item.cost_major }}</td>
-                    <td>{{ item.cost_minor || '—' }}</td>
+                    <td>
+                      <span>{{ item.cost_minor || '—' }}</span>
+                      <small v-if="item.cost_minor_options.length" class="config-minor-inline">{{
+                        item.cost_minor_options.join(' / ')
+                      }}</small>
+                    </td>
                     <td>{{ budgetSourceLabel(item.source_kind) }}</td>
                     <td><input v-model.number="item.budget_amount" class="inline-money-input" type="number" min="0" step="0.01" /></td>
                     <td>{{ moneyText(item.actual_amount) }}</td>
@@ -8958,7 +9328,8 @@ onMounted(() => {
               <dl class="project-info-list">
                 <div><dt>项目编码</dt><dd>{{ selectedManagedProject.code }}</dd></div>
                 <div><dt>项目名称</dt><dd>{{ selectedManagedProject.name }}</dd></div>
-                <div><dt>项目类型</dt><dd>{{ optionLabel("project_type", selectedManagedProject.project_type) }}</dd></div>
+                <div><dt>项目大类</dt><dd>{{ projectCategoryLabelOf(selectedManagedProject.project_type) }}</dd></div>
+                <div><dt>项目小类</dt><dd>{{ selectedManagedProject.project_sub_category_label || projectSubCategoryLabelOf(selectedManagedProject.project_sub_category) }}</dd></div>
                 <div><dt>项目状态</dt><dd>{{ optionLabel("project_status", selectedManagedProject.status) }}</dd></div>
                 <div><dt>所属部门</dt><dd>{{ selectedManagedProject.department_path }}</dd></div>
                 <div><dt>客户</dt><dd>{{ selectedManagedProject.customer_name || "未关联" }}</dd></div>
@@ -10226,10 +10597,10 @@ onMounted(() => {
                 </select>
               </label>
               <label>
-                类型
+                项目大类
                 <select v-model="boardFilterType">
-                  <option value="">全部类型</option>
-                  <option v-for="option in activeConfigOptions('project_type')" :key="option.value" :value="option.value">
+                  <option value="">全部大类</option>
+                  <option v-for="option in projectCategoryOptions" :key="option.value" :value="option.value">
                     {{ option.label }}
                   </option>
                 </select>
@@ -11136,8 +11507,9 @@ onMounted(() => {
           </div>
           <section class="card configuration-layout">
             <aside class="configuration-categories">
+              <p class="configuration-categories-hint">平铺选项</p>
               <button
-                v-for="category in Object.keys(adminConfigOptions)"
+                v-for="category in flatConfigCategories"
                 :key="category"
                 :class="{ active: configurationCategory === category }"
                 @click="configurationCategory = category"
@@ -11210,12 +11582,149 @@ onMounted(() => {
               </div>
             </section>
           </section>
+          <section class="card classification-tree-card">
+            <div class="section-head">
+              <div>
+                <h2>分类体系</h2>
+                <p class="muted">
+                  项目分类与成本分类改为两级树维护：先建大类，再在大类下挂小类。项目表单和费用归集按此口径联动。
+                </p>
+              </div>
+              <div class="classification-tree-tabs">
+                <button
+                  v-for="tree in classificationTreeKeys"
+                  :key="tree"
+                  type="button"
+                  :class="{ active: classificationTreeKey === tree }"
+                  @click="classificationTreeKey = tree"
+                >
+                  {{ classificationTreeLabel(tree) }}
+                </button>
+              </div>
+            </div>
+            <div class="classification-tree-toolbar">
+              <span class="tag teal"
+                >{{ visibleClassificationTree.length }} 个大类</span
+              >
+              <button
+                class="secondary"
+                @click="openClassificationForm(classificationTreeKey, null)"
+              >
+                ＋ 新增{{
+                  classificationTreeKey === "project_category"
+                    ? "项目大类"
+                    : "成本大类"
+                }}
+              </button>
+            </div>
+            <div v-if="classificationLoading" class="empty">
+              正在读取分类树…
+            </div>
+            <div v-else-if="!visibleClassificationTree.length" class="empty">
+              当前分类树还没有大类，请先新增。
+            </div>
+            <div v-else class="classification-tree">
+              <div
+                v-for="node in visibleClassificationTree"
+                :key="node.id"
+                class="classification-node"
+                :class="{ inactive: !node.is_active }"
+              >
+                <div class="classification-node-head">
+                  <div>
+                    <strong>{{ node.label }}</strong>
+                    <small
+                      >值：{{ node.value
+                      }}<span v-if="node.is_builtin"> · 系统默认</span></small
+                    >
+                  </div>
+                  <span class="tag"
+                    >{{ node.children.length }} 个{{
+                      classificationChildLabel(classificationTreeKey)
+                    }}</span
+                  >
+                  <span
+                    class="tag"
+                    :class="node.is_active ? 'success' : 'neutral'"
+                    >{{ node.is_active ? "启用" : "停用" }}</span
+                  >
+                  <div class="table-actions">
+                    <button
+                      class="text-button"
+                      @click="
+                        openClassificationForm(classificationTreeKey, node)
+                      "
+                    >
+                      加小类</button
+                    ><button
+                      class="text-button"
+                      @click="editClassificationNode(classificationTreeKey, node)"
+                    >
+                      编辑</button
+                    ><button
+                      class="text-button"
+                      @click="toggleClassificationNode(node)"
+                    >
+                      {{ node.is_active ? "停用" : "启用" }}</button
+                    ><button
+                      class="text-button danger-button"
+                      @click="deleteClassificationNode(node)"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+                <div
+                  v-if="!node.children.length"
+                  class="classification-children-empty"
+                >
+                  暂无{{ classificationChildLabel(classificationTreeKey) }}
+                </div>
+                <div v-else class="classification-children">
+                  <div
+                    v-for="child in node.children"
+                    :key="child.id"
+                    class="classification-child"
+                    :class="{ inactive: !child.is_active }"
+                  >
+                    <span class="classification-child-name">{{
+                      child.label
+                    }}</span>
+                    <small>{{ child.value }}</small>
+                    <span
+                      class="tag"
+                      :class="child.is_active ? 'success' : 'neutral'"
+                      >{{ child.is_active ? "启用" : "停用" }}</span
+                    >
+                    <div class="table-actions">
+                      <button
+                        class="text-button"
+                        @click="editClassificationNode(classificationTreeKey, child)"
+                      >
+                        编辑</button
+                      ><button
+                        class="text-button"
+                        @click="toggleClassificationNode(child)"
+                      >
+                        {{ child.is_active ? "停用" : "启用" }}</button
+                      ><button
+                        class="text-button danger-button"
+                        @click="deleteClassificationNode(child)"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
           <section class="card budget-template-card">
             <div class="section-head">
               <div>
                 <h2>预算项模板</h2>
                 <p class="muted">
-                  经营项目和研发项目默认使用同一套 8 个预算项；新建项目时会按项目类型自动生成项目预算项。
+                  经营项目和研发项目默认使用同一套 8 个预算项；新建项目时会按项目大类自动生成项目预算项。
                 </p>
               </div>
               <button class="secondary" @click="openBudgetTemplateForm">
@@ -11246,6 +11755,7 @@ onMounted(() => {
                     <th>预算项</th>
                     <th>成本大类</th>
                     <th>成本小类</th>
+                    <th>可归集小类</th>
                     <th>适用来源</th>
                     <th>排序</th>
                     <th>状态</th>
@@ -11257,6 +11767,12 @@ onMounted(() => {
                     <td><strong>{{ item.name }}</strong><small>{{ item.code }}{{ item.is_builtin ? ' · 系统默认' : '' }}</small></td>
                     <td>{{ item.cost_major }}</td>
                     <td>{{ item.cost_minor || '—' }}</td>
+                    <td>
+                      <span v-if="!item.cost_minor_options.length" class="config-minor-empty">按单据实际选择归集</span>
+                      <span v-else class="config-minor-tags">
+                        <span v-for="minor in item.cost_minor_options" :key="minor" class="tag">{{ minor }}</span>
+                      </span>
+                    </td>
                     <td>{{ budgetSourceLabel(item.source_kind) }}</td>
                     <td>{{ item.sort_order }}</td>
                     <td><span class="tag" :class="item.is_active ? 'success' : 'neutral'">{{ item.is_active ? '启用' : '停用' }}</span></td>
@@ -11304,7 +11820,7 @@ onMounted(() => {
                     :disabled="Boolean(configurationEditingId)"
                   >
                     <option
-                      v-for="category in Object.keys(adminConfigOptions)"
+                      v-for="category in flatConfigCategories"
                       :key="category"
                       :value="category"
                     >
@@ -11338,6 +11854,88 @@ onMounted(() => {
                   取消</button
                 ><button class="primary" @click="saveConfigurationOption">
                   保存配置项
+                </button>
+              </div>
+            </section>
+          </div>
+          <div v-if="classificationFormOpen" class="modal-backdrop">
+            <section
+              class="modal-card configuration-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="classification-modal-title"
+            >
+              <div class="modal-head">
+                <div>
+                  <div class="eyebrow">CLASSIFICATION NODE</div>
+                  <h2 id="classification-modal-title">
+                    {{
+                      classificationEditingId
+                        ? "编辑分类项"
+                        : classificationForm.parent_id
+                          ? "新增子分类"
+                          : "新增大类"
+                    }}
+                  </h2>
+                  <p class="muted">
+                    编码用于系统存储且创建后不可修改；显示名称可随时调整。停用后不再出现在新增表单中。
+                  </p>
+                </div>
+                <button
+                  class="modal-close"
+                  aria-label="关闭弹窗"
+                  @click="classificationFormOpen = false"
+                >
+                  ×
+                </button>
+              </div>
+              <div class="form-grid">
+                <label
+                  >所属分类树<input
+                    :value="classificationTreeLabel(classificationForm.tree)"
+                    disabled
+                /></label>
+                <label
+                  >上级大类<input
+                    :value="
+                      classificationForm.parent_id
+                        ? (classificationNodes.find(
+                            (item) => item.id === classificationForm.parent_id,
+                          )?.label ?? '—')
+                        : '（顶层大类）'
+                    "
+                    disabled
+                /></label>
+                <label
+                  >分类编码<input
+                    v-model.trim="classificationForm.value"
+                    :disabled="Boolean(classificationEditingId)"
+                    placeholder="如 BUSINESS_PROJECT" /></label
+                ><label
+                  >显示名称<input
+                    v-model.trim="classificationForm.label"
+                    placeholder="如 经营项目" /></label
+                ><label
+                  >排序<input
+                    v-model.number="classificationForm.sort_order"
+                    type="number"
+                    min="0"
+                    step="1" /></label
+                ><label class="configuration-active-field"
+                  ><input
+                    v-model="classificationForm.is_active"
+                    type="checkbox"
+                  />启用此分类</label
+                >
+              </div>
+              <div class="form-footer">
+                <button
+                  class="secondary"
+                  @click="classificationFormOpen = false"
+                >
+                  取消</button
+                ><button class="primary" @click="saveClassificationNode">
+                  保存分类项
                 </button>
               </div>
             </section>
@@ -11381,14 +11979,74 @@ onMounted(() => {
                     v-model.trim="budgetTemplateForm.name"
                     placeholder="如 人工费用" /></label
                 ><label
-                  >成本大类<input
-                    v-model.trim="budgetTemplateForm.cost_major"
-                    placeholder="默认与预算项名称一致" /></label
+                  >成本大类<select v-model="budgetTemplateForm.cost_major">
+                    <option value="" disabled>请选择成本大类</option>
+                    <option
+                      v-for="option in costCategoryOptions"
+                      :key="option.value"
+                      :value="option.label"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select></label
                 ><label
-                  >成本小类<input
-                    v-model.trim="budgetTemplateForm.cost_minor"
-                    placeholder="可不填" /></label
-                ><label
+                  >默认成本小类<select
+                    v-model="budgetTemplateForm.cost_minor"
+                    :disabled="!budgetTemplateForm.cost_major"
+                  >
+                    <option value="">
+                      {{
+                        budgetTemplateForm.cost_major
+                          ? "可不填"
+                          : "请先选择成本大类"
+                      }}
+                    </option>
+                    <option
+                      v-for="option in costMinorOptions(
+                        budgetTemplateForm.cost_major,
+                      )"
+                      :key="option.value"
+                      :value="option.label"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select></label
+                >
+                <div class="budget-minor-options span-2">
+                  <span class="budget-minor-options-title"
+                    >可归集成本小类（可多选）</span
+                  >
+                  <p class="muted">
+                    合同付款和项目费用在预算项命中时，只有这里勾选的小类允许归集；不勾选表示按单据实际选择的小类归集。
+                  </p>
+                  <div
+                    v-if="
+                      !costMinorOptions(budgetTemplateForm.cost_major).length
+                    "
+                    class="empty"
+                  >
+                    请先选择成本大类
+                  </div>
+                  <div v-else class="budget-minor-options-list">
+                    <button
+                      v-for="option in costMinorOptions(
+                        budgetTemplateForm.cost_major,
+                      )"
+                      :key="option.value"
+                      type="button"
+                      class="budget-minor-option"
+                      :class="{
+                        active: budgetTemplateForm.cost_minor_options.includes(
+                          option.label,
+                        ),
+                      }"
+                      @click="toggleBudgetTemplateMinorOption(option.label)"
+                    >
+                      {{ option.label }}
+                    </button>
+                  </div>
+                </div>
+                <label
                   >适用来源<select v-model="budgetTemplateForm.source_kind">
                     <option value="LABOR">人工费用</option>
                     <option value="MIXED">合同/费用通用</option>
@@ -11647,10 +12305,10 @@ onMounted(() => {
               </div>
               <div class="form-grid">
                 <label
-                  >项目类型<select v-model="adminForm.project_type">
-                    <option value="" disabled>请选择项目类型</option>
+                  >项目大类<select v-model="adminForm.project_type">
+                    <option value="" disabled>请选择项目大类</option>
                     <option
-                      v-for="option in activeConfigOptions('project_type')"
+                      v-for="option in projectCategoryOptions"
                       :key="option.value"
                       :value="option.value"
                     >

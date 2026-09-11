@@ -1,11 +1,27 @@
 """HTTP 输入输出模型。"""
 
+import json
 from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.time_utils import today_local
+
+
+def parse_cost_minor_options(value: object) -> list[str]:
+    """把数据库中以 JSON 文本保存的成本小类候选解析成列表。"""
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        return [str(item) for item in parsed] if isinstance(parsed, list) else []
+    return []
 
 
 class UserView(BaseModel):
@@ -481,6 +497,9 @@ class ProjectView(BaseModel):
     code: str
     name: str
     project_type: str
+    project_sub_category: str | None = None
+    project_category_label: str | None = None
+    project_sub_category_label: str | None = None
     owner_name: str
     owner_user_id: int | None
     approver_name: str | None
@@ -524,12 +543,18 @@ class BudgetItemTemplateView(BaseModel):
     name: str
     cost_major: str
     cost_minor: str | None = None
+    cost_minor_options: list[str] = []
     source_kind: str = "MIXED"
     sort_order: int = 0
     is_active: bool = True
     is_builtin: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    @field_validator("cost_minor_options", mode="before")
+    @classmethod
+    def _normalize_cost_minor_options(cls, value: object) -> list[str]:
+        return parse_cost_minor_options(value)
 
 
 class BudgetItemTemplateCreate(BaseModel):
@@ -538,9 +563,15 @@ class BudgetItemTemplateCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     cost_major: str = Field(min_length=1, max_length=120)
     cost_minor: str | None = Field(default=None, max_length=120)
+    cost_minor_options: list[str] = []
     source_kind: Literal["LABOR", "CONTRACT_PAYMENT", "PROJECT_EXPENSE", "MIXED"] = "MIXED"
     sort_order: int = Field(default=0, ge=0, le=100000)
     is_active: bool = True
+
+    @field_validator("cost_minor_options", mode="before")
+    @classmethod
+    def _normalize_cost_minor_options(cls, value: object) -> list[str]:
+        return parse_cost_minor_options(value)
 
 
 class BudgetItemTemplateUpdate(BudgetItemTemplateCreate):
@@ -556,6 +587,7 @@ class ProjectBudgetItemView(BaseModel):
     name: str
     cost_major: str
     cost_minor: str | None = None
+    cost_minor_options: list[str] = []
     source_kind: str = "MIXED"
     sort_order: int = 0
     budget_amount: float = 0
@@ -566,6 +598,11 @@ class ProjectBudgetItemView(BaseModel):
     remark: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    @field_validator("cost_minor_options", mode="before")
+    @classmethod
+    def _normalize_cost_minor_options(cls, value: object) -> list[str]:
+        return parse_cost_minor_options(value)
 
 
 class ProjectBudgetItemUpdate(BaseModel):
@@ -692,6 +729,9 @@ class ProjectBoardRow(BaseModel):
     code: str
     name: str
     project_type: str
+    project_sub_category: str | None = None
+    project_category_label: str | None = None
+    project_sub_category_label: str | None = None
     status: str
     owner_name: str
     department_path: str = "未分配部门"
@@ -766,6 +806,9 @@ class WorkbenchProjectRow(BaseModel):
     code: str
     name: str
     project_type: str
+    project_sub_category: str | None = None
+    project_category_label: str | None = None
+    project_sub_category_label: str | None = None
     status: str
     owner_name: str
     department_path: str = "未分配部门"
@@ -821,6 +864,7 @@ class ProjectCreate(BaseModel):
     code: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=300)
     project_type: str = Field(min_length=1, max_length=80)
+    project_sub_category: str | None = Field(default=None, max_length=80)
     owner_user_id: int
     department_id: int = Field(gt=0)
     approver_user_id: int
@@ -846,6 +890,7 @@ class ProjectUpdate(BaseModel):
     code: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=300)
     project_type: str = Field(min_length=1, max_length=80)
+    project_sub_category: str | None = Field(default=None, max_length=80)
     owner_user_id: int
     department_id: int = Field(gt=0)
     approver_user_id: int
@@ -1167,6 +1212,10 @@ class ConfigOptionView(BaseModel):
     category: str
     value: str
     label: str
+    parent_id: int | None = None
+    level: int = 1
+    path: str | None = None
+    is_leaf: bool = True
     sort_order: int
     is_active: bool
     is_builtin: bool
@@ -1176,14 +1225,39 @@ class ConfigOptionCreate(BaseModel):
     category: str = Field(min_length=1, max_length=40)
     value: str = Field(min_length=1, max_length=80)
     label: str = Field(min_length=1, max_length=120)
+    parent_id: int | None = None
     sort_order: int = Field(default=0, ge=0, le=100000)
     is_active: bool = True
 
 
 class ConfigOptionUpdate(BaseModel):
     label: str = Field(min_length=1, max_length=120)
+    parent_id: int | None = None
     sort_order: int = Field(default=0, ge=0, le=100000)
     is_active: bool = True
+
+
+class ClassificationNode(BaseModel):
+    """层级分类节点，用于项目分类树与成本分类树。"""
+
+    id: int
+    value: str
+    label: str
+    parent_id: int | None = None
+    level: int = 1
+    path: str | None = None
+    is_leaf: bool = True
+    is_active: bool = True
+    is_builtin: bool = False
+    sort_order: int = 0
+    children: list["ClassificationNode"] = []
+
+
+class ClassificationCatalog(BaseModel):
+    """按上级分类返回两棵树：项目分类树与成本分类树。"""
+
+    project_category: list[ClassificationNode] = []
+    cost_category: list[ClassificationNode] = []
 
 
 class ConfigOptionCatalog(BaseModel):

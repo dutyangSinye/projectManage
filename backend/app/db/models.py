@@ -224,6 +224,7 @@ class Project(Base):
     code: Mapped[str] = mapped_column(String(64), unique=True)
     name: Mapped[str] = mapped_column(String(300))
     project_type: Mapped[str] = mapped_column(String(80), default="RND_PROJECT", nullable=False)
+    project_sub_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
     owner_name: Mapped[str] = mapped_column(String(100))
     owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     owner_open_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -261,6 +262,7 @@ class BudgetItemTemplate(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     cost_major: Mapped[str] = mapped_column(String(120), nullable=False)
     cost_minor: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    cost_minor_options: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_kind: Mapped[str] = mapped_column(String(40), default="MIXED", nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -282,6 +284,7 @@ class ProjectBudgetItem(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     cost_major: Mapped[str] = mapped_column(String(120), nullable=False)
     cost_minor: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    cost_minor_options: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_kind: Mapped[str] = mapped_column(String(40), default="MIXED", nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     budget_amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0, nullable=False)
@@ -395,7 +398,12 @@ class AuditLog(Base):
 
 
 class ConfigOption(Base):
-    """管理员可维护的业务下拉选项；value 用于存储，label 用于展示。"""
+    """管理员可维护的业务下拉选项；value 用于存储，label 用于展示。
+
+    `project_category`、`project_sub_category`、`cost_category`、`cost_sub_category`
+    四类分类项使用层级字段构成父子树：`level=1` 为上级，`level=2` 为下级，
+    下级通过 `parent_id` 指向上级，`path` 保存祖先路径便于排序与判重。
+    """
 
     __tablename__ = "config_options"
     __table_args__ = (UniqueConstraint("category", "value", name="uq_config_option_category_value"),)
@@ -404,6 +412,10 @@ class ConfigOption(Base):
     category: Mapped[str] = mapped_column(String(40), nullable=False)
     value: Mapped[str] = mapped_column(String(80), nullable=False)
     label: Mapped[str] = mapped_column(String(120), nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("config_options.id"), nullable=True)
+    level: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_leaf: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

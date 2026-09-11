@@ -3099,6 +3099,157 @@ textarea:focus {
   }
 }
 
+.configuration-categories > .configuration-categories-hint {
+  margin: 2px 0 8px;
+  padding: 0 6px;
+  color: var(--ui-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+/* v3.0.59: 项目分类树 / 成本分类树两级维护 */
+.classification-tree-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.classification-tree-card .section-head {
+  flex-wrap: wrap;
+  margin: 0;
+}
+.classification-tree-tabs {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+.classification-tree-tabs button {
+  min-height: 34px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ui-body);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.classification-tree-tabs button.active {
+  background: #fff;
+  color: var(--ui-teal);
+  box-shadow: 0 2px 6px rgba(15, 118, 110, 0.1);
+}
+.classification-tree-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--ui-line);
+}
+.classification-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.classification-node {
+  padding: 14px 16px;
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  background: #fff;
+}
+.classification-node.inactive {
+  opacity: 0.62;
+  background: #fafbfb;
+}
+.classification-node-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 14px;
+}
+.classification-node-head > div:first-child {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.classification-node-head strong {
+  color: var(--ui-ink);
+  font-size: 14px;
+}
+.classification-node-head small {
+  margin-top: 3px;
+  color: var(--ui-muted);
+  font-size: 11px;
+}
+.classification-node-head .table-actions {
+  justify-content: flex-end;
+  gap: 12px;
+}
+.classification-children {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e3eeea;
+}
+.classification-children-empty {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e3eeea;
+  color: var(--ui-muted);
+  font-size: 12px;
+}
+.classification-child {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px 74px auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  padding: 6px 10px 6px 14px;
+  border-radius: 6px;
+  background: #f8fbfa;
+}
+.classification-child.inactive {
+  opacity: 0.6;
+}
+.classification-child-name {
+  color: var(--ui-body);
+  font-size: 13px;
+  font-weight: 700;
+}
+.classification-child small {
+  color: var(--ui-muted);
+  font-size: 11px;
+  font-family: var(--ui-font-data);
+}
+.classification-child .table-actions {
+  justify-content: flex-end;
+  gap: 12px;
+}
+@media (max-width: 700px) {
+  .classification-node-head,
+  .classification-child {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .classification-node-head .table-actions,
+  .classification-child .table-actions {
+    grid-column: 1/-1;
+    justify-content: flex-start;
+    padding-top: 6px;
+    border-top: 1px solid #edf2f0;
+  }
+  .classification-tree-tabs {
+    width: 100%;
+  }
+  .classification-tree-tabs button {
+    flex: 1;
+  }
+}
+
 /* v2.0.27: separate pending and processed work-hour approvals. */
 .approval-card {
   padding: 0;
@@ -7057,7 +7208,7 @@ tbody tr:hover td {
   box-shadow: 0 4px 12px rgba(20, 55, 54, 0.08);
 }
 .budget-template-table {
-  min-width: 860px;
+  min-width: 960px;
 }
 .budget-template-table tr.inactive {
   opacity: 0.62;
@@ -7067,6 +7218,73 @@ tbody tr:hover td {
   padding: 10px 12px;
   border-radius: 8px;
   background: #f5faf8;
+}
+/* v3.0.59: 预算项模板可归集成本小类多选 */
+.budget-minor-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 16px;
+}
+.budget-minor-options-title {
+  color: var(--ui-body);
+  font-size: 13px;
+  font-weight: 700;
+}
+.budget-minor-options .muted {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.budget-minor-options-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+.budget-minor-option {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ui-body);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.budget-minor-option:hover {
+  border-color: #a8d5c8;
+  background: #f2faf7;
+}
+.budget-minor-option.active {
+  border-color: var(--ui-teal);
+  background: #e8f5f1;
+  color: var(--ui-teal);
+}
+.config-minor-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.config-minor-tags .tag {
+  font-size: 11px;
+}
+.config-minor-empty,
+.config-minor-inline {
+  color: var(--ui-muted);
+  font-size: 11px;
+}
+.config-minor-inline {
+  display: block;
+  margin-top: 3px;
+}
+.project-sub-category,
+.project-category-cell {
+  display: block;
+  margin-top: 4px;
+  color: var(--ui-muted);
+  font-size: 11px;
 }
 .project-pagination .admin-pagination-actions select,
 .project-pagination .admin-pagination-actions input {

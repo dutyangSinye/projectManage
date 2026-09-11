@@ -52,6 +52,9 @@ from .schemas import (
     BudgetItemTemplateUpdate,
     BudgetItemTemplateView,
     ConfigOptionCatalog,
+    ClassificationCatalog,
+    ClassificationNode,
+    parse_cost_minor_options,
     ConfigOptionCreate,
     ConfigOptionUpdate,
     ConfigOptionView,
@@ -196,39 +199,124 @@ RBAC_ROLE_SEED = {
     "integration_manager": ("集成管理员", "维护飞书集成和通知策略", {"integrations": ["VIEW", "CONFIGURE", "SYNC", "EXPORT"]}, "ALL"),
 }
 CONFIG_CATEGORY_LABELS = {
-    "project_type": "项目类型",
     "project_stage": "项目阶段",
     "work_type": "工时类型",
     "work_status": "工作状态",
     "project_status": "项目状态",
+    "project_category": "项目大类",
+    "project_sub_category": "项目小类",
+    "cost_category": "成本大类",
+    "cost_sub_category": "成本小类",
+}
+# 层级分类：上级分类 -> 下级分类，用于构造成本分类树和项目分类树。
+CLASSIFICATION_TREE_CATEGORIES = {
+    "project_category": "project_sub_category",
+    "cost_category": "cost_sub_category",
 }
 DEFAULT_CONFIG_OPTIONS = {
-    "project_type": [("RND_PROJECT", "研发项目"), ("TOPIC_PROJECT", "课题项目"), ("IMPLEMENTATION_PROJECT", "实施项目"), ("DEMONSTRATION_PROJECT", "观摩项目")],
     "project_stage": [("需求", "需求"), ("设计", "设计"), ("开发", "开发"), ("联调", "联调"), ("测试", "测试"), ("交付", "交付"), ("管理", "管理"), ("现场", "现场"), ("其它", "其它")],
     "work_type": [("PROJECT", "项目工时"), ("MANAGEMENT", "管理工时"), ("OTHER", "其它工时")],
     "work_status": [("LOCAL", "本地"), ("BUSINESS_TRIP", "出差"), ("REMOTE", "异地办公"), ("LEAVE", "休假")],
     "project_status": [("ACTIVE", "进行中"), ("ACCEPTANCE", "验收中"), ("PAUSED", "已暂停"), ("COMPLETED", "已完成")],
 }
+# 项目分类树与成本分类树默认内容，依据《项目预算与成本复核重构设计》v3.0.59 第 3、4 节。
+# 数组结构：上级编码、上级名称、[(下级编码, 下级名称), ...]。
+DEFAULT_CLASSIFICATION_TREES = {
+    "project_category": [
+        (
+            "BUSINESS_PROJECT",
+            "经营项目",
+            [
+                ("ENTRUSTED_RND", "委托研发"),
+                ("EQUIPMENT_SALES", "设备销售"),
+                ("TECHNICAL_SERVICE", "技术服务"),
+                ("ROBOT_CONSTRUCTION", "机器人施工"),
+                ("EQUIPMENT_RENTAL", "设备租赁"),
+            ],
+        ),
+        (
+            "RND_PROJECT",
+            "研发项目",
+            [
+                ("SELF_DEVELOPED_RND", "自主研发"),
+                ("EXTERNAL_DECLARATION", "外部申报"),
+            ],
+        ),
+    ],
+    "cost_category": [
+        ("MATERIAL", "材料成本", [("MATERIAL", "材料成本")]),
+        ("LABOR", "人工成本", [("LABOR", "人工成本")]),
+        ("MACHINERY", "机械使用费", [("MACHINERY", "机械使用费")]),
+        (
+            "OTHER_DIRECT",
+            "其他直接/间接费用",
+            [
+                ("TRAVEL", "差旅费"),
+                ("TRANSPORT", "运输"),
+                ("PACKAGING", "包装费"),
+                ("TECH_SERVICE", "技术服务费"),
+                ("REPAIR", "修理费"),
+                ("BIDDING", "招标投标费"),
+                ("LABOR_SERVICE", "劳务费"),
+                ("INSPECTION", "检测试验费"),
+                ("SAFETY", "安全经费"),
+                ("TEMPORARY_FACILITY", "临时设施费"),
+                ("OFFICE", "办公费"),
+                ("INSURANCE", "保险费"),
+                ("UTILITIES", "水、电、燃气费"),
+                ("LEASE_DEPRECIATION", "租赁费、折旧费"),
+                ("OTHER", "其他"),
+            ],
+        ),
+        (
+            "PROCESSING_SUBCONTRACT",
+            "加工成本、工程分包成本",
+            [
+                ("INTERNAL_PROCESSING", "内部加工费"),
+                ("EXTERNAL_PROCESSING", "外部加工费"),
+                ("ENGINEERING_SUBCONTRACT", "工程分包成本"),
+            ],
+        ),
+        ("EQUIPMENT_PURCHASE", "设备采购", [("EQUIPMENT_PURCHASE", "设备采购")]),
+        ("DEPT_MANUFACTURING", "部门制造费用", [("DEPT_MANUFACTURING", "部门制造费用")]),
+    ],
+}
+# 旧项目类型到项目大类的归并关系；第二个元素为可推导出的项目小类。
+LEGACY_PROJECT_CATEGORY_ALIASES = {
+    "TOPIC_PROJECT": ("RND_PROJECT", None),
+    "SELF_DEVELOPED_RND": ("RND_PROJECT", "SELF_DEVELOPED_RND"),
+    "EXTERNAL_DECLARATION": ("RND_PROJECT", "EXTERNAL_DECLARATION"),
+    "IMPLEMENTATION_PROJECT": ("BUSINESS_PROJECT", None),
+    "DEMONSTRATION_PROJECT": ("BUSINESS_PROJECT", None),
+    "研发项目": ("RND_PROJECT", None),
+    "课题项目": ("RND_PROJECT", None),
+    "实施项目": ("BUSINESS_PROJECT", None),
+    "观摩项目": ("BUSINESS_PROJECT", None),
+    "经营项目": ("BUSINESS_PROJECT", None),
+    "自主研发": ("RND_PROJECT", "SELF_DEVELOPED_RND"),
+    "外部申报": ("RND_PROJECT", "EXTERNAL_DECLARATION"),
+}
+PROJECT_CATEGORY_LABELS = {"BUSINESS_PROJECT": "经营项目", "RND_PROJECT": "研发项目"}
 DEFAULT_BUDGET_ITEM_TEMPLATES = {
     "BUSINESS_PROJECT": [
-        ("LABOR_COST", "人工费用", "人工费用", None, "LABOR"),
-        ("MATERIAL_EQUIPMENT", "材料、设备采购", "材料、设备采购", None, "MIXED"),
-        ("UTILITIES", "水、电、燃气费用", "水、电、燃气费用", None, "MIXED"),
-        ("OUTSOURCING", "委托、分包、外包费用", "委托、分包、外包费用", None, "MIXED"),
-        ("TRAVEL_COST", "差旅费用", "差旅费用", None, "MIXED"),
-        ("PACKAGING_TRANSPORT", "包装、运输费用", "包装、运输费用", None, "MIXED"),
-        ("LEASE_DEPRECIATION", "租赁费、折旧费", "租赁费、折旧费", None, "MIXED"),
-        ("OTHER_COST", "其他费用", "其他费用", None, "MIXED"),
+        ("LABOR_COST", "人工费用", "人工成本", "人工成本", "LABOR", ["人工成本"]),
+        ("MATERIAL_EQUIPMENT", "材料、设备采购", "材料成本", "材料成本", "MIXED", ["材料成本", "设备采购"]),
+        ("UTILITIES", "水、电、燃气费用", "其他直接/间接费用", "水、电、燃气费", "MIXED", ["水、电、燃气费"]),
+        ("OUTSOURCING", "委托、分包、外包费用", "加工成本、工程分包成本", "工程分包成本", "MIXED", ["内部加工费", "外部加工费", "工程分包成本"]),
+        ("TRAVEL_COST", "差旅费用", "其他直接/间接费用", "差旅费", "MIXED", ["差旅费"]),
+        ("PACKAGING_TRANSPORT", "包装、运输费用", "其他直接/间接费用", "运输", "MIXED", ["运输", "包装费"]),
+        ("LEASE_DEPRECIATION", "租赁费、折旧费", "其他直接/间接费用", "租赁费、折旧费", "MIXED", ["租赁费、折旧费"]),
+        ("OTHER_COST", "其他费用", "其他直接/间接费用", "其他", "MIXED", ["其他"]),
     ],
     "RND_PROJECT": [
-        ("LABOR_COST", "人工费用", "人工费用", None, "LABOR"),
-        ("MATERIAL_EQUIPMENT", "材料、设备采购", "材料、设备采购", None, "MIXED"),
-        ("UTILITIES", "水、电、燃气费用", "水、电、燃气费用", None, "MIXED"),
-        ("OUTSOURCING", "委托、分包、外包费用", "委托、分包、外包费用", None, "MIXED"),
-        ("TRAVEL_COST", "差旅费用", "差旅费用", None, "MIXED"),
-        ("PACKAGING_TRANSPORT", "包装、运输费用", "包装、运输费用", None, "MIXED"),
-        ("LEASE_DEPRECIATION", "租赁费、折旧费", "租赁费、折旧费", None, "MIXED"),
-        ("OTHER_COST", "其他费用", "其他费用", None, "MIXED"),
+        ("LABOR_COST", "人工费用", "人工成本", "人工成本", "LABOR", ["人工成本"]),
+        ("MATERIAL_EQUIPMENT", "材料、设备采购", "材料成本", "材料成本", "MIXED", ["材料成本", "设备采购"]),
+        ("UTILITIES", "水、电、燃气费用", "其他直接/间接费用", "水、电、燃气费", "MIXED", ["水、电、燃气费"]),
+        ("OUTSOURCING", "委托、分包、外包费用", "加工成本、工程分包成本", "工程分包成本", "MIXED", ["内部加工费", "外部加工费", "工程分包成本"]),
+        ("TRAVEL_COST", "差旅费用", "其他直接/间接费用", "差旅费", "MIXED", ["差旅费"]),
+        ("PACKAGING_TRANSPORT", "包装、运输费用", "其他直接/间接费用", "运输", "MIXED", ["运输", "包装费"]),
+        ("LEASE_DEPRECIATION", "租赁费、折旧费", "其他直接/间接费用", "租赁费、折旧费", "MIXED", ["租赁费、折旧费"]),
+        ("OTHER_COST", "其他费用", "其他直接/间接费用", "其他", "MIXED", ["其他"]),
     ],
 }
 LEGACY_BUDGET_ITEM_CODE_MAP = {
@@ -507,6 +595,85 @@ def seed_config_options(db: Session) -> None:
                 db.add(ConfigOption(category=category, value=value, label=label, sort_order=order, is_active=True, is_builtin=True))
 
 
+def seed_classification_trees(db: Session) -> None:
+    """初始化项目分类树与成本分类树，幂等执行且不覆盖管理员的名称调整。"""
+    for parent_category, tree in DEFAULT_CLASSIFICATION_TREES.items():
+        child_category = CLASSIFICATION_TREE_CATEGORIES[parent_category]
+        for parent_order, (parent_value, parent_label, children) in enumerate(tree, start=1):
+            parent = db.scalar(select(ConfigOption).where(ConfigOption.category == parent_category, ConfigOption.value == parent_value))
+            if not parent:
+                parent = ConfigOption(
+                    category=parent_category,
+                    value=parent_value,
+                    label=parent_label,
+                    level=1,
+                    is_leaf=not children,
+                    sort_order=parent_order * 10,
+                    is_active=True,
+                    is_builtin=True,
+                )
+                db.add(parent)
+                db.flush()
+            else:
+                parent.level = 1
+                parent.is_leaf = not children
+                if parent.is_builtin:
+                    parent.label = parent_label
+            parent.path = f"/{parent.id}/"
+            for child_order, (child_value, child_label) in enumerate(children, start=1):
+                child = db.scalar(select(ConfigOption).where(ConfigOption.category == child_category, ConfigOption.value == child_value))
+                if not child:
+                    child = ConfigOption(
+                        category=child_category,
+                        value=child_value,
+                        label=child_label,
+                        parent_id=parent.id,
+                        level=2,
+                        is_leaf=True,
+                        sort_order=child_order * 10,
+                        is_active=True,
+                        is_builtin=True,
+                    )
+                    db.add(child)
+                    db.flush()
+                else:
+                    if child.is_builtin:
+                        child.label = child_label
+                    child.parent_id = child.parent_id or parent.id
+                    child.level = 2
+                    child.is_leaf = True
+                child.path = f"/{parent.id}/{child.id}/"
+            db.flush()
+
+
+def normalize_project_categories(db: Session) -> None:
+    """把历史项目类型归并为项目大类，并尽量补齐项目小类。"""
+    for project in db.scalars(select(Project)).all():
+        major, derived_sub = resolve_project_category(project.project_type)
+        if project.project_type != major:
+            project.project_type = major
+        if not project.project_sub_category and derived_sub:
+            project.project_sub_category = derived_sub
+
+
+def resolve_project_category(value: str | None) -> tuple[str, str | None]:
+    """把项目大类输入归一到内置两类；返回可推导出的项目小类编码。"""
+    normalized = (value or "").strip()
+    if normalized in ("BUSINESS_PROJECT", "RND_PROJECT"):
+        return normalized, None
+    if normalized in LEGACY_PROJECT_CATEGORY_ALIASES:
+        return LEGACY_PROJECT_CATEGORY_ALIASES[normalized]
+    return "BUSINESS_PROJECT", None
+
+
+def project_sub_category_label(db: Session, value: str | None) -> str | None:
+    """返回项目小类的展示名称，供列表与详情展示。"""
+    if not value:
+        return None
+    option = db.scalar(select(ConfigOption).where(ConfigOption.category == "project_sub_category", ConfigOption.value == value))
+    return option.label if option else value
+
+
 def project_budget_category(project_type: str | None) -> str:
     """按项目类型归并预算项模板大类：研发类与经营类分开维护。"""
     normalized = (project_type or "").strip().upper()
@@ -526,6 +693,39 @@ def budget_template_code(name: str, project_category: str) -> str:
     return f"{prefix}_BUDGET_ITEM"
 
 
+def dump_cost_minor_options(options: list[str] | None) -> str | None:
+    """把成本小类候选集合序列化为 JSON 文本；空集合存 None，避免库里出现空数组。"""
+    cleaned: list[str] = []
+    for item in options or []:
+        label = str(item).strip()
+        if label and label not in cleaned:
+            cleaned.append(label)
+    return json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+
+
+def validate_cost_minor_options(db: Session, options: list[str] | None) -> None:
+    """校验预算项可归集的成本小类必须是成本分类树里的有效小类，防止写入无法归集的名称。
+
+    说明：统一后的 8 个预算项允许跨成本大类归集（如“材料、设备采购”同时覆盖材料成本与设备采购），
+    因此这里只校验小类是否有效，不强制其必须挂在所选成本大类之下。
+    """
+    cleaned = [str(item).strip() for item in (options or []) if str(item).strip()]
+    if not cleaned:
+        return
+    allowed = {
+        option.label
+        for option in db.scalars(
+            select(ConfigOption).where(
+                ConfigOption.category == "cost_sub_category",
+                ConfigOption.label.in_(cleaned),
+            )
+        ).all()
+    }
+    invalid = [label for label in cleaned if label not in allowed]
+    if invalid:
+        raise HTTPException(400, "INVALID_COST_MINOR_OPTION")
+
+
 def seed_budget_item_templates(db: Session) -> None:
     """写入经营项目和研发项目的默认预算项模板，不覆盖管理员调整。"""
     canonical_codes = {
@@ -533,7 +733,7 @@ def seed_budget_item_templates(db: Session) -> None:
         for category, rows in DEFAULT_BUDGET_ITEM_TEMPLATES.items()
     }
     for category, rows in DEFAULT_BUDGET_ITEM_TEMPLATES.items():
-        for order, (code, name, major, minor, source_kind) in enumerate(rows, start=1):
+        for order, (code, name, major, minor, source_kind, minor_options) in enumerate(rows, start=1):
             template = db.scalar(
                 select(BudgetItemTemplate).where(
                     BudgetItemTemplate.project_category == category,
@@ -548,6 +748,7 @@ def seed_budget_item_templates(db: Session) -> None:
                         name=name,
                         cost_major=major,
                         cost_minor=minor,
+                        cost_minor_options=json.dumps(minor_options, ensure_ascii=False),
                         source_kind=source_kind,
                         sort_order=order * 10,
                         is_active=True,
@@ -558,6 +759,7 @@ def seed_budget_item_templates(db: Session) -> None:
                 template.name = name
                 template.cost_major = major
                 template.cost_minor = minor
+                template.cost_minor_options = json.dumps(minor_options, ensure_ascii=False)
                 template.source_kind = source_kind
                 template.sort_order = order * 10
                 template.is_active = True
@@ -583,6 +785,7 @@ def ensure_project_budget_items(db: Session, project: Project) -> None:
             current.name = template.name
             current.cost_major = template.cost_major
             current.cost_minor = template.cost_minor
+            current.cost_minor_options = template.cost_minor_options
             current.source_kind = template.source_kind
             current.sort_order = template.sort_order
             current.is_active = True
@@ -597,6 +800,7 @@ def ensure_project_budget_items(db: Session, project: Project) -> None:
                 name=template.name,
                 cost_major=template.cost_major,
                 cost_minor=template.cost_minor,
+                cost_minor_options=template.cost_minor_options,
                 source_kind=template.source_kind,
                 sort_order=template.sort_order,
                 budget_amount=initial_budget,
@@ -809,6 +1013,7 @@ def project_budget_item_views(db: Session, project_id: int) -> list[ProjectBudge
                 name=item.name,
                 cost_major=item.cost_major,
                 cost_minor=item.cost_minor,
+                cost_minor_options=parse_cost_minor_options(item.cost_minor_options) or ([item.cost_minor] if item.cost_minor else []),
                 source_kind=item.source_kind,
                 sort_order=item.sort_order,
                 budget_amount=budget,
@@ -1035,6 +1240,13 @@ def upgrade_schema() -> None:
             ("start_date", "DATE"),
             ("planned_end_date", "DATE"),
             ("description", "TEXT"),
+            ("project_sub_category", "VARCHAR(80)"),
+        ],
+        "config_options": [
+            ("parent_id", "INTEGER"),
+            ("level", "INTEGER NOT NULL DEFAULT 1"),
+            ("path", "VARCHAR(255)"),
+            ("is_leaf", "BOOLEAN NOT NULL DEFAULT 1"),
         ],
         "customers": [
             ("contact_name", "VARCHAR(100)"),
@@ -1111,6 +1323,10 @@ def upgrade_schema() -> None:
         ],
         "project_budget_items": [
             ("sort_order", "INTEGER NOT NULL DEFAULT 0"),
+            ("cost_minor_options", "TEXT"),
+        ],
+        "budget_item_templates": [
+            ("cost_minor_options", "TEXT"),
         ],
         "worklogs": [
             ("approver_user_id", "INTEGER"),
@@ -1207,6 +1423,8 @@ def upgrade_schema() -> None:
         connection.execute(text("UPDATE payments SET version = 1 WHERE version IS NULL OR version < 1"))
         # 旧项目类型已不再属于当前业务范围，配置记录也直接删除而非仅停用。
         connection.execute(text("DELETE FROM config_options WHERE category = 'project_type' AND (value IN ('研发项目', '客户项目', '内部项目', 'CUSTOMER_PROJECT', 'INTERNAL_PROJECT') OR label IN ('研发项目', '客户项目', '内部项目'))"))
+        # v3.0.59 起项目分类改用 project_category / project_sub_category 两级树，扁平的 project_type 分类整体下线。
+        connection.execute(text("DELETE FROM config_options WHERE category = 'project_type'"))
 
 
 def ensure_user(db: Session, feishu_id: str, open_id: str, name: str, department_id: int, manager_name: str | None = None) -> User:
@@ -1287,16 +1505,19 @@ def seed_data() -> None:
     db = SessionLocal()
     try:
         seed_config_options(db)
+        seed_classification_trees(db)
         seed_budget_item_templates(db)
         seed_notification_policies(db)
         seed_rbac(db)
         seed_approval_workflows(db)
+        normalize_project_categories(db)
         ensure_all_project_budget_items(db)
         backfill_ledger_budget_snapshots(db)
         db.flush()
         if not demo_seed_enabled():
             repair_legacy_approval_tasks(db)
             reset_rbac_configuration(db)
+            normalize_project_categories(db)
             ensure_all_project_budget_items(db)
             backfill_ledger_budget_snapshots(db)
             db.commit()
@@ -1628,6 +1849,8 @@ def project_view(db: Session, project: Project) -> ProjectView:
     payload.update(
         department_path=department_index.path(project.department_id),
         customer_name=customer.name if customer else project.customer_name,
+        project_category_label=PROJECT_CATEGORY_LABELS.get(project.project_type, project.project_type),
+        project_sub_category_label=project_sub_category_label(db, project.project_sub_category),
         budget_days=budget_days,
         budget_cost=budget_cost,
         expense_budget=expense_budget,
@@ -2910,6 +3133,19 @@ def resolve_counterparty_name(db: Session, counterparty_type: str, counterparty_
     return supplier.name
 
 
+def resolve_project_classification(db: Session, project_type: str | None, sub_category: str | None) -> tuple[str, str | None]:
+    """校验并归一并项目大类与小类；小类必须属于所选大类。"""
+    major, derived_sub = resolve_project_category(project_type)
+    raw_sub = (sub_category or "").strip() or None
+    if raw_sub is None:
+        return major, derived_sub
+    major_option = db.scalar(select(ConfigOption).where(ConfigOption.category == "project_category", ConfigOption.value == major))
+    minor_option = db.scalar(select(ConfigOption).where(ConfigOption.category == "project_sub_category", ConfigOption.value == raw_sub, ConfigOption.is_active.is_(True)))
+    if not minor_option or not major_option or minor_option.parent_id != major_option.id:
+        raise HTTPException(400, "INVALID_PROJECT_SUB_CATEGORY")
+    return major, raw_sub
+
+
 def apply_project_master_fields(project: Project, db: Session, payload: ProjectCreate | ProjectUpdate) -> None:
     """写入项目主信息；客户名称同时保存快照，避免主数据更名影响历史展示。"""
     customer = active_customer(db, payload.customer_id)
@@ -3975,6 +4211,73 @@ def list_config_options(x_demo_user_id: int | None = Header(default=None), db: S
     return config_catalog(db, active_only=True)
 
 
+def classification_tree(db: Session, parent_category: str, active_only: bool) -> list[ClassificationNode]:
+    """组装两棵层级分类树；上级为项目/成本大类，下级为对应小类。"""
+    child_category = CLASSIFICATION_TREE_CATEGORIES[parent_category]
+    parents_query = select(ConfigOption).where(ConfigOption.category == parent_category)
+    children_query = select(ConfigOption).where(ConfigOption.category == child_category)
+    if active_only:
+        parents_query = parents_query.where(ConfigOption.is_active.is_(True))
+        children_query = children_query.where(ConfigOption.is_active.is_(True))
+    parents = db.scalars(parents_query.order_by(ConfigOption.sort_order, ConfigOption.id)).all()
+    children = db.scalars(children_query.order_by(ConfigOption.sort_order, ConfigOption.id)).all()
+    grouped: dict[int, list[ConfigOption]] = defaultdict(list)
+    for child in children:
+        if child.parent_id:
+            grouped[child.parent_id].append(child)
+    return [
+        ClassificationNode(
+            id=parent.id,
+            value=parent.value,
+            label=parent.label,
+            parent_id=parent.parent_id,
+            level=parent.level,
+            path=parent.path,
+            is_leaf=parent.is_leaf,
+            is_active=parent.is_active,
+            is_builtin=parent.is_builtin,
+            sort_order=parent.sort_order,
+            children=[
+                ClassificationNode(
+                    id=child.id,
+                    value=child.value,
+                    label=child.label,
+                    parent_id=child.parent_id,
+                    level=child.level,
+                    path=child.path,
+                    is_leaf=child.is_leaf,
+                    is_active=child.is_active,
+                    is_builtin=child.is_builtin,
+                    sort_order=child.sort_order,
+                )
+                for child in grouped.get(parent.id, [])
+            ],
+        )
+        for parent in parents
+    ]
+
+
+def classification_catalog(db: Session, active_only: bool) -> ClassificationCatalog:
+    return ClassificationCatalog(
+        project_category=classification_tree(db, "project_category", active_only),
+        cost_category=classification_tree(db, "cost_category", active_only),
+    )
+
+
+@app.get("/api/v1/config/classifications", response_model=ClassificationCatalog)
+def list_classifications(x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ClassificationCatalog:
+    """读取启用中的项目分类树与成本分类树，供业务表单联动使用。"""
+    current_user(db, x_demo_user_id)
+    return classification_catalog(db, active_only=True)
+
+
+@app.get("/api/v1/admin/config/classifications", response_model=ClassificationCatalog)
+def list_admin_classifications(x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ClassificationCatalog:
+    """后台基础配置读取完整分类树，包含停用节点。"""
+    require_admin_permission(db, "configuration", x_demo_user_id)
+    return classification_catalog(db, active_only=False)
+
+
 @app.get("/api/v1/admin/config/options", response_model=ConfigOptionCatalog)
 def list_admin_config_options(x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ConfigOptionCatalog:
     require_admin_permission(db, "configuration", x_demo_user_id)
@@ -3982,8 +4285,9 @@ def list_admin_config_options(x_demo_user_id: int | None = Header(default=None),
 
 
 def config_option_usage_count(db: Session, option: ConfigOption) -> int:
-    if option.category == "project_type":
-        return int(db.scalar(select(func.count(Project.id)).where(Project.project_type == option.value)) or 0)
+    if option.category in ("project_category", "project_sub_category"):
+        column = Project.project_type if option.category == "project_category" else Project.project_sub_category
+        return int(db.scalar(select(func.count(Project.id)).where(column == option.value)) or 0)
     if option.category == "project_stage":
         return int(db.scalar(select(func.count(Worklog.id)).where(Worklog.stage == option.value)) or 0)
     if option.category == "work_type":
@@ -3992,7 +4296,41 @@ def config_option_usage_count(db: Session, option: ConfigOption) -> int:
         return int(db.scalar(select(func.count(Worklog.id)).where(Worklog.work_status == option.value)) or 0)
     if option.category == "project_status":
         return int(db.scalar(select(func.count(Project.id)).where(Project.status == option.value)) or 0)
+    if option.category == "cost_category":
+        return int(db.scalar(select(func.count(BudgetItemTemplate.id)).where(BudgetItemTemplate.cost_major == option.label)) or 0)
+    if option.category == "cost_sub_category":
+        return int(db.scalar(select(func.count(BudgetItemTemplate.id)).where(BudgetItemTemplate.cost_minor == option.label)) or 0)
     return 0
+
+
+def resolve_classification_parent(db: Session, category: str, parent_id: int | None) -> tuple[int | None, int]:
+    """校验分类项的层级归属，返回（上级 ID，层级）。"""
+    parent_category = next((parent for parent, child in CLASSIFICATION_TREE_CATEGORIES.items() if child == category), None)
+    if parent_category is None:
+        if parent_id:
+            raise HTTPException(400, "INVALID_CONFIG_PARENT")
+        return None, 1
+    if not parent_id:
+        return None, 1
+    parent = db.get(ConfigOption, parent_id)
+    if not parent or parent.category != parent_category:
+        raise HTTPException(400, "INVALID_CONFIG_PARENT")
+    return parent.id, 2
+
+
+def apply_classification_paths(db: Session, option: ConfigOption) -> None:
+    """写入分类项的 path，并在其成为上级时更新 is_leaf。"""
+    if option.parent_id:
+        option.level = 2
+        option.is_leaf = True
+        option.path = f"/{option.parent_id}/{option.id}/"
+        parent = db.get(ConfigOption, option.parent_id)
+        if parent:
+            parent.is_leaf = False
+    else:
+        option.level = 1
+        option.is_leaf = True
+        option.path = f"/{option.id}/"
 
 
 @app.post("/api/v1/admin/config/options", response_model=ConfigOptionView, status_code=201)
@@ -4004,9 +4342,11 @@ def create_config_option(payload: ConfigOptionCreate, x_demo_user_id: int | None
     duplicate = db.scalar(select(ConfigOption).where(ConfigOption.category == payload.category, ConfigOption.value == payload.value))
     if duplicate:
         raise HTTPException(409, "CONFIG_OPTION_EXISTS")
-    option = ConfigOption(category=payload.category, value=payload.value, label=payload.label, sort_order=payload.sort_order, is_active=payload.is_active, is_builtin=False)
+    parent_id, level = resolve_classification_parent(db, payload.category, payload.parent_id)
+    option = ConfigOption(category=payload.category, value=payload.value, label=payload.label, parent_id=parent_id, level=level, is_leaf=True, sort_order=payload.sort_order, is_active=payload.is_active, is_builtin=False)
     db.add(option)
     db.flush()
+    apply_classification_paths(db, option)
     audit(db, "config_option", option.id, "CREATE", admin.id, None, option.label)
     db.commit()
     db.refresh(option)
@@ -4022,10 +4362,14 @@ def update_config_option(option_id: int, payload: ConfigOptionUpdate, x_demo_use
         raise HTTPException(404, "CONFIG_OPTION_NOT_FOUND")
     if not payload.is_active and config_option_usage_count(db, option):
         raise HTTPException(409, "CONFIG_OPTION_IN_USE")
+    if "parent_id" in payload.model_fields_set:
+        parent_id, _ = resolve_classification_parent(db, option.category, payload.parent_id)
+        option.parent_id = parent_id
     old_label = option.label
     option.label = payload.label
     option.sort_order = payload.sort_order
     option.is_active = payload.is_active
+    apply_classification_paths(db, option)
     audit(db, "config_option", option.id, "UPDATE", admin.id, old_label, option.label)
     db.commit()
     db.refresh(option)
@@ -4041,6 +4385,9 @@ def delete_config_option(option_id: int, x_demo_user_id: int | None = Header(def
         raise HTTPException(404, "CONFIG_OPTION_NOT_FOUND")
     if option.is_builtin:
         raise HTTPException(409, "BUILTIN_CONFIG_OPTION_DISABLE_ONLY")
+    child = db.scalar(select(ConfigOption.id).where(ConfigOption.parent_id == option.id))
+    if child:
+        raise HTTPException(409, "CONFIG_OPTION_HAS_CHILDREN")
     if config_option_usage_count(db, option):
         raise HTTPException(409, "CONFIG_OPTION_IN_USE")
     db.delete(option)
@@ -4254,6 +4601,7 @@ def list_projects_page(
     page_size: int = Query(default=20, ge=1, le=200),
     keyword: str | None = None,
     project_type: str | None = None,
+    project_sub_category: str | None = None,
     status: str | None = None,
     department_id: int | None = Query(default=None, gt=0),
     owner_user_id: int | None = Query(default=None, gt=0),
@@ -4280,6 +4628,8 @@ def list_projects_page(
         query = query.where(Project.name.contains(value) | Project.code.contains(value))
     if project_type:
         query = query.where(Project.project_type == project_type)
+    if project_sub_category:
+        query = query.where(Project.project_sub_category == project_sub_category)
     if status:
         query = query.where(Project.status == status)
     if department_id:
@@ -4304,10 +4654,10 @@ def create_project(payload: ProjectCreate, x_demo_user_id: int | None = Header(d
     require_access(db, "projects", "CREATE", x_demo_user_id)
     if db.scalar(select(Project).where(Project.code == payload.code)):
         raise HTTPException(409, "PROJECT_CODE_EXISTS")
-    validate_config_option(db, "project_type", payload.project_type)
     validate_config_option(db, "project_status", payload.status)
+    major, sub_category = resolve_project_classification(db, payload.project_type, payload.project_sub_category)
     department = active_org_department(db, payload.department_id)
-    project = Project(code=payload.code, name=payload.name, project_type=payload.project_type, owner_name="", department_id=department.id, department_name=department.name, budget_days=payload.budget_days, budget_cost=payload.budget_cost, expense_budget=0, status=payload.status, allow_worklog=payload.allow_worklog)
+    project = Project(code=payload.code, name=payload.name, project_type=major, project_sub_category=sub_category, owner_name="", department_id=department.id, department_name=department.name, budget_days=payload.budget_days, budget_cost=payload.budget_cost, expense_budget=0, status=payload.status, allow_worklog=payload.allow_worklog)
     apply_project_master_fields(project, db, payload)
     apply_project_users(project, db, payload.owner_user_id, payload.approver_user_id, payload.leader_user_id)
     db.add(project)
@@ -4349,12 +4699,14 @@ def create_budget_item_template(payload: BudgetItemTemplateCreate, x_demo_user_i
         suffix = f"_{sequence}"
         candidate = f"{code[:80 - len(suffix)]}{suffix}"
         sequence += 1
+    validate_cost_minor_options(db, payload.cost_minor_options)
     template = BudgetItemTemplate(
         project_category=payload.project_category,
         code=candidate,
         name=payload.name.strip(),
         cost_major=payload.cost_major.strip(),
         cost_minor=payload.cost_minor.strip() if payload.cost_minor and payload.cost_minor.strip() else None,
+        cost_minor_options=dump_cost_minor_options(payload.cost_minor_options),
         source_kind=payload.source_kind,
         sort_order=payload.sort_order,
         is_active=payload.is_active,
@@ -4376,10 +4728,12 @@ def update_budget_item_template(template_id: int, payload: BudgetItemTemplateUpd
     if not template:
         raise HTTPException(404, "BUDGET_TEMPLATE_NOT_FOUND")
     old_status = "ACTIVE" if template.is_active else "INACTIVE"
+    validate_cost_minor_options(db, payload.cost_minor_options)
     template.project_category = payload.project_category
     template.name = payload.name.strip()
     template.cost_major = payload.cost_major.strip()
     template.cost_minor = payload.cost_minor.strip() if payload.cost_minor and payload.cost_minor.strip() else None
+    template.cost_minor_options = dump_cost_minor_options(payload.cost_minor_options)
     template.source_kind = payload.source_kind
     template.sort_order = payload.sort_order
     template.is_active = payload.is_active
@@ -4962,12 +5316,14 @@ def update_project(project_id: int, payload: ProjectUpdate, x_demo_user_id: int 
     duplicate = db.scalar(select(Project).where(Project.code == payload.code, Project.id != project.id))
     if duplicate:
         raise HTTPException(409, "PROJECT_CODE_EXISTS")
-    validate_config_option(db, "project_type", payload.project_type)
     validate_config_option(db, "project_status", payload.status)
+    major, sub_category = resolve_project_classification(db, payload.project_type, payload.project_sub_category)
     old_status = project.status
+    old_category = project.project_type
     project.code = payload.code
     project.name = payload.name
-    project.project_type = payload.project_type
+    project.project_type = major
+    project.project_sub_category = sub_category
     project.budget_days = payload.budget_days
     project.budget_cost = project_budget_total(db, project.id)
     project.expense_budget = 0
@@ -4978,6 +5334,9 @@ def update_project(project_id: int, payload: ProjectUpdate, x_demo_user_id: int 
     project.allow_worklog = payload.allow_worklog
     apply_project_master_fields(project, db, payload)
     apply_project_users(project, db, payload.owner_user_id, payload.approver_user_id, payload.leader_user_id)
+    if old_category != major:
+        # 项目大类切换后按新大类的模板补齐预算项，已有预算金额保持不变。
+        ensure_project_budget_items(db, project)
     audit(db, "project", project.id, "UPDATE", user.id, old_status, project.status)
     db.commit()
     db.refresh(project)
