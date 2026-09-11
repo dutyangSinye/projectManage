@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "xinye-nas-deploy": {
+      "command": "D:\\myproject\\tools\\nas-deploy-mcp\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "nas_deploy_mcp.server"],
+      "env": {
+        "PYTHONPATH": "D:\\myproject\\tools\\nas-deploy-mcp",
+        "PROJECT_ROOT": "D:\\myproject",
+        "NAS_HOST": "192.168.112.188",
+        "NAS_SSH_PORT": "10000",
+        "NAS_USERNAME": "",
+        "NAS_PASSWORD": "",
+        "NAS_DEPLOY_DIR": "/volume1/docker/xinye-workhours",
+        "NAS_HTTP_URL": "http://192.168.112.188:8088"
+      }
+    }
+  }
+}

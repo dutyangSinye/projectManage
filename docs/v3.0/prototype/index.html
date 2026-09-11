@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0f766e">
+  <title>综合项目管理系统 · v3.0.44 项目费用与审批原型</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="brand-mark">综</span>
+        <span class="brand-copy"><strong>综合项目管理系统</strong><small>工时与项目经营一体化</small></span>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-link" data-route="workbench"><span class="nav-icon">⌂</span><span>工作台</span></button>
+        <div class="nav-group">
+          <button class="nav-group-title" type="button"><span>工时管理</span><span>⌄</span></button>
+          <div class="nav-group-items">
+            <button class="nav-link" data-route="my-worklogs"><span class="nav-icon">时</span><span>我的工时</span></button>
+            <button class="nav-link" data-route="approvals"><span class="nav-icon">审</span><span>工时审批</span><span class="nav-count">3</span></button>
+            <button class="nav-link" data-route="worklog-board"><span class="nav-icon">析</span><span>工时看板</span></button>
+            <button class="nav-link" data-route="worklog-ledger"><span class="nav-icon">账</span><span>工时台账</span></button>
+          </div>
+        </div>
+        <div class="nav-group">
+          <button class="nav-group-title" type="button"><span>项目管理</span><span>⌄</span></button>
+          <div class="nav-group-items">
+            <button class="nav-link" data-route="projects"><span class="nav-icon">项</span><span>项目管理</span></button>
+            <button class="nav-link" data-route="contracts"><span class="nav-icon">合</span><span>项目合同</span></button>
+            <button class="nav-link" data-route="receipts"><span class="nav-icon">收</span><span>合同收款</span><span class="nav-count warning">2</span></button>
+            <button class="nav-link" data-route="payments"><span class="nav-icon">付</span><span>合同付款</span><span class="nav-count warning">1</span></button>
+            <button class="nav-link" data-route="project-expenses"><span class="nav-icon">费</span><span>项目费用</span><span class="nav-count warning">4</span></button>
+            <button class="nav-link" data-route="project-board"><span class="nav-icon">图</span><span>项目看板</span></button>
+            <button class="nav-link" data-route="suppliers"><span class="nav-icon">供</span><span>供应商管理</span></button>
+            <button class="nav-link" data-route="customers"><span class="nav-icon">客</span><span>客户管理</span></button>
+          </div>
+        </div>
+        <div class="nav-group">
+          <button class="nav-group-title" type="button"><span>系统管理</span><span>⌄</span></button>
+          <div class="nav-group-items">
+            <button class="nav-link" data-route="personnel-cost"><span class="nav-icon">人</span><span>人员成本</span></button>
+            <button class="nav-link" data-route="integration"><span class="nav-icon">联</span><span>集成与通知</span></button>
+            <button class="nav-link" data-route="permissions"><span class="nav-icon">权</span><span>管理员管理</span></button>
+            <button class="nav-link" data-route="approval-positions"><span class="nav-icon">岗</span><span>审批岗位</span></button>
+            <button class="nav-link" data-route="workflows"><span class="nav-icon">流</span><span>审批流程</span></button>
+            <button class="nav-link" data-route="configuration"><span class="nav-icon">配</span><span>基础配置</span></button>
+          </div>
+        </div>
+      </nav>
+      <div class="sidebar-footer">
+        <span class="online-dot"></span>
+        <span>飞书连接正常</span>
+      </div>
+    </aside>
+
+    <div class="app-main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="icon-btn mobile-menu" id="mobileMenu" title="展开导航">☰</button>
+          <div class="breadcrumb"><span>综合项目管理系统</span><b>/</b><strong id="breadcrumb">工作台</strong></div>
+        </div>
+        <div class="topbar-actions">
+          <button class="icon-btn notification-btn" title="待办消息">◷<span>5</span></button>
+          <div class="user-menu"><span class="avatar">杨</span><span><strong>杨阳</strong><small>产品研发部</small></span><i>⌄</i></div>
+        </div>
+      </header>
+      <main id="page" class="page"></main>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header class="modal-head"><div><small id="modalEyebrow"></small><h2 id="modalTitle"></h2></div><button class="icon-btn" data-close-modal title="关闭">×</button></header>
+      <div class="modal-body" id="modalBody"></div>
+      <footer class="modal-foot" id="modalFoot"></footer>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="./app.js"></script>
+</body>
+</html>
+

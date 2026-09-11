@@ -1,0 +1,12 @@
+# 统一换行符策略：仓库内存 LF，检出到工作区时按文件类型决定
+* text=auto
+
+# 部署与脚本类必须保持 LF，否则 Docker / nginx / shell 在 Windows 检出后会失效
+Dockerfile* text eol=lf
+*.conf text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# PowerShell 脚本按 Windows 习惯保持 CRLF
+*.ps1 text eol=crlf

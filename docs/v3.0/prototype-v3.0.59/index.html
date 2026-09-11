@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0f766e">
+  <title>综合项目管理系统 · v3.0.59 项目预算与成本复核原型</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">综</span>
+        <span class="brand-copy">
+          <strong>综合项目管理系统</strong>
+          <small>SINYE PROJECT MANAGE SYSTEM</small>
+        </span>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-link" data-route="workbench"><span>⌂</span>工作台</button>
+        <div class="nav-title">工时管理</div>
+        <button class="nav-link" data-route="worklogs"><span>时</span>我的工时</button>
+        <button class="nav-link" data-route="worklog-approval"><span>审</span>工时审批</button>
+        <button class="nav-link" data-route="worklog-board"><span>析</span>工时看板</button>
+        <div class="nav-title">项目管理</div>
+        <button class="nav-link" data-route="projects"><span>项</span>项目管理</button>
+        <button class="nav-link" data-route="project-detail"><span>账</span>项目详情</button>
+        <button class="nav-link" data-route="project-budget-items"><span>预</span>项目预算项</button>
+        <button class="nav-link" data-route="contracts"><span>合</span>项目合同</button>
+        <button class="nav-link" data-route="contract-receipts"><span>收</span>合同收款</button>
+        <button class="nav-link" data-route="contract-payments"><span>付</span>合同付款</button>
+        <button class="nav-link" data-route="project-costs"><span>费</span>项目费用</button>
+        <button class="nav-link" data-route="labor-costs"><span>人</span>人工成本结转</button>
+        <button class="nav-link" data-route="cost-review"><span>核</span>费用复核</button>
+        <button class="nav-link" data-route="project-board"><span>板</span>项目看板</button>
+        <button class="nav-link" data-route="counterparties"><span>客</span>客户/供应商</button>
+        <div class="nav-title">系统管理</div>
+        <button class="nav-link" data-route="configuration"><span>配</span>基础配置</button>
+        <button class="nav-link" data-route="integration"><span>联</span>集成与通知</button>
+        <button class="nav-link" data-route="permissions"><span>权</span>角色权限</button>
+      </nav>
+      <div class="sidebar-foot">飞书组织与通知已连接</div>
+    </aside>
+
+    <section class="main">
+      <header class="topbar">
+        <div>
+          <div class="crumb">v3.0.59 设计原型 / <strong id="crumb">工作台</strong></div>
+          <h1 id="pageTitle">工作台</h1>
+        </div>
+        <div class="top-actions">
+          <button class="ghost" data-route="cost-review">待复核 3</button>
+          <button class="primary" data-modal="new-cost">新增项目费用</button>
+          <div class="user">杨阳 · 产品研发部</div>
+        </div>
+      </header>
+      <main id="page" class="page"></main>
+    </section>
+  </div>
+
+  <div class="modal-mask" id="modalMask" hidden>
+    <section class="modal">
+      <header>
+        <div>
+          <small id="modalSub">业务操作</small>
+          <h2 id="modalTitle">新增</h2>
+        </div>
+        <button class="icon" data-close>×</button>
+      </header>
+      <div id="modalBody" class="modal-body"></div>
+      <footer id="modalFoot"></footer>
+    </section>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <script src="./app.js"></script>
+</body>
+</html>

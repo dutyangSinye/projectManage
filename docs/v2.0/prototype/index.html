@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>芯烨工时管理系统 · v2.0 原型</title>
+  <style>
+    :root{--primary:#087f72;--primary-dark:#075f56;--success:#16803c;--warning:#b45309;--error:#c2413b;--info:#2563a8;--page:#f4f7f7;--card:#fff;--text:#172b2a;--muted:#607271;--line:#dce7e5;--soft:#e8f3f1;--radius:8px;--s4:4px;--s8:8px;--s12:12px;--s16:16px;--s24:24px;--s32:32px;--shadow:0 8px 24px rgba(20,57,54,.08)}
+    *{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--text);font:14px/1.6 system-ui,"Microsoft YaHei",sans-serif}a{color:inherit;text-decoration:none}.wrap{max-width:1160px;margin:auto;padding:32px 24px}.hero{display:flex;justify-content:space-between;gap:24px;align-items:end;margin-bottom:24px}.eyebrow{color:var(--primary);font-size:12px;font-weight:700;letter-spacing:.08em}.hero h1{font-size:28px;line-height:1.2;margin:8px 0}.muted{color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)}.card h2{font-size:18px;margin:0 0 8px}.flow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0 24px}.step{padding:8px 12px;background:var(--soft);border-radius:6px;font-weight:600}.arrow{color:var(--muted)}.links{display:grid;gap:8px;margin-top:12px}.link{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);padding:12px;border-radius:6px;background:#fff}.link:hover{border-color:var(--primary);color:var(--primary)}.swatches{display:flex;gap:8px;flex-wrap:wrap}.swatch{width:96px;height:58px;border-radius:6px;padding:8px;color:#fff;font-size:12px}.primary{background:var(--primary)}.success{background:var(--success)}.warning{background:var(--warning)}.error{background:var(--error)}.info{background:var(--info)}.neutral{background:#607271}.check{margin:0;padding-left:20px}.check li{margin:8px 0}.badge{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--soft);color:var(--primary);font-size:12px}@media(max-width:760px){.wrap{padding:20px 16px}.hero{display:block}.grid{grid-template-columns:1fr}.hero h1{font-size:24px}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="hero"><div><div class="eyebrow">DESIGN PROTOTYPE / V2.0</div><h1>芯烨工时管理系统</h1><div class="muted">逐条提交、逐条审批，飞书只负责及时通知。</div></div><span class="badge">待视觉确认</span></div>
+    <div class="card"><h2>核心流程</h2><div class="flow"><span class="step">填写一条工时</span><span class="arrow">→</span><span class="step">保存并提交</span><span class="arrow">→</span><span class="step">飞书通知审批人</span><span class="arrow">→</span><span class="step">系统内通过/驳回</span></div><div class="muted">周期只用于统计、筛选和锁账，不再作为提交入口。</div></div>
+    <div class="grid" style="margin-top:16px"><section class="card"><h2>页面原型</h2><div class="links"><a class="link" href="page-01-my-worklogs.html"><span>01 · 我的工时</span><span>单条提交 →</span></a><a class="link" href="page-02-pending-approvals.html"><span>02 · 待我审批</span><span>审批任务 →</span></a><a class="link" href="page-03-approval-detail.html"><span>03 · 审批详情</span><span>通过/驳回 →</span></a><a class="link" href="page-04-project-approver.html"><span>04 · 项目审批人</span><span>项目配置 →</span></a></div></section><section class="card"><h2>设计 Token</h2><div class="swatches"><span class="swatch primary">主色<br>#087F72</span><span class="swatch success">通过<br>#16803C</span><span class="swatch warning">待处理<br>#B45309</span><span class="swatch error">驳回<br>#C2413B</span><span class="swatch info">信息<br>#2563A8</span></div><p class="muted">页面背景 #F4F7F7 · 文字 #172B2A · 基准间距 4/8/12/16/24/32 · 圆角 8px</p></section></div>
+    <section class="card" style="margin-top:16px"><h2>审查清单</h2><ol class="check"><li>单条提交是否比周期合并更符合实际工作内容？</li><li>默认“保存并提交”与“保存草稿”的主次关系是否清晰？</li><li>待我审批列表和详情中的通过/驳回路径是否足够直接？</li><li>驳回原因、通知失败和重新提交状态是否容易追踪？</li><li>请点击各页面右下角的五态切换器，检查加载、空、错误、成功状态。</li></ol></section>
+  </main>
+</body>
+</html>

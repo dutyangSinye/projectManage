@@ -1,0 +1,50 @@
+services:
+  backend:
+    image: xinye-project-management_backend
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+      args:
+        RUNTIME_IMAGE: ${NAS_RUNTIME_IMAGE:-xinye-project-management_runtime:20260905}
+    container_name: xinye-workhours-api
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      DATABASE_URL: sqlite:////app/data/workhours.db
+      FEISHU_MODE: ${FEISHU_MODE:-mock}
+      FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+      FEISHU_API_BASE: ${FEISHU_API_BASE:-https://open.feishu.cn}
+      FEISHU_SESSION_SECRET: ${FEISHU_SESSION_SECRET:-}
+      FEISHU_SESSION_MAX_AGE: ${FEISHU_SESSION_MAX_AGE:-28800}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      FEISHU_NOTIFICATION_MODE: ${FEISHU_NOTIFICATION_MODE:-mock}
+      FEISHU_ROBOT_WEBHOOK: ${FEISHU_ROBOT_WEBHOOK:-}
+      SEED_DEMO_CUSTOMER: ${SEED_DEMO_CUSTOMER:-false}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      SYSTEM_ADMIN_USER_IDS: ${SYSTEM_ADMIN_USER_IDS:-}
+      SYSTEM_PUBLIC_URL: ${SYSTEM_PUBLIC_URL:-http://192.168.112.188:8088}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://192.168.112.188:8088}
+      CASH_ATTACHMENT_DIR: ${CASH_ATTACHMENT_DIR:-/app/data/cash-attachments}
+      PROJECT_EXPENSE_ATTACHMENT_DIR: ${PROJECT_EXPENSE_ATTACHMENT_DIR:-/app/data/project-expense-attachments}
+    volumes:
+      - xinye-workhours-data:/app/data
+    expose:
+      - "8000"
+
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: xinye-workhours-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "8088:80"
+    volumes:
+      - ../dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  xinye-workhours-data:
