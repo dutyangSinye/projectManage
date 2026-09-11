@@ -9,21 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.time_utils import today_local
 
 
-def parse_cost_minor_options(value: object) -> list[str]:
-    """把数据库中以 JSON 文本保存的成本小类候选解析成列表。"""
-    if value is None or value == "":
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value]
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return []
-        return [str(item) for item in parsed] if isinstance(parsed, list) else []
-    return []
-
-
 class UserView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -302,8 +287,6 @@ class ContractView(BaseModel):
     amount: float = 0
     budget_item_id: int | None = None
     budget_item_name: str | None = None
-    cost_major: str | None = None
-    cost_minor: str | None = None
     sign_date: date | None = None
     start_date: date | None = None
     end_date: date | None = None
@@ -469,8 +452,6 @@ class PaymentView(BaseModel):
     payee_bank_account: str | None = None
     budget_item_id: int | None = None
     budget_item_name: str | None = None
-    cost_major: str | None = None
-    cost_minor: str | None = None
     status: str
     submitted_by: int | None = None
     submitted_at: datetime | None = None
@@ -542,9 +523,6 @@ class BudgetItemTemplateView(BaseModel):
     project_category: str
     code: str
     name: str
-    cost_major: str
-    cost_minor: str | None = None
-    cost_minor_options: list[str] = []
     source_kind: str = "MIXED"
     sort_order: int = 0
     is_active: bool = True
@@ -552,27 +530,14 @@ class BudgetItemTemplateView(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
-    @field_validator("cost_minor_options", mode="before")
-    @classmethod
-    def _normalize_cost_minor_options(cls, value: object) -> list[str]:
-        return parse_cost_minor_options(value)
-
 
 class BudgetItemTemplateCreate(BaseModel):
     project_category: Literal["BUSINESS_PROJECT", "RND_PROJECT"]
     code: str | None = Field(default=None, max_length=80)
     name: str = Field(min_length=1, max_length=120)
-    cost_major: str = Field(min_length=1, max_length=120)
-    cost_minor: str | None = Field(default=None, max_length=120)
-    cost_minor_options: list[str] = []
     source_kind: Literal["LABOR", "CONTRACT_PAYMENT", "PROJECT_EXPENSE", "MIXED"] = "MIXED"
     sort_order: int = Field(default=0, ge=0, le=100000)
     is_active: bool = True
-
-    @field_validator("cost_minor_options", mode="before")
-    @classmethod
-    def _normalize_cost_minor_options(cls, value: object) -> list[str]:
-        return parse_cost_minor_options(value)
 
 
 class BudgetItemTemplateUpdate(BudgetItemTemplateCreate):
@@ -586,9 +551,6 @@ class ProjectBudgetItemView(BaseModel):
     template_id: int | None = None
     code: str
     name: str
-    cost_major: str
-    cost_minor: str | None = None
-    cost_minor_options: list[str] = []
     source_kind: str = "MIXED"
     sort_order: int = 0
     budget_amount: float = 0
@@ -599,11 +561,6 @@ class ProjectBudgetItemView(BaseModel):
     remark: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
-
-    @field_validator("cost_minor_options", mode="before")
-    @classmethod
-    def _normalize_cost_minor_options(cls, value: object) -> list[str]:
-        return parse_cost_minor_options(value)
 
 
 class ProjectBudgetItemUpdate(BaseModel):
@@ -1011,8 +968,6 @@ class ProjectExpenseView(BaseModel):
     cost_amount: float
     budget_item_id: int | None = None
     budget_item_name: str | None = None
-    cost_major: str | None = None
-    cost_minor: str | None = None
     requires_payment: bool
     payee_name: str | None = None
     payee_bank_name: str | None = None
@@ -1255,10 +1210,9 @@ class ClassificationNode(BaseModel):
 
 
 class ClassificationCatalog(BaseModel):
-    """按上级分类返回两棵树：项目分类树与成本分类树。"""
+    """按上级分类返回分类树；成本分类已并入统一 8 项预算项，不再单独成树。"""
 
     project_category: list[ClassificationNode] = []
-    cost_category: list[ClassificationNode] = []
 
 
 class ConfigOptionCatalog(BaseModel):
@@ -1473,7 +1427,6 @@ class ProjectCostEntryCreate(BaseModel):
     entry_kind: Literal["PROJECT_EXPENSE", "PERSONNEL_COST"] = "PROJECT_EXPENSE"
     project_id: int = Field(gt=0)
     budget_item_id: int | None = Field(default=None, gt=0)
-    cost_minor: str | None = Field(default=None, max_length=120)
     amount: float = Field(gt=0, le=1000000000)
     occurred_on: date | None = None
     accounting_month: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -1530,8 +1483,6 @@ class ProjectCostEntryView(BaseModel):
     applicant_department_name: str | None = None
     budget_item_id: int | None = None
     budget_item_name: str | None = None
-    cost_major: str | None = None
-    cost_minor: str | None = None
     amount: float
     occurred_on: date | None = None
     accounting_month: str | None = None
@@ -1571,8 +1522,6 @@ class CostReviewItem(BaseModel):
     project_name: str
     project_code: str
     budget_item_name: str | None = None
-    cost_major: str | None = None
-    cost_minor: str | None = None
     amount: float
     occurred_on: date | None = None
     accounting_month: str | None = None

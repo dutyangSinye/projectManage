@@ -260,9 +260,6 @@ class BudgetItemTemplate(Base):
     project_category: Mapped[str] = mapped_column(String(40), nullable=False)
     code: Mapped[str] = mapped_column(String(80), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    cost_major: Mapped[str] = mapped_column(String(120), nullable=False)
-    cost_minor: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    cost_minor_options: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_kind: Mapped[str] = mapped_column(String(40), default="MIXED", nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -282,9 +279,6 @@ class ProjectBudgetItem(Base):
     template_id: Mapped[int | None] = mapped_column(ForeignKey("budget_item_templates.id"), nullable=True)
     code: Mapped[str] = mapped_column(String(80), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    cost_major: Mapped[str] = mapped_column(String(120), nullable=False)
-    cost_minor: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    cost_minor_options: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_kind: Mapped[str] = mapped_column(String(40), default="MIXED", nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     budget_amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0, nullable=False)
@@ -400,8 +394,8 @@ class AuditLog(Base):
 class ConfigOption(Base):
     """管理员可维护的业务下拉选项；value 用于存储，label 用于展示。
 
-    `project_category`、`project_sub_category`、`cost_category`、`cost_sub_category`
-    四类分类项使用层级字段构成父子树：`level=1` 为上级，`level=2` 为下级，
+    `project_category`、`project_sub_category` 两类分类项使用层级字段构成父子树：
+    `level=1` 为上级，`level=2` 为下级，
     下级通过 `parent_id` 指向上级，`path` 保存祖先路径便于排序与判重。
     """
 
@@ -439,8 +433,6 @@ class Contract(Base):
     amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0, nullable=False)
     budget_item_id: Mapped[int | None] = mapped_column(ForeignKey("project_budget_items.id"), nullable=True)
     budget_item_name_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    cost_major_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    cost_minor_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
     sign_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -541,8 +533,6 @@ class Payment(Base):
     payee_bank_account: Mapped[str | None] = mapped_column(String(100), nullable=True)
     budget_item_id: Mapped[int | None] = mapped_column(ForeignKey("project_budget_items.id"), nullable=True)
     budget_item_name_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    cost_major_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    cost_minor_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="DRAFT", nullable=False)
     submitted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -569,8 +559,6 @@ class ProjectLedgerEntry(Base):
     occurred_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     budget_item_id: Mapped[int | None] = mapped_column(ForeignKey("project_budget_items.id"), nullable=True)
     budget_item_name_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    cost_major_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    cost_minor_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
     reversal_of_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(160), unique=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
@@ -738,8 +726,6 @@ class ProjectExpense(Base):
     cost_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     budget_item_id: Mapped[int | None] = mapped_column(ForeignKey("project_budget_items.id"), nullable=True)
     budget_item_name_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    cost_major_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    cost_minor_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
     requires_payment: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     payee_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
     payee_bank_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -814,8 +800,6 @@ class ProjectCostEntry(Base):
     applicant_department_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     budget_item_id: Mapped[int | None] = mapped_column(ForeignKey("project_budget_items.id"), nullable=True)
     budget_item_name_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    cost_major_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    cost_minor_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
     amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     occurred_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     accounting_month: Mapped[str | None] = mapped_column(String(7), nullable=True)

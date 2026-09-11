@@ -188,8 +188,6 @@ type ProjectContract = {
   amount: number;
   budget_item_id?: number | null;
   budget_item_name?: string | null;
-  cost_major?: string | null;
-  cost_minor?: string | null;
   sign_date: string | null;
   start_date: string | null;
   end_date: string | null;
@@ -278,8 +276,6 @@ type Payment = {
   payee_bank_account: string | null;
   budget_item_id?: number | null;
   budget_item_name?: string | null;
-  cost_major?: string | null;
-  cost_minor?: string | null;
   status: string;
   submitted_at: string | null;
   approved_at: string | null;
@@ -463,9 +459,6 @@ type BudgetItemTemplate = {
   project_category: "BUSINESS_PROJECT" | "RND_PROJECT";
   code: string;
   name: string;
-  cost_major: string;
-  cost_minor: string | null;
-  cost_minor_options: string[];
   source_kind: "LABOR" | "CONTRACT_PAYMENT" | "PROJECT_EXPENSE" | "MIXED";
   sort_order: number;
   is_active: boolean;
@@ -477,9 +470,6 @@ type ProjectBudgetItem = {
   template_id: number | null;
   code: string;
   name: string;
-  cost_major: string;
-  cost_minor: string | null;
-  cost_minor_options: string[];
   source_kind: "LABOR" | "CONTRACT_PAYMENT" | "PROJECT_EXPENSE" | "MIXED";
   sort_order: number;
   budget_amount: number;
@@ -627,8 +617,6 @@ type ProjectExpense = {
   cost_amount: number;
   budget_item_id?: number | null;
   budget_item_name?: string | null;
-  cost_major?: string | null;
-  cost_minor?: string | null;
   requires_payment: boolean;
   payee_name: string | null;
   payee_bank_name: string | null;
@@ -838,7 +826,6 @@ type ClassificationNode = {
 };
 type ClassificationCatalog = {
   project_category: ClassificationNode[];
-  cost_category: ClassificationNode[];
 };
 type ConfigCatalog = { options: Record<string, ConfigOption[]> };
 type AdminPermissionList = { items: AdminPermission[]; total: number };
@@ -1159,16 +1146,13 @@ const configurationFormOpen = ref(false);
 const configurationEditingId = ref<number | null>(null);
 const classificationCatalog = ref<ClassificationCatalog>({
   project_category: [],
-  cost_category: [],
 });
 const classificationLoading = ref(false);
-const classificationTreeKey = ref<"project_category" | "cost_category">(
-  "project_category",
-);
+const classificationTreeKey = ref<"project_category">("project_category");
 const classificationFormOpen = ref(false);
 const classificationEditingId = ref<number | null>(null);
 const classificationForm = reactive({
-  tree: "project_category" as "project_category" | "cost_category",
+  tree: "project_category" as "project_category",
   parent_id: null as number | null,
   value: "",
   label: "",
@@ -1451,9 +1435,6 @@ const budgetTemplateForm = reactive({
   project_category: "BUSINESS_PROJECT" as "BUSINESS_PROJECT" | "RND_PROJECT",
   code: "",
   name: "",
-  cost_major: "",
-  cost_minor: "",
-  cost_minor_options: [] as string[],
   source_kind: "MIXED" as "LABOR" | "CONTRACT_PAYMENT" | "PROJECT_EXPENSE" | "MIXED",
   sort_order: 0,
   is_active: true,
@@ -2363,23 +2344,6 @@ watch(projectFilterType, (major) => {
     projectFilterSubCategory.value = "";
   }
 });
-/* 预算项模板的成本大类变化时，小类及其候选集合都要按新大类收敛 */
-watch(
-  () => budgetTemplateForm.cost_major,
-  (majorLabel) => {
-    const labels = costMinorOptions(majorLabel).map((item) => item.label);
-    if (
-      budgetTemplateForm.cost_minor &&
-      !labels.includes(budgetTemplateForm.cost_minor)
-    ) {
-      budgetTemplateForm.cost_minor = "";
-    }
-    budgetTemplateForm.cost_minor_options =
-      budgetTemplateForm.cost_minor_options.filter((label) =>
-        labels.includes(label),
-      );
-  },
-);
 onBeforeUnmount(() => {
   document.body.style.overflow = "";
   disposeCharts();
@@ -4804,17 +4768,10 @@ const configCategoryLabel = (category: string) =>
     project_status: "项目状态",
     project_category: "项目大类",
     project_sub_category: "项目小类",
-    cost_category: "成本大类",
-    cost_sub_category: "成本小类",
   })[category] || category;
 /* 项目分类与成本分类改用树形卡片维护，不出现在左侧扁平静态列表里 */
-const classificationCategories = [
-  "project_category",
-  "project_sub_category",
-  "cost_category",
-  "cost_sub_category",
-];
-const classificationTreeKeys = ["project_category", "cost_category"] as const;
+const classificationCategories = ["project_category", "project_sub_category"];
+const classificationTreeKeys = ["project_category"] as const;
 const flatConfigCategories = computed(() =>
   Object.keys(adminConfigOptions.value).filter(
     (category) => !classificationCategories.includes(category),
@@ -4830,14 +4787,12 @@ watch(flatConfigCategories, (categories) => {
 const visibleClassificationTree = computed(
   () => classificationCatalog.value[classificationTreeKey.value] || [],
 );
-const classificationTreeLabel = (key: "project_category" | "cost_category") =>
-  key === "project_category" ? "项目分类树" : "成本分类树";
-const classificationChildLabel = (key: "project_category" | "cost_category") =>
-  key === "project_category" ? "项目小类" : "成本小类";
-const classificationNodes = computed(() =>
-  classificationCatalog.value.project_category.concat(
-    classificationCatalog.value.cost_category,
-  ),
+const classificationTreeLabel = (key: "project_category") =>
+  key === "project_category" ? "项目分类树" : key;
+const classificationChildLabel = (key: "project_category") =>
+  key === "project_category" ? "项目小类" : key;
+const classificationNodes = computed(
+  () => classificationCatalog.value.project_category,
 );
 /* 项目大类 / 小类的内置兜底名称，分类树未加载时仍能正确展示 */
 const PROJECT_CATEGORY_FALLBACK_LABELS: Record<string, string> = {
@@ -4871,25 +4826,8 @@ const projectSubCategoryOptions = (major: string) => {
   );
   return (node?.children || []).filter((child) => child.is_active);
 };
-/* 成本小类按所选成本大类联动 */
-const costMinorOptions = (majorLabel: string) => {
-  const node = classificationCatalog.value.cost_category.find(
-    (item) => item.label === majorLabel || item.value === majorLabel,
-  );
-  return (node?.children || []).filter((child) => child.is_active);
-};
-const costCategoryOptions = computed(() =>
-  classificationCatalog.value.cost_category.filter((item) => item.is_active),
-);
-/* 预算项允许归集到的成本小类，可多选；未勾选时按单据实际选择的小类归集 */
-const toggleBudgetTemplateMinorOption = (label: string) => {
-  const options = budgetTemplateForm.cost_minor_options;
-  const index = options.indexOf(label);
-  if (index >= 0) options.splice(index, 1);
-  else options.push(label);
-};
 const openClassificationForm = (
-  tree: "project_category" | "cost_category",
+  tree: "project_category",
   parent: ClassificationNode | null,
 ) => {
   classificationEditingId.value = null;
@@ -4909,7 +4847,7 @@ const openClassificationForm = (
   classificationFormOpen.value = true;
 };
 const editClassificationNode = (
-  tree: "project_category" | "cost_category",
+  tree: "project_category",
   node: ClassificationNode,
 ) => {
   classificationEditingId.value = node.id;
@@ -4924,11 +4862,7 @@ const editClassificationNode = (
   classificationFormOpen.value = true;
 };
 const classificationFormCategory = computed(() =>
-  classificationForm.parent_id
-    ? classificationForm.tree === "project_category"
-      ? "project_sub_category"
-      : "cost_sub_category"
-    : classificationForm.tree,
+  classificationForm.parent_id ? "project_sub_category" : classificationForm.tree,
 );
 const saveClassificationNode = async () => {
   const label = classificationForm.label.trim();
@@ -5048,17 +4982,10 @@ const resetBudgetTemplateForm = () => {
     project_category: budgetTemplateCategory.value,
     code: "",
     name: "",
-    cost_major: "",
-    cost_minor: "",
-    cost_minor_options: [],
     source_kind: "MIXED",
     sort_order: (visibleBudgetItemTemplates.value.length + 1) * 10,
     is_active: true,
   });
-};
-const openBudgetTemplateForm = () => {
-  resetBudgetTemplateForm();
-  budgetTemplateFormOpen.value = true;
 };
 const editBudgetTemplate = (template: BudgetItemTemplate) => {
   editingBudgetTemplateId.value = template.id;
@@ -5066,60 +4993,26 @@ const editBudgetTemplate = (template: BudgetItemTemplate) => {
     project_category: template.project_category,
     code: template.code,
     name: template.name,
-    cost_major: template.cost_major,
-    cost_minor: template.cost_minor || "",
-    cost_minor_options: [...(template.cost_minor_options || [])],
     source_kind: template.source_kind,
     sort_order: template.sort_order,
     is_active: template.is_active,
   });
   budgetTemplateFormOpen.value = true;
 };
+/* 预算项已固定为统一 8 项：只允许切换启用状态，其余字段后端一概不接受修改 */
 const saveBudgetTemplate = async () => {
-  if (!budgetTemplateForm.name.trim() || !budgetTemplateForm.cost_major.trim()) {
-    errorMessage.value = "请填写预算项名称和成本大类";
+  if (!editingBudgetTemplateId.value) {
+    errorMessage.value = "预算项已固定为统一 8 项，不支持新增";
     return;
   }
   try {
-    const payload = {
-      project_category: budgetTemplateForm.project_category,
-      code: budgetTemplateForm.code.trim() || null,
-      name: budgetTemplateForm.name.trim(),
-      cost_major: budgetTemplateForm.cost_major.trim(),
-      cost_minor: budgetTemplateForm.cost_minor.trim() || null,
-      cost_minor_options: budgetTemplateForm.cost_minor_options,
-      source_kind: budgetTemplateForm.source_kind,
-      sort_order: Number(budgetTemplateForm.sort_order) || 0,
-      is_active: budgetTemplateForm.is_active,
-    };
-    if (editingBudgetTemplateId.value) {
-      await api<BudgetItemTemplate>(
-        `/api/v1/admin/budget-item-templates/${editingBudgetTemplateId.value}`,
-        { method: "PATCH", body: JSON.stringify(payload) },
-      );
-    } else {
-      await api<BudgetItemTemplate>("/api/v1/admin/budget-item-templates", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-    }
+    await api<BudgetItemTemplate>(
+      `/api/v1/admin/budget-item-templates/${editingBudgetTemplateId.value}`,
+      { method: "PATCH", body: JSON.stringify({ is_active: budgetTemplateForm.is_active }) },
+    );
     resetBudgetTemplateForm();
     await loadBudgetItemTemplates();
     successMessage.value = "预算项模板已保存";
-  } catch (error) {
-    errorMessage.value = budgetTemplateErrorMessage(error);
-  }
-};
-const deleteBudgetTemplate = async (template: BudgetItemTemplate) => {
-  if (template.is_builtin) {
-    errorMessage.value = "系统内置预算项不能删除，可停用或调整名称";
-    return;
-  }
-  if (!window.confirm(`确定删除预算项模板“${template.name}”吗？`)) return;
-  try {
-    await api(`/api/v1/admin/budget-item-templates/${template.id}`, { method: "DELETE" });
-    await loadBudgetItemTemplates();
-    successMessage.value = "预算项模板已删除";
   } catch (error) {
     errorMessage.value = budgetTemplateErrorMessage(error);
   }
@@ -9115,8 +9008,6 @@ onMounted(() => {
                 <thead>
                   <tr>
                     <th>预算项</th>
-                    <th>成本大类</th>
-                    <th>成本小类</th>
                     <th>适用来源</th>
                     <th>预算金额</th>
                     <th>已发生</th>
@@ -9129,13 +9020,6 @@ onMounted(() => {
                 <tbody>
                   <tr v-for="item in projectBudgetItems" :key="item.id">
                     <td><strong>{{ item.name }}</strong><small>{{ item.code }}</small></td>
-                    <td>{{ item.cost_major }}</td>
-                    <td>
-                      <span>{{ item.cost_minor || '—' }}</span>
-                      <small v-if="item.cost_minor_options.length" class="config-minor-inline">{{
-                        item.cost_minor_options.join(' / ')
-                      }}</small>
-                    </td>
                     <td>{{ budgetSourceLabel(item.source_kind) }}</td>
                     <td><input v-model.number="item.budget_amount" class="inline-money-input" type="number" min="0" step="0.01" /></td>
                     <td>{{ moneyText(item.actual_amount) }}</td>
@@ -9410,7 +9294,7 @@ onMounted(() => {
                   <thead><tr><th>预算项</th><th>适用来源</th><th>预算金额</th><th>已发生</th><th>剩余</th><th>使用率</th></tr></thead>
                   <tbody>
                     <tr v-for="item in projectAnalysis.cost.budget_items.filter(row => row.is_active)" :key="item.id">
-                      <td><strong>{{ item.name }}</strong><small>{{ item.cost_major }}{{ item.cost_minor ? ` / ${item.cost_minor}` : '' }}</small></td>
+                      <td><strong>{{ item.name }}</strong><small>{{ item.code }}</small></td>
                       <td>{{ budgetSourceLabel(item.source_kind) }}</td>
                       <td>{{ moneyText(item.budget_amount) }}</td>
                       <td>{{ moneyText(item.actual_amount) }}</td>
@@ -9477,7 +9361,7 @@ onMounted(() => {
                         <tr v-for="item in selectedProjectExpenseContracts" :key="item.id">
                           <td><button class="text-button contract-name-link" @click="openContractDetail(item)"><strong>{{ item.name }}</strong></button><small>{{ item.contract_no }}</small></td>
                           <td>{{ item.counterparty_name }}</td>
-                          <td>{{ item.budget_item_name || '未归集' }}<small>{{ item.cost_major || '' }}</small></td>
+                          <td>{{ item.budget_item_name || '未归集' }}</td>
                           <td>{{ moneyText(item.amount) }}</td>
                           <td>{{ moneyText(item.settled_amount) }}</td>
                           <td>{{ contractStatusLabel(item.status) }}</td>
@@ -9732,9 +9616,6 @@ onMounted(() => {
                       {{ item.name }}
                     </option>
                   </select>
-                  <small class="form-helper" v-if="selectedContractBudgetItem">
-                    {{ selectedContractBudgetItem.cost_major }}{{ selectedContractBudgetItem.cost_minor ? ` / ${selectedContractBudgetItem.cost_minor}` : "" }}
-                  </small>
                 </label>
                 <label>签订日期<input v-model="contractForm.sign_date" type="date" /></label>
                 <label>开始日期<input v-model="contractForm.start_date" type="date" /></label>
@@ -9915,7 +9796,7 @@ onMounted(() => {
                 <label>往来单位类型<select v-model="contractForm.counterparty_type" @change="contractForm.counterparty_id = 0"><option value="CUSTOMER">客户</option><option value="SUPPLIER">供应商</option></select></label>
                 <label>往来单位<select v-model.number="contractForm.counterparty_id"><option :value="0" disabled>请选择往来单位</option><option v-for="item in contractForm.counterparty_type === 'CUSTOMER' ? customers : suppliers" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
                 <label>合同金额<input v-model.number="contractForm.amount" type="number" min="0" step="0.01" /></label>
-                <label v-if="contractForm.contract_type === 'EXPENSE'">预算项<select v-model.number="contractForm.budget_item_id"><option :value="null" disabled>{{ projectBudgetLoading ? "正在加载预算项…" : "请选择预算项" }}</option><option v-for="item in budgetOptionsForContract" :key="item.id" :value="item.id">{{ item.name }}</option></select><small class="form-helper" v-if="selectedContractBudgetItem">{{ selectedContractBudgetItem.cost_major }}{{ selectedContractBudgetItem.cost_minor ? ` / ${selectedContractBudgetItem.cost_minor}` : "" }}</small></label>
+                <label v-if="contractForm.contract_type === 'EXPENSE'">预算项<select v-model.number="contractForm.budget_item_id"><option :value="null" disabled>{{ projectBudgetLoading ? "正在加载预算项…" : "请选择预算项" }}</option><option v-for="item in budgetOptionsForContract" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
                 <label>签订日期<input v-model="contractForm.sign_date" type="date" /></label>
                 <label>开始日期<input v-model="contractForm.start_date" type="date" /></label>
                 <label>结束日期<input v-model="contractForm.end_date" type="date" /></label>
@@ -10446,7 +10327,7 @@ onMounted(() => {
             <section class="modal-card expense-form-modal">
               <div class="modal-head"><div><span class="eyebrow">EXPENSE DRAFT</span><h2>{{ selectedExpense ? '编辑费用草稿' : '新增项目费用' }}</h2></div><button class="modal-close" aria-label="关闭" @click="expenseFormOpen=false">×</button></div>
               <div class="expense-form-section"><h3>基本信息</h3><div class="form-grid three-cols"><label>费用类型<select v-model="expenseForm.expense_type"><option value="TRAVEL">差旅费用</option><option value="INVOICE">无合同发票</option><option value="OTHER">其他费用</option><option value="LABOR_COST">人工费用结转</option></select></label><label>项目<select v-model.number="expenseForm.project_id"><option :value="0" disabled>请选择项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label>发生日期<input v-model="expenseForm.occurred_on" type="date" /></label></div></div>
-              <div class="expense-form-section"><h3>预算归集</h3><div class="form-grid three-cols"><label v-if="expenseForm.expense_type !== 'LABOR_COST'">预算项<select v-model.number="expenseForm.budget_item_id"><option :value="null" disabled>{{ projectBudgetLoading ? '正在加载预算项…' : '请选择预算项' }}</option><option v-for="item in budgetOptionsForExpense" :key="item.id" :value="item.id">{{ item.name }}</option></select><small class="form-helper" v-if="selectedExpenseBudgetItem">{{ selectedExpenseBudgetItem.cost_major }}{{ selectedExpenseBudgetItem.cost_minor ? ` / ${selectedExpenseBudgetItem.cost_minor}` : '' }}</small></label><label v-else>预算项<input value="人工费用（系统自动归集）" readonly /></label><label>申请金额<input v-model.number="expenseForm.amount" type="number" min="0.01" step="0.01" @change="expenseForm.cost_amount ||= expenseForm.amount" /></label><label>计入项目成本<input v-model.number="expenseForm.cost_amount" type="number" min="0.01" step="0.01" /></label></div></div>
+              <div class="expense-form-section"><h3>预算归集</h3><div class="form-grid three-cols"><label v-if="expenseForm.expense_type !== 'LABOR_COST'">预算项<select v-model.number="expenseForm.budget_item_id"><option :value="null" disabled>{{ projectBudgetLoading ? '正在加载预算项…' : '请选择预算项' }}</option><option v-for="item in budgetOptionsForExpense" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label v-else>预算项<input value="人工费用（系统自动归集）" readonly /></label><label>申请金额<input v-model.number="expenseForm.amount" type="number" min="0.01" step="0.01" @change="expenseForm.cost_amount ||= expenseForm.amount" /></label><label>计入项目成本<input v-model.number="expenseForm.cost_amount" type="number" min="0.01" step="0.01" /></label></div></div>
               <div class="expense-form-section"><h3>附件与说明</h3><div class="form-grid"><label class="span-2">费用说明<textarea v-model.trim="expenseForm.purpose" rows="3"></textarea></label><label class="span-2">备注<textarea v-model.trim="expenseForm.notes" rows="2"></textarea></label><label class="file-drop span-2">选择费用凭证<input type="file" multiple accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.pdf,.png,.jpg,.jpeg,.webp" @change="chooseExpenseFiles" /><span>{{ pendingExpenseFiles.length ? `已选择 ${pendingExpenseFiles.length} 个文件` : '点击选择附件，保存后自动上传' }}</span></label></div></div>
               <div class="form-footer"><button class="secondary" @click="expenseFormOpen=false">取消</button><button class="secondary" :disabled="expenseFormSaving" @click="saveExpense(false)">保存草稿</button><button class="primary" :disabled="expenseFormSaving" @click="saveExpense(true)">{{ expenseFormSaving ? '正在保存…' : '提交审批' }}</button></div>
             </section>
@@ -10457,7 +10338,7 @@ onMounted(() => {
           <div class="page-head"><div><div class="eyebrow">EXPENSE DETAIL / {{ selectedExpense?.expense_no }}</div><h1>项目费用详情</h1><p class="muted">费用审批确认成本，出纳支付确认资金，两条事实链分别记录。</p></div><div class="actions"><span v-if="selectedExpense" class="tag" :class="expenseStatusClass(selectedExpense.status)">{{ expenseStatusLabel(selectedExpense.status) }}</span><button class="secondary" @click="go('projectExpenses')">返回费用台账</button></div></div>
           <template v-if="selectedExpense">
             <section class="expense-hero-grid"><div class="expense-kpi"><span>申请金额</span><strong>{{ moneyText(selectedExpense.amount) }}</strong></div><div class="expense-kpi"><span>计入项目成本</span><strong>{{ moneyText(selectedExpense.cost_amount) }}</strong></div><div class="expense-kpi"><span>归集预算项已用</span><strong>{{ moneyText(selectedExpense.expense_budget_used) }}</strong></div><div class="expense-kpi"><span>归集预算项剩余</span><strong :class="selectedExpense.expense_budget_remaining < 0 ? 'negative-number' : ''">{{ moneyText(selectedExpense.expense_budget_remaining) }}</strong></div></section>
-            <section class="expense-detail-grid"><section class="card"><div class="section-head"><div><h2>费用信息</h2><p class="muted">{{ expenseTypeLabel(selectedExpense.expense_type) }} · {{ selectedExpense.project_name }}</p></div><button v-if="selectedExpense.can_edit" class="secondary" @click="editExpense(selectedExpense)">编辑草稿</button></div><div class="detail-grid"><div><small>费用单号</small><strong>{{ selectedExpense.expense_no }}</strong></div><div><small>申请人</small><strong>{{ selectedExpense.applicant_name }}</strong></div><div><small>所属部门</small><strong>{{ selectedExpense.applicant_department_name || '未分配' }}</strong></div><div><small>发生日期</small><strong>{{ selectedExpense.occurred_on }}</strong></div><div><small>预算项</small><strong>{{ selectedExpense.budget_item_name || '未归集' }}</strong></div><div><small>成本分类</small><strong>{{ selectedExpense.cost_major || '—' }}{{ selectedExpense.cost_minor ? ` / ${selectedExpense.cost_minor}` : '' }}</strong></div><div class="full"><small>费用说明</small><strong>{{ selectedExpense.purpose }}</strong></div><div class="full"><small>备注</small><strong>{{ selectedExpense.notes || '无' }}</strong></div></div></section>
+            <section class="expense-detail-grid"><section class="card"><div class="section-head"><div><h2>费用信息</h2><p class="muted">{{ expenseTypeLabel(selectedExpense.expense_type) }} · {{ selectedExpense.project_name }}</p></div><button v-if="selectedExpense.can_edit" class="secondary" @click="editExpense(selectedExpense)">编辑草稿</button></div><div class="detail-grid"><div><small>费用单号</small><strong>{{ selectedExpense.expense_no }}</strong></div><div><small>申请人</small><strong>{{ selectedExpense.applicant_name }}</strong></div><div><small>所属部门</small><strong>{{ selectedExpense.applicant_department_name || '未分配' }}</strong></div><div><small>发生日期</small><strong>{{ selectedExpense.occurred_on }}</strong></div><div><small>预算项</small><strong>{{ selectedExpense.budget_item_name || '未归集' }}</strong></div><div class="full"><small>费用说明</small><strong>{{ selectedExpense.purpose }}</strong></div><div class="full"><small>备注</small><strong>{{ selectedExpense.notes || '无' }}</strong></div></div></section>
               <section class="card"><h2>审批路径</h2><div class="workflow-track"><div v-for="node in selectedExpense.approval_path" :key="node.sequence" :class="['workflow-node', node.status.toLowerCase()]"><i>{{ node.sequence }}</i><span><strong>{{ node.node_name }}</strong><small>{{ node.assignees.map(item => item.name).join(' / ') }}{{ node.approval_mode === 'ANY' ? ' · 任一人审批' : '' }}</small></span></div></div></section>
             </section>
             <section class="card contract-attachments-card"><div class="section-head"><div><h2>费用附件</h2><p class="muted">审批依据与费用凭证</p></div><span>{{ selectedExpense.attachments.length }} 个文件</span></div><div v-if="!selectedExpense.attachments.length" class="empty">暂无附件</div><div v-else class="contract-attachment-list"><div v-for="attachment in selectedExpense.attachments" :key="attachment.id" class="contract-attachment-row"><div class="attachment-file-icon" :class="`attachment-${attachment.preview_kind}`">{{ attachmentKindLabel(attachment.preview_kind) }}</div><div class="attachment-file-main"><strong>{{ attachment.file_name }}</strong><small>{{ attachmentSizeText(attachment.file_size) }} · {{ formatDateTime(attachment.created_at) }}</small></div><div class="table-actions"><button v-if="attachment.can_preview" class="text-button" @click="previewContractAttachment(attachment)">预览</button><button class="text-button" @click="downloadContractAttachment(attachment)">下载</button></div></div></div></section>
@@ -11727,9 +11608,7 @@ onMounted(() => {
                   经营项目和研发项目默认使用同一套 8 个预算项；新建项目时会按项目大类自动生成项目预算项。
                 </p>
               </div>
-              <button class="secondary" @click="openBudgetTemplateForm">
-                ＋ 新增预算项
-              </button>
+              <span class="tag neutral">固定 8 项 · 不支持新增或删除</span>
             </div>
             <div class="budget-template-tabs">
               <button
@@ -11753,9 +11632,6 @@ onMounted(() => {
                 <thead>
                   <tr>
                     <th>预算项</th>
-                    <th>成本大类</th>
-                    <th>成本小类</th>
-                    <th>可归集小类</th>
                     <th>适用来源</th>
                     <th>排序</th>
                     <th>状态</th>
@@ -11765,21 +11641,13 @@ onMounted(() => {
                 <tbody>
                   <tr v-for="item in visibleBudgetItemTemplates" :key="item.id" :class="{ inactive: !item.is_active }">
                     <td><strong>{{ item.name }}</strong><small>{{ item.code }}{{ item.is_builtin ? ' · 系统默认' : '' }}</small></td>
-                    <td>{{ item.cost_major }}</td>
-                    <td>{{ item.cost_minor || '—' }}</td>
-                    <td>
-                      <span v-if="!item.cost_minor_options.length" class="config-minor-empty">按单据实际选择归集</span>
-                      <span v-else class="config-minor-tags">
-                        <span v-for="minor in item.cost_minor_options" :key="minor" class="tag">{{ minor }}</span>
-                      </span>
-                    </td>
                     <td>{{ budgetSourceLabel(item.source_kind) }}</td>
                     <td>{{ item.sort_order }}</td>
                     <td><span class="tag" :class="item.is_active ? 'success' : 'neutral'">{{ item.is_active ? '启用' : '停用' }}</span></td>
                     <td>
                       <div class="table-actions">
                         <button class="text-button" @click="editBudgetTemplate(item)">编辑</button>
-                        <button class="text-button danger-button" :disabled="item.is_builtin" @click="deleteBudgetTemplate(item)">删除</button>
+                        <button class="text-button danger-button" disabled title="预算项已固定为统一 8 项">删除</button>
                       </div>
                     </td>
                   </tr>
@@ -11951,9 +11819,9 @@ onMounted(() => {
                 <div>
                   <div class="eyebrow">BUDGET ITEM TEMPLATE</div>
                   <h2 id="budget-template-modal-title">
-                    {{ editingBudgetTemplateId ? "编辑预算项模板" : "新增预算项模板" }}
+                    {{ editingBudgetTemplateId ? "编辑预算项模板" : "预算项模板" }}
                   </h2>
-                  <p class="muted">模板只影响后续新建项目；已有项目可在项目管理操作栏补齐预算项。</p>
+                  <p class="muted">预算项已统一固定为 8 项，不支持新增/删除/改名，只能切换启用状态。</p>
                 </div>
                 <button
                   class="modal-close"
@@ -11965,89 +11833,21 @@ onMounted(() => {
               </div>
               <div class="form-grid">
                 <label
-                  >项目类别<select v-model="budgetTemplateForm.project_category">
+                  >项目类别<select v-model="budgetTemplateForm.project_category" disabled>
                     <option value="BUSINESS_PROJECT">经营项目</option>
                     <option value="RND_PROJECT">研发项目</option>
                   </select></label
                 ><label
                   >预算项编码<input
                     v-model.trim="budgetTemplateForm.code"
-                    :disabled="Boolean(editingBudgetTemplateId)"
+                    disabled
                     placeholder="留空则自动生成" /></label
                 ><label
                   >预算项名称<input
                     v-model.trim="budgetTemplateForm.name"
-                    placeholder="如 人工费用" /></label
+                    placeholder="如 人工费用" readonly /></label
                 ><label
-                  >成本大类<select v-model="budgetTemplateForm.cost_major">
-                    <option value="" disabled>请选择成本大类</option>
-                    <option
-                      v-for="option in costCategoryOptions"
-                      :key="option.value"
-                      :value="option.label"
-                    >
-                      {{ option.label }}
-                    </option>
-                  </select></label
-                ><label
-                  >默认成本小类<select
-                    v-model="budgetTemplateForm.cost_minor"
-                    :disabled="!budgetTemplateForm.cost_major"
-                  >
-                    <option value="">
-                      {{
-                        budgetTemplateForm.cost_major
-                          ? "可不填"
-                          : "请先选择成本大类"
-                      }}
-                    </option>
-                    <option
-                      v-for="option in costMinorOptions(
-                        budgetTemplateForm.cost_major,
-                      )"
-                      :key="option.value"
-                      :value="option.label"
-                    >
-                      {{ option.label }}
-                    </option>
-                  </select></label
-                >
-                <div class="budget-minor-options span-2">
-                  <span class="budget-minor-options-title"
-                    >可归集成本小类（可多选）</span
-                  >
-                  <p class="muted">
-                    合同付款和项目费用在预算项命中时，只有这里勾选的小类允许归集；不勾选表示按单据实际选择的小类归集。
-                  </p>
-                  <div
-                    v-if="
-                      !costMinorOptions(budgetTemplateForm.cost_major).length
-                    "
-                    class="empty"
-                  >
-                    请先选择成本大类
-                  </div>
-                  <div v-else class="budget-minor-options-list">
-                    <button
-                      v-for="option in costMinorOptions(
-                        budgetTemplateForm.cost_major,
-                      )"
-                      :key="option.value"
-                      type="button"
-                      class="budget-minor-option"
-                      :class="{
-                        active: budgetTemplateForm.cost_minor_options.includes(
-                          option.label,
-                        ),
-                      }"
-                      @click="toggleBudgetTemplateMinorOption(option.label)"
-                    >
-                      {{ option.label }}
-                    </button>
-                  </div>
-                </div>
-                <label
-                  >适用来源<select v-model="budgetTemplateForm.source_kind">
+                  >适用来源<select v-model="budgetTemplateForm.source_kind" disabled>
                     <option value="LABOR">人工费用</option>
                     <option value="MIXED">合同/费用通用</option>
                     <option value="CONTRACT_PAYMENT">仅合同付款</option>
@@ -12058,7 +11858,8 @@ onMounted(() => {
                     v-model.number="budgetTemplateForm.sort_order"
                     type="number"
                     min="0"
-                    step="1" /></label
+                    step="1"
+                    disabled /></label
                 ><label class="configuration-active-field"
                   ><input
                     v-model="budgetTemplateForm.is_active"

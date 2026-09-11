@@ -54,7 +54,6 @@ from .schemas import (
     ConfigOptionCatalog,
     ClassificationCatalog,
     ClassificationNode,
-    parse_cost_minor_options,
     ConfigOptionCreate,
     ConfigOptionUpdate,
     ConfigOptionView,
@@ -164,7 +163,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.61"
+API_VERSION = "3.0.62"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -223,13 +222,10 @@ CONFIG_CATEGORY_LABELS = {
     "project_status": "项目状态",
     "project_category": "项目大类",
     "project_sub_category": "项目小类",
-    "cost_category": "成本大类",
-    "cost_sub_category": "成本小类",
 }
-# 层级分类：上级分类 -> 下级分类，用于构造成本分类树和项目分类树。
+# 层级分类：上级分类 -> 下级分类。成本分类已并入统一 8 项预算项，不再单独成树。
 CLASSIFICATION_TREE_CATEGORIES = {
     "project_category": "project_sub_category",
-    "cost_category": "cost_sub_category",
 }
 DEFAULT_CONFIG_OPTIONS = {
     "project_stage": [("需求", "需求"), ("设计", "设计"), ("开发", "开发"), ("联调", "联调"), ("测试", "测试"), ("交付", "交付"), ("管理", "管理"), ("现场", "现场"), ("其它", "其它")],
@@ -237,7 +233,7 @@ DEFAULT_CONFIG_OPTIONS = {
     "work_status": [("LOCAL", "本地"), ("BUSINESS_TRIP", "出差"), ("REMOTE", "异地办公"), ("LEAVE", "休假")],
     "project_status": [("ACTIVE", "进行中"), ("ACCEPTANCE", "验收中"), ("PAUSED", "已暂停"), ("COMPLETED", "已完成")],
 }
-# 项目分类树与成本分类树默认内容，依据《项目预算与成本复核重构设计》v3.0.59 第 3、4 节。
+# 项目分类树默认内容，依据《项目预算与成本复核重构设计》v3.0.59 第 3 节。
 # 数组结构：上级编码、上级名称、[(下级编码, 下级名称), ...]。
 DEFAULT_CLASSIFICATION_TREES = {
     "project_category": [
@@ -261,43 +257,6 @@ DEFAULT_CLASSIFICATION_TREES = {
             ],
         ),
     ],
-    "cost_category": [
-        ("MATERIAL", "材料成本", [("MATERIAL", "材料成本")]),
-        ("LABOR", "人工成本", [("LABOR", "人工成本")]),
-        ("MACHINERY", "机械使用费", [("MACHINERY", "机械使用费")]),
-        (
-            "OTHER_DIRECT",
-            "其他直接/间接费用",
-            [
-                ("TRAVEL", "差旅费"),
-                ("TRANSPORT", "运输"),
-                ("PACKAGING", "包装费"),
-                ("TECH_SERVICE", "技术服务费"),
-                ("REPAIR", "修理费"),
-                ("BIDDING", "招标投标费"),
-                ("LABOR_SERVICE", "劳务费"),
-                ("INSPECTION", "检测试验费"),
-                ("SAFETY", "安全经费"),
-                ("TEMPORARY_FACILITY", "临时设施费"),
-                ("OFFICE", "办公费"),
-                ("INSURANCE", "保险费"),
-                ("UTILITIES", "水、电、燃气费"),
-                ("LEASE_DEPRECIATION", "租赁费、折旧费"),
-                ("OTHER", "其他"),
-            ],
-        ),
-        (
-            "PROCESSING_SUBCONTRACT",
-            "加工成本、工程分包成本",
-            [
-                ("INTERNAL_PROCESSING", "内部加工费"),
-                ("EXTERNAL_PROCESSING", "外部加工费"),
-                ("ENGINEERING_SUBCONTRACT", "工程分包成本"),
-            ],
-        ),
-        ("EQUIPMENT_PURCHASE", "设备采购", [("EQUIPMENT_PURCHASE", "设备采购")]),
-        ("DEPT_MANUFACTURING", "部门制造费用", [("DEPT_MANUFACTURING", "部门制造费用")]),
-    ],
 }
 # 旧项目类型到项目大类的归并关系；第二个元素为可推导出的项目小类。
 LEGACY_PROJECT_CATEGORY_ALIASES = {
@@ -315,28 +274,31 @@ LEGACY_PROJECT_CATEGORY_ALIASES = {
     "外部申报": ("RND_PROJECT", "EXTERNAL_DECLARATION"),
 }
 PROJECT_CATEGORY_LABELS = {"BUSINESS_PROJECT": "经营项目", "RND_PROJECT": "研发项目"}
+# 预算项即成本归集口径：经营与研发共用同一套 8 项，不再区分成本大类/小类。
+# 数组结构：预算项编码、预算项名称、来源类型。
 DEFAULT_BUDGET_ITEM_TEMPLATES = {
     "BUSINESS_PROJECT": [
-        ("LABOR_COST", "人工费用", "人工成本", "人工成本", "LABOR", ["人工成本"]),
-        ("MATERIAL_EQUIPMENT", "材料、设备采购", "材料成本", "材料成本", "MIXED", ["材料成本", "设备采购"]),
-        ("UTILITIES", "水、电、燃气费用", "其他直接/间接费用", "水、电、燃气费", "MIXED", ["水、电、燃气费"]),
-        ("OUTSOURCING", "委托、分包、外包费用", "加工成本、工程分包成本", "工程分包成本", "MIXED", ["内部加工费", "外部加工费", "工程分包成本"]),
-        ("TRAVEL_COST", "差旅费用", "其他直接/间接费用", "差旅费", "MIXED", ["差旅费"]),
-        ("PACKAGING_TRANSPORT", "包装、运输费用", "其他直接/间接费用", "运输", "MIXED", ["运输", "包装费"]),
-        ("LEASE_DEPRECIATION", "租赁费、折旧费", "其他直接/间接费用", "租赁费、折旧费", "MIXED", ["租赁费、折旧费"]),
-        ("OTHER_COST", "其他费用", "其他直接/间接费用", "其他", "MIXED", ["其他"]),
+        ("LABOR_COST", "人工费用", "LABOR"),
+        ("MATERIAL_EQUIPMENT", "材料、设备采购", "MIXED"),
+        ("UTILITIES", "水、电、燃气费用", "MIXED"),
+        ("OUTSOURCING", "委托、分包、外包费用", "MIXED"),
+        ("TRAVEL_COST", "差旅费用", "MIXED"),
+        ("PACKAGING_TRANSPORT", "包装、运输费用", "MIXED"),
+        ("LEASE_DEPRECIATION", "租赁费、折旧费", "MIXED"),
+        ("OTHER_COST", "其他费用", "MIXED"),
     ],
     "RND_PROJECT": [
-        ("LABOR_COST", "人工费用", "人工成本", "人工成本", "LABOR", ["人工成本"]),
-        ("MATERIAL_EQUIPMENT", "材料、设备采购", "材料成本", "材料成本", "MIXED", ["材料成本", "设备采购"]),
-        ("UTILITIES", "水、电、燃气费用", "其他直接/间接费用", "水、电、燃气费", "MIXED", ["水、电、燃气费"]),
-        ("OUTSOURCING", "委托、分包、外包费用", "加工成本、工程分包成本", "工程分包成本", "MIXED", ["内部加工费", "外部加工费", "工程分包成本"]),
-        ("TRAVEL_COST", "差旅费用", "其他直接/间接费用", "差旅费", "MIXED", ["差旅费"]),
-        ("PACKAGING_TRANSPORT", "包装、运输费用", "其他直接/间接费用", "运输", "MIXED", ["运输", "包装费"]),
-        ("LEASE_DEPRECIATION", "租赁费、折旧费", "其他直接/间接费用", "租赁费、折旧费", "MIXED", ["租赁费、折旧费"]),
-        ("OTHER_COST", "其他费用", "其他直接/间接费用", "其他", "MIXED", ["其他"]),
+        ("LABOR_COST", "人工费用", "LABOR"),
+        ("MATERIAL_EQUIPMENT", "材料、设备采购", "MIXED"),
+        ("UTILITIES", "水、电、燃气费用", "MIXED"),
+        ("OUTSOURCING", "委托、分包、外包费用", "MIXED"),
+        ("TRAVEL_COST", "差旅费用", "MIXED"),
+        ("PACKAGING_TRANSPORT", "包装、运输费用", "MIXED"),
+        ("LEASE_DEPRECIATION", "租赁费、折旧费", "MIXED"),
+        ("OTHER_COST", "其他费用", "MIXED"),
     ],
 }
+PROJECT_BUDGET_ITEM_COUNT = len(next(iter(DEFAULT_BUDGET_ITEM_TEMPLATES.values())))
 LEGACY_BUDGET_ITEM_CODE_MAP = {
     "LABOR_COST": "LABOR_COST",
     "MATERIAL_COST": "MATERIAL_EQUIPMENT",
@@ -718,39 +680,6 @@ def budget_template_code(name: str, project_category: str) -> str:
     return f"{prefix}_BUDGET_ITEM"
 
 
-def dump_cost_minor_options(options: list[str] | None) -> str | None:
-    """把成本小类候选集合序列化为 JSON 文本；空集合存 None，避免库里出现空数组。"""
-    cleaned: list[str] = []
-    for item in options or []:
-        label = str(item).strip()
-        if label and label not in cleaned:
-            cleaned.append(label)
-    return json.dumps(cleaned, ensure_ascii=False) if cleaned else None
-
-
-def validate_cost_minor_options(db: Session, options: list[str] | None) -> None:
-    """校验预算项可归集的成本小类必须是成本分类树里的有效小类，防止写入无法归集的名称。
-
-    说明：统一后的 8 个预算项允许跨成本大类归集（如“材料、设备采购”同时覆盖材料成本与设备采购），
-    因此这里只校验小类是否有效，不强制其必须挂在所选成本大类之下。
-    """
-    cleaned = [str(item).strip() for item in (options or []) if str(item).strip()]
-    if not cleaned:
-        return
-    allowed = {
-        option.label
-        for option in db.scalars(
-            select(ConfigOption).where(
-                ConfigOption.category == "cost_sub_category",
-                ConfigOption.label.in_(cleaned),
-            )
-        ).all()
-    }
-    invalid = [label for label in cleaned if label not in allowed]
-    if invalid:
-        raise HTTPException(400, "INVALID_COST_MINOR_OPTION")
-
-
 def seed_budget_item_templates(db: Session) -> None:
     """写入经营项目和研发项目的默认预算项模板，不覆盖管理员调整。"""
     canonical_codes = {
@@ -758,7 +687,7 @@ def seed_budget_item_templates(db: Session) -> None:
         for category, rows in DEFAULT_BUDGET_ITEM_TEMPLATES.items()
     }
     for category, rows in DEFAULT_BUDGET_ITEM_TEMPLATES.items():
-        for order, (code, name, major, minor, source_kind, minor_options) in enumerate(rows, start=1):
+        for order, (code, name, source_kind) in enumerate(rows, start=1):
             template = db.scalar(
                 select(BudgetItemTemplate).where(
                     BudgetItemTemplate.project_category == category,
@@ -771,9 +700,6 @@ def seed_budget_item_templates(db: Session) -> None:
                         project_category=category,
                         code=code,
                         name=name,
-                        cost_major=major,
-                        cost_minor=minor,
-                        cost_minor_options=json.dumps(minor_options, ensure_ascii=False),
                         source_kind=source_kind,
                         sort_order=order * 10,
                         is_active=True,
@@ -782,9 +708,6 @@ def seed_budget_item_templates(db: Session) -> None:
                 )
             elif template.is_builtin:
                 template.name = name
-                template.cost_major = major
-                template.cost_minor = minor
-                template.cost_minor_options = json.dumps(minor_options, ensure_ascii=False)
                 template.source_kind = source_kind
                 template.sort_order = order * 10
                 template.is_active = True
@@ -808,9 +731,6 @@ def ensure_project_budget_items(db: Session, project: Project) -> None:
         if current:
             current.template_id = template.id
             current.name = template.name
-            current.cost_major = template.cost_major
-            current.cost_minor = template.cost_minor
-            current.cost_minor_options = template.cost_minor_options
             current.source_kind = template.source_kind
             current.sort_order = template.sort_order
             current.is_active = True
@@ -823,9 +743,6 @@ def ensure_project_budget_items(db: Session, project: Project) -> None:
                 template_id=template.id,
                 code=template.code,
                 name=template.name,
-                cost_major=template.cost_major,
-                cost_minor=template.cost_minor,
-                cost_minor_options=template.cost_minor_options,
                 source_kind=template.source_kind,
                 sort_order=template.sort_order,
                 budget_amount=initial_budget,
@@ -962,11 +879,9 @@ def resolve_project_budget_item(db: Session, project_id: int, budget_item_id: in
 
 
 def apply_budget_snapshot(target: object, item: ProjectBudgetItem | None) -> None:
-    """把预算项与成本大小类快照写入合同、付款、费用或流水。"""
+    """把预算项快照写入合同、付款、费用或流水；成本分类已并入预算项。"""
     setattr(target, "budget_item_id", item.id if item else None)
     setattr(target, "budget_item_name_snapshot", item.name if item else None)
-    setattr(target, "cost_major_snapshot", item.cost_major if item else None)
-    setattr(target, "cost_minor_snapshot", item.cost_minor if item else None)
 
 
 def apply_contract_budget_snapshot(db: Session, target: object, contract: Contract) -> ProjectBudgetItem | None:
@@ -974,8 +889,6 @@ def apply_contract_budget_snapshot(db: Session, target: object, contract: Contra
     item = db.get(ProjectBudgetItem, contract.budget_item_id) if contract.budget_item_id else None
     setattr(target, "budget_item_id", contract.budget_item_id)
     setattr(target, "budget_item_name_snapshot", contract.budget_item_name_snapshot)
-    setattr(target, "cost_major_snapshot", contract.cost_major_snapshot)
-    setattr(target, "cost_minor_snapshot", contract.cost_minor_snapshot)
     return item
 
 
@@ -1036,9 +949,6 @@ def project_budget_item_views(db: Session, project_id: int) -> list[ProjectBudge
                 template_id=item.template_id,
                 code=item.code,
                 name=item.name,
-                cost_major=item.cost_major,
-                cost_minor=item.cost_minor,
-                cost_minor_options=parse_cost_minor_options(item.cost_minor_options) or ([item.cost_minor] if item.cost_minor else []),
                 source_kind=item.source_kind,
                 sort_order=item.sort_order,
                 budget_amount=budget,
@@ -1259,6 +1169,16 @@ def upgrade_schema() -> None:
     """为现有 SQLite 数据库增量补齐字段，所有操作均可重复执行。"""
     Base.metadata.create_all(bind=engine)
     inspector = inspect(engine)
+    # 成本分类已并入统一 8 项预算项，这些历史列随本次迁移整体下线。
+    retired_cost_classification_columns = {
+        "budget_item_templates": ["cost_major", "cost_minor", "cost_minor_options"],
+        "project_budget_items": ["cost_major", "cost_minor", "cost_minor_options"],
+        "contracts": ["cost_major_snapshot", "cost_minor_snapshot"],
+        "payments": ["cost_major_snapshot", "cost_minor_snapshot"],
+        "project_expenses": ["cost_major_snapshot", "cost_minor_snapshot"],
+        "project_ledger_entries": ["cost_major_snapshot", "cost_minor_snapshot"],
+        "project_cost_entries": ["cost_major_snapshot", "cost_minor_snapshot"],
+    }
     additions = {
         "users": [("open_id", "VARCHAR(128)"), ("email", "VARCHAR(200)"), ("daily_cost", "NUMERIC(10, 2)"), ("snapshot_at", "DATETIME")],
         "departments": [("parent_feishu_department_id", "VARCHAR(64)")],
@@ -1363,10 +1283,6 @@ def upgrade_schema() -> None:
         ],
         "project_budget_items": [
             ("sort_order", "INTEGER NOT NULL DEFAULT 0"),
-            ("cost_minor_options", "TEXT"),
-        ],
-        "budget_item_templates": [
-            ("cost_minor_options", "TEXT"),
         ],
         "worklogs": [
             ("approver_user_id", "INTEGER"),
@@ -1429,6 +1345,15 @@ def upgrade_schema() -> None:
             for name, definition in columns:
                 if name not in existing:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+        for table, columns in retired_cost_classification_columns.items():
+            if not inspect(engine).has_table(table):
+                continue
+            existing = {column["name"] for column in inspect(engine).get_columns(table)}
+            for name in columns:
+                if name in existing:
+                    connection.execute(text(f'ALTER TABLE "{table}" DROP COLUMN "{name}"'))
+        # 成本分类树配置数据整体下线，只保留项目分类树。
+        connection.execute(text("DELETE FROM config_options WHERE category IN ('cost_category', 'cost_sub_category')"))
         if is_sqlite and current_timezone_migration < TIMEZONE_DATA_MIGRATION_VERSION:
             # 旧版本使用 datetime.utcnow() 写入无时区字段；数据库仍保持无时区格式，
             # 这里只对已有值做一次 UTC -> Asia/Shanghai 的历史修正。
@@ -1986,8 +1911,6 @@ def contract_view(db: Session, contract: Contract) -> ContractView:
         amount=contract_amount,
         budget_item_id=contract.budget_item_id,
         budget_item_name=contract.budget_item_name_snapshot,
-        cost_major=contract.cost_major_snapshot,
-        cost_minor=contract.cost_minor_snapshot,
         sign_date=contract.sign_date,
         start_date=contract.start_date,
         end_date=contract.end_date,
@@ -2727,8 +2650,6 @@ def payment_view(db: Session, payment: Payment, viewer_id: int | None = None) ->
         payee_bank_account=payment.payee_bank_account,
         budget_item_id=payment.budget_item_id,
         budget_item_name=payment.budget_item_name_snapshot,
-        cost_major=payment.cost_major_snapshot,
-        cost_minor=payment.cost_minor_snapshot,
         status=payment.status,
         submitted_by=payment.submitted_by,
         submitted_at=payment.submitted_at,
@@ -4314,13 +4235,12 @@ def classification_tree(db: Session, parent_category: str, active_only: bool) ->
 def classification_catalog(db: Session, active_only: bool) -> ClassificationCatalog:
     return ClassificationCatalog(
         project_category=classification_tree(db, "project_category", active_only),
-        cost_category=classification_tree(db, "cost_category", active_only),
     )
 
 
 @app.get("/api/v1/config/classifications", response_model=ClassificationCatalog)
 def list_classifications(x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ClassificationCatalog:
-    """读取启用中的项目分类树与成本分类树，供业务表单联动使用。"""
+    """读取启用中的项目分类树，供业务表单联动使用。"""
     current_user(db, x_demo_user_id)
     return classification_catalog(db, active_only=True)
 
@@ -4350,10 +4270,6 @@ def config_option_usage_count(db: Session, option: ConfigOption) -> int:
         return int(db.scalar(select(func.count(Worklog.id)).where(Worklog.work_status == option.value)) or 0)
     if option.category == "project_status":
         return int(db.scalar(select(func.count(Project.id)).where(Project.status == option.value)) or 0)
-    if option.category == "cost_category":
-        return int(db.scalar(select(func.count(BudgetItemTemplate.id)).where(BudgetItemTemplate.cost_major == option.label)) or 0)
-    if option.category == "cost_sub_category":
-        return int(db.scalar(select(func.count(BudgetItemTemplate.id)).where(BudgetItemTemplate.cost_minor == option.label)) or 0)
     return 0
 
 
@@ -4743,53 +4659,19 @@ def list_budget_item_templates(
 
 @app.post("/api/v1/admin/budget-item-templates", response_model=BudgetItemTemplateView, status_code=201)
 def create_budget_item_template(payload: BudgetItemTemplateCreate, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> BudgetItemTemplateView:
-    """新增预算项模板；后续新建项目自动带入，现有项目可手动初始化缺失项。"""
-    user = require_access(db, "configuration", "CREATE", x_demo_user_id)
-    base_code = (payload.code or budget_template_code(payload.name, payload.project_category)).strip().upper()
-    code = re.sub(r"[^A-Z0-9_]+", "_", base_code).strip("_")[:80] or budget_template_code(payload.name, payload.project_category)
-    candidate = code
-    sequence = 2
-    while db.scalar(select(BudgetItemTemplate.id).where(BudgetItemTemplate.project_category == payload.project_category, BudgetItemTemplate.code == candidate)):
-        suffix = f"_{sequence}"
-        candidate = f"{code[:80 - len(suffix)]}{suffix}"
-        sequence += 1
-    validate_cost_minor_options(db, payload.cost_minor_options)
-    template = BudgetItemTemplate(
-        project_category=payload.project_category,
-        code=candidate,
-        name=payload.name.strip(),
-        cost_major=payload.cost_major.strip(),
-        cost_minor=payload.cost_minor.strip() if payload.cost_minor and payload.cost_minor.strip() else None,
-        cost_minor_options=dump_cost_minor_options(payload.cost_minor_options),
-        source_kind=payload.source_kind,
-        sort_order=payload.sort_order,
-        is_active=payload.is_active,
-        is_builtin=False,
-    )
-    db.add(template)
-    db.flush()
-    audit(db, "budget_item_template", template.id, "CREATE", user.id, None, "ACTIVE" if template.is_active else "INACTIVE", template.name)
-    db.commit()
-    db.refresh(template)
-    return BudgetItemTemplateView.model_validate(template)
+    """预算项已固定为统一 8 项，不再允许新增；保留接口以便前端给出明确提示。"""
+    require_access(db, "configuration", "CREATE", x_demo_user_id)
+    raise HTTPException(409, "BUDGET_TEMPLATE_FIXED")
 
 
 @app.patch("/api/v1/admin/budget-item-templates/{template_id}", response_model=BudgetItemTemplateView)
 def update_budget_item_template(template_id: int, payload: BudgetItemTemplateUpdate, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> BudgetItemTemplateView:
-    """修改预算项模板；不回写已建项目的历史快照，避免改变既有项目口径。"""
+    """预算项固定为统一 8 项，只允许切换启用状态；名称、排序由内置模板维护。"""
     user = require_access(db, "configuration", "EDIT", x_demo_user_id)
     template = db.get(BudgetItemTemplate, template_id)
     if not template:
         raise HTTPException(404, "BUDGET_TEMPLATE_NOT_FOUND")
     old_status = "ACTIVE" if template.is_active else "INACTIVE"
-    validate_cost_minor_options(db, payload.cost_minor_options)
-    template.project_category = payload.project_category
-    template.name = payload.name.strip()
-    template.cost_major = payload.cost_major.strip()
-    template.cost_minor = payload.cost_minor.strip() if payload.cost_minor and payload.cost_minor.strip() else None
-    template.cost_minor_options = dump_cost_minor_options(payload.cost_minor_options)
-    template.source_kind = payload.source_kind
-    template.sort_order = payload.sort_order
     template.is_active = payload.is_active
     audit(db, "budget_item_template", template.id, "UPDATE", user.id, old_status, "ACTIVE" if template.is_active else "INACTIVE", template.name)
     db.commit()
@@ -4799,21 +4681,9 @@ def update_budget_item_template(template_id: int, payload: BudgetItemTemplateUpd
 
 @app.delete("/api/v1/admin/budget-item-templates/{template_id}")
 def delete_budget_item_template(template_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
-    """删除未使用模板；若已有项目引用则改为停用，保留历史项目预算项快照。"""
-    user = require_access(db, "configuration", "DELETE", x_demo_user_id)
-    template = db.get(BudgetItemTemplate, template_id)
-    if not template:
-        raise HTTPException(404, "BUDGET_TEMPLATE_NOT_FOUND")
-    used = bool(db.scalar(select(ProjectBudgetItem.id).where(ProjectBudgetItem.template_id == template.id).limit(1)))
-    if used:
-        template.is_active = False
-        audit(db, "budget_item_template", template.id, "DISABLE", user.id, "ACTIVE", "INACTIVE", template.name)
-        db.commit()
-        return {"deleted": False, "disabled": True, "template_id": template.id}
-    db.delete(template)
-    audit(db, "budget_item_template", template.id, "DELETE", user.id, None, None, template.name)
-    db.commit()
-    return {"deleted": True, "template_id": template_id}
+    """预算项已固定为统一 8 项，不再允许删除；停用请改用启用状态开关。"""
+    require_access(db, "configuration", "DELETE", x_demo_user_id)
+    raise HTTPException(409, "BUDGET_TEMPLATE_FIXED")
 
 
 @app.get("/api/v1/projects/{project_id}/budget-items", response_model=list[ProjectBudgetItemView])
@@ -8304,8 +8174,6 @@ def project_expense_view(db: Session, expense: ProjectExpense, viewer_id: int | 
         cost_amount=float(expense.cost_amount),
         budget_item_id=expense.budget_item_id,
         budget_item_name=expense.budget_item_name_snapshot,
-        cost_major=expense.cost_major_snapshot,
-        cost_minor=expense.cost_minor_snapshot,
         requires_payment=expense.requires_payment,
         payee_name=expense.payee_name,
         payee_bank_name=expense.payee_bank_name,
@@ -9085,24 +8953,10 @@ def labor_budget_item(db: Session, project_id: int) -> ProjectBudgetItem | None:
     return next((item for item in items if item.source_kind == "LABOR"), items[0] if items else None)
 
 
-def cost_item_minor_options(item: ProjectBudgetItem) -> list[str]:
-    """预算项可归集的成本小类候选，空集合表示按默认小类归集。"""
-    options = parse_cost_minor_options(item.cost_minor_options)
-    if options:
-        return options
-    return [item.cost_minor] if item.cost_minor else []
-
-
-def apply_cost_entry_snapshot(entry: ProjectCostEntry, item: ProjectBudgetItem, cost_minor: str | None) -> None:
-    """写入预算项与成本分类快照；多小类预算项在候选范围内选择，超范围直接拒绝。"""
-    allowed = cost_item_minor_options(item)
-    minor = (cost_minor or "").strip() or None
-    if minor and allowed and minor not in allowed:
-        raise HTTPException(400, "INVALID_COST_MINOR")
+def apply_cost_entry_snapshot(entry: ProjectCostEntry, item: ProjectBudgetItem) -> None:
+    """写入预算项快照；成本分类已并入预算项，不再单独记录大小类。"""
     entry.budget_item_id = item.id
     entry.budget_item_name_snapshot = item.name
-    entry.cost_major_snapshot = item.cost_major
-    entry.cost_minor_snapshot = minor or item.cost_minor or (allowed[0] if allowed else None)
 
 
 def resolve_cost_entry_budget_item(db: Session, entry_kind: str, project_id: int, budget_item_id: int | None) -> ProjectBudgetItem:
@@ -9185,8 +9039,6 @@ def cost_entry_view(db: Session, entry: ProjectCostEntry, viewer: User | None = 
         applicant_department_name=entry.applicant_department_name,
         budget_item_id=entry.budget_item_id,
         budget_item_name=entry.budget_item_name_snapshot,
-        cost_major=entry.cost_major_snapshot,
-        cost_minor=entry.cost_minor_snapshot,
         amount=float(entry.amount or 0),
         occurred_on=entry.occurred_on,
         accounting_month=entry.accounting_month,
@@ -9222,10 +9074,9 @@ def cost_entry_query(
     department_id: int | None = None,
     applicant_user_id: int | None = None,
     accounting_month: str | None = None,
-    cost_major: str | None = None,
-    cost_minor: str | None = None,
     period_start: date | None = None,
     period_end: date | None = None,
+    keyword: str | None = None,
     data_scope: str = "ALL",
 ) -> list[ProjectCostEntry]:
     """按筛选条件读取成本单；数据范围沿用角色配置。"""
@@ -9243,14 +9094,13 @@ def cost_entry_query(
         query = query.where(ProjectCostEntry.project_id == project_id)
     if status:
         query = query.where(ProjectCostEntry.status == status)
+    if keyword and keyword.strip():
+        like = f"%{keyword.strip()}%"
+        query = query.where(or_(ProjectCostEntry.cost_no.like(like), ProjectCostEntry.description.like(like)))
     if applicant_user_id:
         query = query.where(ProjectCostEntry.applicant_user_id == applicant_user_id)
     if accounting_month:
         query = query.where(ProjectCostEntry.accounting_month == accounting_month)
-    if cost_major:
-        query = query.where(ProjectCostEntry.cost_major_snapshot == cost_major)
-    if cost_minor:
-        query = query.where(ProjectCostEntry.cost_minor_snapshot == cost_minor)
     if period_start:
         query = query.where(func.coalesce(ProjectCostEntry.occurred_on, ProjectCostEntry.created_at) >= period_start)
     if period_end:
@@ -9274,10 +9124,9 @@ def list_project_cost_entries(
     department_id: int | None = Query(default=None, gt=0),
     applicant_user_id: int | None = Query(default=None, gt=0),
     accounting_month: str | None = None,
-    cost_major: str | None = None,
-    cost_minor: str | None = None,
     period_start: date | None = None,
     period_end: date | None = None,
+    keyword: str | None = None,
     data_scope: str = Query(default="ALL", pattern="^(OWNED|ALL)$"),
     x_demo_user_id: int | None = Header(default=None),
     db: Session = Depends(get_db),
@@ -9294,10 +9143,9 @@ def list_project_cost_entries(
         department_id=department_id,
         applicant_user_id=applicant_user_id,
         accounting_month=accounting_month,
-        cost_major=cost_major,
-        cost_minor=cost_minor,
         period_start=period_start,
         period_end=period_end,
+        keyword=keyword,
         data_scope=data_scope,
     )
     total = len(rows)
@@ -9336,7 +9184,7 @@ def create_project_cost_entry(payload: ProjectCostEntryCreate, x_demo_user_id: i
         status="DRAFT",
         version=1,
     )
-    apply_cost_entry_snapshot(entry, item, payload.cost_minor)
+    apply_cost_entry_snapshot(entry, item)
     db.add(entry)
     db.flush()
     audit(db, "project_cost_entry", entry.id, "CREATE", user.id, None, "DRAFT", f"{PROJECT_COST_KIND_LABELS[entry_kind]} · {project.name}")
@@ -9374,7 +9222,7 @@ def update_project_cost_entry(entry_id: int, payload: ProjectCostEntryUpdate, x_
     entry.occurred_on = payload.occurred_on
     entry.accounting_month = payload.accounting_month
     entry.description = (payload.description or "").strip() or None
-    apply_cost_entry_snapshot(entry, item, payload.cost_minor)
+    apply_cost_entry_snapshot(entry, item)
     entry.version += 1
     audit(db, "project_cost_entry", entry.id, "UPDATE", user.id, entry.status, entry.status)
     db.commit()
@@ -9682,8 +9530,6 @@ def cost_review_items(db: Session, entries: list[ProjectCostEntry]) -> list[Cost
                 project_name=project.name if project else "",
                 project_code=project.code if project else "",
                 budget_item_name=entry.budget_item_name_snapshot,
-                cost_major=entry.cost_major_snapshot,
-                cost_minor=entry.cost_minor_snapshot,
                 amount=float(entry.amount or 0),
                 occurred_on=entry.occurred_on,
                 accounting_month=entry.accounting_month,
@@ -9757,8 +9603,6 @@ def list_cost_review(
                 project_name=project.name if project else "",
                 project_code=project.code if project else "",
                 budget_item_name=payment.budget_item_name_snapshot,
-                cost_major=payment.cost_major_snapshot,
-                cost_minor=payment.cost_minor_snapshot,
                 amount=float(payment.amount or 0),
                 occurred_on=payment.payment_date,
                 applicant_name=(
