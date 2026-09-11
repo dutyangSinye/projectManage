@@ -31,3 +31,6 @@ outputs/
 test-artifacts/
 .tmp-v3047/
 .skillhub-install/
+
+# ---- 本地 AI 助手工作区（个人记忆，不属于项目源码）----
+.workbuddy/

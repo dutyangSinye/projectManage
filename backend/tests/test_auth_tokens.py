@@ -7,7 +7,7 @@ from unittest.mock import patch
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from backend.app.main import (
+from app.main import (
     SessionUserMiddleware,
     issue_auth_token,
     session_user_id,

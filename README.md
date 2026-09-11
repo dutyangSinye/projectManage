@@ -2,7 +2,7 @@
 
 基于飞书组织架构和飞书消息通知的工时与项目经营管理系统。
 
-当前生产运行版本：`v3.0.48`；当前开发验证版本：`v3.0.49`。项目文档统一从 [docs/00-document-index.md](docs/00-document-index.md) 进入；历史版本文档保留在 `docs/v1.0/` 和 `docs/v2.0/`，临时发布与测试产物位于 `_archive/`，不参与运行。
+当前生产运行版本：`v3.0.60`（预算项统一、后台模板配置与新预算口径）。版本号以后端常量 `API_VERSION`（`backend/app/main.py`）为准，可通过 `/health` 查询运行实例的实际版本。项目文档统一从 [docs/00-document-index.md](docs/00-document-index.md) 进入；历史版本文档保留在 `docs/v1.0/` 和 `docs/v2.0/`，临时发布与测试产物位于 `_archive/`，不参与运行。
 
 ## 当前实现
 
@@ -49,6 +49,22 @@ pnpm build
 ```
 
 构建产物位于 `frontend/dist/`。
+
+## 测试
+
+在项目根目录运行即可，`pytest.ini` 已配置 `pythonpath=backend`，不需要手动设置 `PYTHONPATH`：
+
+```powershell
+& .\.venv\Scripts\python.exe -m pytest
+```
+
+共 50 个用例。根目录 `conftest.py` 会在导入应用代码前把 `DATABASE_URL` 指向一次性临时库，因此测试不会读写 `backend/data/workhours.db`。
+
+> `backend/tests/test_imports.py` 刻意使用 `backend.app.*`（而非 `app.*`）导入，以获得独立的 engine 和自己的临时库；`app/db/session.py` 在 import 时就绑定数据库且无法重指，改成统一导入会让测试连到开发库。调整导入方式前请先看该文件与 `conftest.py` 的说明。
+
+## 版本控制
+
+仓库为 git 管理。`.gitattributes` 强制 `Dockerfile*`、`*.conf`、`*.yml`、`*.sh` 使用 LF —— 这些文件一旦被检出成 CRLF，NAS 上的 Docker 构建会失败。不要移除这些规则。
 
 ## NAS 部署 MCP
 

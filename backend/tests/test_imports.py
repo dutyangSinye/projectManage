@@ -9,14 +9,25 @@ from pathlib import Path
 
 
 class ImportApiTests(unittest.TestCase):
-    """使用临时数据库验证导入不会影响现有业务库。"""
+    """使用临时数据库验证导入不会影响现有业务库。
+
+    注意：本模块 **故意** 使用 `backend.app.*` 而不是 `app.*`。
+    `app/db/session.py` 在 import 时即绑定 engine，且不能重新指向；
+    用 `backend.app.*` 可以得到一棵独立的模块树和独立 engine，
+    从而在同一个 pytest 进程里使用自己的临时库，而不影响走 `app.*` 的其他测试。
+    详见根目录 conftest.py。
+    """
 
     @classmethod
     def setUpClass(cls):
         cls.root = Path(__file__).resolve().parents[2]
         cls.temp_dir = tempfile.TemporaryDirectory(prefix="xinye-import-test-")
         cls.db_path = Path(cls.temp_dir.name) / "workhours.db"
-        shutil.copyfile(cls.root / "backend" / "data" / "workhours.db", cls.db_path)
+        # 有本地开发库则拷贝一份，保证项目/用户等基础数据齐全；没有则留空，
+        # 由应用启动时的升级与演示数据逻辑建表填充，fresh clone 也能跑。
+        source_db = cls.root / "backend" / "data" / "workhours.db"
+        if source_db.exists():
+            shutil.copyfile(source_db, cls.db_path)
         os.environ["DATABASE_URL"] = f"sqlite:///{cls.db_path}"
         os.environ["FEISHU_MODE"] = "mock"
         os.environ["SYSTEM_ADMIN_USER_IDS"] = "1"
