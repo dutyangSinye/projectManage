@@ -85,7 +85,9 @@ type Page =
   | "projectReceipts"
   | "projectPayments"
   | "projectExpenses"
+  | "laborCosts"
   | "expenseDetail"
+  | "costReview"
   | "projectBoard"
   | "suppliers"
   | "customers"
@@ -102,6 +104,8 @@ type ManagementPermission =
   | "receipts"
   | "payments"
   | "project_expenses"
+  | "labor_costs"
+  | "cost_review"
   | "project_board"
   | "counterparties"
   | "cash_approval"
@@ -656,6 +660,74 @@ type ProjectExpenseList = {
   page_count: number;
   summary: Record<string, number>;
 };
+type ProjectCostEntry = {
+  id: number;
+  cost_no: string;
+  entry_kind: string;
+  project_id: number;
+  project_name: string;
+  project_code: string;
+  applicant_user_id: number | null;
+  applicant_name: string;
+  applicant_department_name: string | null;
+  budget_item_id: number | null;
+  budget_item_name: string | null;
+  amount: number;
+  occurred_on: string | null;
+  accounting_month: string | null;
+  description: string | null;
+  status: string;
+  version: number;
+  submitted_by_name: string | null;
+  submitted_at: string | null;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  review_comment: string | null;
+  created_at: string | null;
+  attachments: DocumentAttachment[];
+  can_edit: boolean;
+  can_review: boolean;
+  can_reverse: boolean;
+  same_month_count: number;
+};
+type ProjectCostEntryList = {
+  items: ProjectCostEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+  page_count: number;
+  summary: Record<string, number>;
+};
+type CostReviewItem = {
+  kind: string;
+  entry_id: number;
+  document_no: string;
+  document_label: string;
+  project_id: number;
+  project_name: string;
+  project_code: string;
+  budget_item_name: string | null;
+  amount: number;
+  occurred_on: string | null;
+  accounting_month: string | null;
+  applicant_name: string;
+  status: string;
+  submitted_at: string | null;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  review_comment: string | null;
+  description: string | null;
+};
+type CostReviewList = {
+  tab: string;
+  items: CostReviewItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  page_count: number;
+  pending_count: number;
+  processed_count: number;
+};
 type WorkflowTask = {
   id: number;
   workflow_instance_id: number;
@@ -1035,7 +1107,9 @@ const initialPage = (() => {
     "projectPayments",
     "paymentDetail",
     "projectExpenses",
+    "laborCosts",
     "expenseDetail",
+    "costReview",
     "projectBoard",
     "suppliers",
     "customers",
@@ -1091,7 +1165,7 @@ const expenseContractsLoading = ref(false);
 const projectContractStages = ref<ProjectContractStage[]>([]);
 const receipts = ref<Receipt[]>([]);
 const payments = ref<Payment[]>([]);
-const projectExpenses = ref<ProjectExpense[]>([]);
+const projectExpenses = ref<ProjectCostEntry[]>([]);
 const projectExpenseTotal = ref(0);
 const expensePage = ref(1);
 const expensePageSize = ref(20);
@@ -1103,8 +1177,31 @@ const expenseFilterEnd = ref("");
 const expenseFilterKeyword = ref("");
 const expenseFormOpen = ref(false);
 const expenseFormSaving = ref(false);
-const selectedExpense = ref<ProjectExpense | null>(null);
+const selectedExpense = ref<ProjectCostEntry | null>(null);
 const pendingExpenseFiles = ref<File[]>([]);
+const costEntrySummary = ref<Record<string, number>>({});
+const costEntryForm = reactive({
+  entry_kind: "PROJECT_EXPENSE" as "PROJECT_EXPENSE" | "PERSONNEL_COST",
+  project_id: 0,
+  budget_item_id: null as number | null,
+  amount: 0,
+  occurred_on: applicationDate(),
+  accounting_month: applicationDate().slice(0, 7),
+  description: "",
+  version: 1,
+});
+const costReviewTab = ref<"pending" | "processed" | "all">("pending");
+const costReviewItems = ref<CostReviewItem[]>([]);
+const costReviewTotal = ref(0);
+const costReviewPage = ref(1);
+const expenseFilterMonth = ref("");
+const costReviewCounts = reactive({ pending: 0, processed: 0 });
+const costRejectTarget = ref<CostReviewItem | null>(null);
+const costEntryActionComment = ref("");
+const costEntryRejectOpen = ref(false);
+const costEntryRejectReason = ref("");
+const costEntryReverseOpen = ref(false);
+const costEntryReverseReason = ref("");
 const expenseTasks = ref<WorkflowTask[]>([]);
 const expenseTaskTab = ref<"PENDING" | "DONE">("PENDING");
 const expenseActionComment = ref("");
@@ -2709,7 +2806,9 @@ const go = (target: Page) => {
     projectReceipts: "receipts",
     projectPayments: "payments",
     projectExpenses: "project_expenses",
+    laborCosts: "labor_costs",
     expenseDetail: "project_expenses",
+    costReview: "cost_review",
     projectBoard: "project_board",
     suppliers: "counterparties",
     customers: "counterparties",
@@ -2750,11 +2849,10 @@ const go = (target: Page) => {
     paymentTab.value = canManage("cash_approval") ? "pending" : "all";
     void refreshPayments();
   }
-  if (target === "projectExpenses") {
+  if (target === "projectExpenses" || target === "laborCosts") {
     void refreshProjectExpenses();
-    void refreshExpenseTasks();
   }
-  if (target === "expenseDetail") void refreshExpenseTasks();
+  if (target === "costReview") void refreshCostReview();
   if (target === "approvalPositions") void refreshApprovalPositions();
   if (target === "approvalWorkflows") void refreshApprovalWorkflows();
   if (target === "projectBoard") void refreshProjectBoard();
@@ -3107,9 +3205,11 @@ const attachmentKindLabel = (kind: DocumentAttachment["preview_kind"]) =>
 const attachmentApiName = (attachment: DocumentAttachment) =>
   attachment.document_type
     ? "cash-attachments"
-    : "expense_id" in attachment
-      ? "project-expense-attachments"
-      : "contract-attachments";
+    : "entry_id" in attachment
+      ? "project-cost-attachments"
+      : "expense_id" in attachment
+        ? "project-expense-attachments"
+        : "contract-attachments";
 const attachmentAuthHeaders = () => {
   return authHeaders();
 };
@@ -5635,6 +5735,7 @@ const managementHome = computed<Page>(() => {
   if (canManage("receipts")) return "projectReceipts";
   if (canManage("payments")) return "projectPayments";
   if (canManage("project_expenses")) return "projectExpenses";
+  if (canManage("cost_review")) return "costReview";
   if (canManage("project_board")) return "projectBoard";
   if (canManage("counterparties")) return "customers";
   if (canManage("worklogs")) return "adminWorklogs";
@@ -5651,6 +5752,8 @@ const mobileManagementItems = computed(() =>
     { page: "projectReceipts", permission: "receipts" as ManagementPermission, label: "合同收款", icon: "receipt" },
     { page: "projectPayments", permission: "payments" as ManagementPermission, label: "合同付款", icon: "payment" },
     { page: "projectExpenses", permission: "project_expenses" as ManagementPermission, label: "项目费用", icon: "cost" },
+    { page: "laborCosts", permission: "labor_costs" as ManagementPermission, label: "人工成本结转", icon: "cost" },
+    { page: "costReview", permission: "cost_review" as ManagementPermission, label: "费用复核", icon: "cost" },
     { page: "projectBoard", permission: "project_board" as ManagementPermission, label: "项目看板", icon: "board" },
     { page: "customers", permission: "counterparties" as ManagementPermission, label: "客户管理", icon: "customer" },
     { page: "suppliers", permission: "counterparties" as ManagementPermission, label: "供应商管理", icon: "supplier" },
@@ -5734,7 +5837,9 @@ const pageTitle = computed(
       projectReceipts: "合同收款",
       projectPayments: "合同付款",
       projectExpenses: "项目费用",
-      expenseDetail: "费用详情",
+      laborCosts: "人工成本结转",
+      expenseDetail: "成本单详情",
+      costReview: "费用复核",
       projectBoard: "项目看板",
       suppliers: "供应商管理",
       customers: "客户管理",
@@ -6701,7 +6806,8 @@ const expenseTypeLabel = (type: string) =>
 const expenseStatusLabel = (status: string) =>
   ({
     DRAFT: "草稿",
-    PENDING_APPROVAL: "审批中",
+    PENDING_REVIEW: "待复核",
+    PENDING_APPROVAL: "待复核",
     REJECTED: "已驳回",
     WITHDRAWN: "已撤回",
     APPROVED: "已审批",
@@ -6710,158 +6816,239 @@ const expenseStatusLabel = (status: string) =>
     REVERSED: "已冲销",
   })[status] || status;
 const expenseStatusClass = (status: string) =>
-  ({ DRAFT: "neutral", PENDING_APPROVAL: "warning", REJECTED: "danger", WITHDRAWN: "neutral", APPROVED: "success", APPROVED_PENDING_PAYMENT: "info", PAID: "success", REVERSED: "danger" })[status] || "neutral";
+  ({ DRAFT: "neutral", PENDING_REVIEW: "warning", PENDING_APPROVAL: "warning", REJECTED: "danger", WITHDRAWN: "neutral", APPROVED: "success", APPROVED_PENDING_PAYMENT: "info", PAID: "success", REVERSED: "danger" })[status] || "neutral";
+
+const costEntryKind = computed<"PROJECT_EXPENSE" | "PERSONNEL_COST">(() =>
+  page.value === "laborCosts" ? "PERSONNEL_COST" : "PROJECT_EXPENSE",
+);
+const costEntryResourceKey = computed<ManagementPermission>(() =>
+  costEntryKind.value === "PERSONNEL_COST" ? "labor_costs" : "project_expenses",
+);
+const costKindLabel = (kind: string) => (kind === "PERSONNEL_COST" ? "人工成本结转" : "项目费用");
+const costEntryStatusLabel = (status: string) =>
+  ({ DRAFT: "草稿", PENDING_REVIEW: "待复核", APPROVED: "已通过", REJECTED: "已驳回", REVERSED: "已冲销" })[status] || status;
+const costEntryStatusClass = (status: string) =>
+  ({ DRAFT: "neutral", PENDING_REVIEW: "warning", APPROVED: "success", REJECTED: "danger", REVERSED: "danger" })[status] || "neutral";
 
 const refreshProjectExpenses = async () => {
-  if (!canManage("project_expenses")) return;
-  const params = new URLSearchParams({ page: String(expensePage.value), page_size: String(expensePageSize.value) });
+  if (!canManage(costEntryResourceKey.value)) return;
+  const params = new URLSearchParams({
+    entry_kind: costEntryKind.value,
+    page: String(expensePage.value),
+    page_size: String(expensePageSize.value),
+  });
   if (expenseFilterProject.value) params.set("project_id", String(expenseFilterProject.value));
-  if (expenseFilterType.value) params.set("expense_type", expenseFilterType.value);
   if (expenseFilterStatus.value) params.set("status", expenseFilterStatus.value);
   if (expenseFilterStart.value) params.set("period_start", expenseFilterStart.value);
   if (expenseFilterEnd.value) params.set("period_end", expenseFilterEnd.value);
   if (expenseFilterKeyword.value.trim()) params.set("keyword", expenseFilterKeyword.value.trim());
+  if (expenseFilterMonth.value) params.set("accounting_month", expenseFilterMonth.value);
   loading.value = true;
   try {
-    const result = await api<ProjectExpenseList>(`/api/v1/project-expenses?${params}`);
+    const result = await api<ProjectCostEntryList>(`/api/v1/project-cost-entries?${params}`);
     projectExpenses.value = result.items;
     projectExpenseTotal.value = result.total;
+    costEntrySummary.value = result.summary || {};
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "项目费用加载失败";
+    errorMessage.value = error instanceof Error ? error.message : "项目成本单加载失败";
   } finally {
     loading.value = false;
   }
 };
 
-const resetExpenseForm = () => {
-  Object.assign(expenseForm, { expense_type: "PROJECT_COST", project_id: projects.value[0]?.id || 0, occurred_on: applicationDate(), amount: 0, cost_amount: 0, budget_item_id: null, requires_payment: true, payee_name: "", payee_bank_name: "", payee_bank_account: "", payment_due_date: "", purpose: "", notes: "", invoice_code: "", invoice_no: "", supplier_id: null, detail: {} });
+const resetCostEntryForm = () => {
+  Object.assign(costEntryForm, {
+    entry_kind: costEntryKind.value,
+    project_id: projects.value[0]?.id || 0,
+    budget_item_id: null,
+    amount: 0,
+    occurred_on: applicationDate(),
+    accounting_month: applicationDate().slice(0, 7),
+    description: "",
+    version: 1,
+  });
   pendingExpenseFiles.value = [];
   selectedExpense.value = null;
-  if (expenseForm.project_id) void loadProjectBudgetItems(expenseForm.project_id);
+  if (costEntryForm.project_id) void loadProjectBudgetItems(costEntryForm.project_id);
 };
 const openExpenseForm = () => {
-  resetExpenseForm();
+  resetCostEntryForm();
   expenseFormOpen.value = true;
 };
 const chooseExpenseFiles = (event: Event) => {
   pendingExpenseFiles.value = Array.from((event.target as HTMLInputElement).files || []);
 };
-const saveExpense = async (submit = false) => {
-  if (!expenseForm.project_id || !expenseForm.amount || !expenseForm.cost_amount || !expenseForm.purpose.trim()) {
-    errorMessage.value = "请填写项目、金额、计入成本金额和费用说明";
+const saveCostEntry = async (submit = false) => {
+  const form = costEntryForm;
+  if (!form.project_id || !form.amount) {
+    errorMessage.value = "请填写项目和金额";
     return;
   }
-  if (expenseForm.expense_type !== "LABOR_COST" && !expenseForm.budget_item_id) {
-    errorMessage.value = "请选择预算项";
-    return;
-  }
-  if (!selectedExpense.value && !pendingExpenseFiles.value.length) {
-    errorMessage.value = "请至少上传一个费用凭证附件";
+  if (form.entry_kind === "PERSONNEL_COST") {
+    if (!form.accounting_month) {
+      errorMessage.value = "请选择会计期间";
+      return;
+    }
+  } else if (!form.occurred_on) {
+    errorMessage.value = "请选择发生日期";
     return;
   }
   expenseFormSaving.value = true;
   try {
-    const payload = { ...expenseForm, budget_item_id: expenseForm.expense_type === "LABOR_COST" ? null : expenseForm.budget_item_id, payment_due_date: expenseForm.payment_due_date || null, supplier_id: expenseForm.supplier_id || null };
+    const payload = {
+      entry_kind: form.entry_kind,
+      project_id: form.project_id,
+      budget_item_id: form.budget_item_id || null,
+      amount: form.amount,
+      occurred_on: form.entry_kind === "PERSONNEL_COST" ? null : form.occurred_on,
+      accounting_month: form.entry_kind === "PERSONNEL_COST" ? form.accounting_month : null,
+      description: form.description || null,
+    };
     let saved = selectedExpense.value
-      ? await api<ProjectExpense>(`/api/v1/project-expenses/${selectedExpense.value.id}`, { method: "PATCH", body: JSON.stringify({ ...payload, version: selectedExpense.value.version }) })
-      : await api<ProjectExpense>("/api/v1/project-expenses", { method: "POST", body: JSON.stringify(payload) });
+      ? await api<ProjectCostEntry>(`/api/v1/project-cost-entries/${selectedExpense.value.id}`, { method: "PATCH", body: JSON.stringify({ ...payload, version: selectedExpense.value.version }) })
+      : await api<ProjectCostEntry>("/api/v1/project-cost-entries", { method: "POST", body: JSON.stringify(payload) });
     for (const file of pendingExpenseFiles.value) {
-      await uploadAttachmentFile(`/api/v1/project-expenses/${saved.id}/attachments`, file);
+      await uploadAttachmentFile(`/api/v1/project-cost-entries/${saved.id}/attachments`, file);
     }
     pendingExpenseFiles.value = [];
-    if (submit) saved = await api<ProjectExpense>(`/api/v1/project-expenses/${saved.id}/submit`, { method: "POST" });
+    if (submit) saved = await api<ProjectCostEntry>(`/api/v1/project-cost-entries/${saved.id}/submit`, { method: "POST" });
     selectedExpense.value = saved;
     expenseFormOpen.value = false;
     await refreshProjectExpenses();
     if (submit) go("expenseDetail");
-    successMessage.value = submit ? "费用单已提交审批" : "费用草稿已保存";
+    successMessage.value = submit ? "成本单已提交复核" : "成本单草稿已保存";
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "费用保存失败";
+    errorMessage.value = error instanceof Error ? error.message : "成本单保存失败";
   } finally {
     expenseFormSaving.value = false;
   }
 };
 
-const openExpenseDetail = async (item: ProjectExpense | { id: number }) => {
+const openExpenseDetail = async (item: ProjectCostEntry | { id: number }) => {
   try {
-    selectedExpense.value = await api<ProjectExpense>(`/api/v1/project-expenses/${item.id}`);
+    selectedExpense.value = await api<ProjectCostEntry>(`/api/v1/project-cost-entries/${item.id}`);
     go("expenseDetail");
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "费用详情加载失败";
+    errorMessage.value = error instanceof Error ? error.message : "成本单详情加载失败";
   }
 };
-const editExpense = (item: ProjectExpense) => {
+const editCostEntry = (item: ProjectCostEntry) => {
   selectedExpense.value = item;
-  Object.assign(expenseForm, {
-    expense_type: item.expense_type,
+  Object.assign(costEntryForm, {
+    entry_kind: item.entry_kind,
     project_id: item.project_id,
-    occurred_on: item.occurred_on,
-    amount: item.amount,
-    cost_amount: item.cost_amount,
     budget_item_id: item.budget_item_id || null,
-    requires_payment: item.requires_payment,
-    payee_name: item.payee_name || "",
-    payee_bank_name: item.payee_bank_name || "",
-    payee_bank_account: item.payee_bank_account || "",
-    payment_due_date: item.payment_due_date || "",
-    purpose: item.purpose,
-    notes: item.notes || "",
-    invoice_code: item.invoice_code || "",
-    invoice_no: item.invoice_no || "",
-    supplier_id: item.supplier_id,
-    detail: { ...item.detail },
+    amount: item.amount,
+    occurred_on: item.occurred_on || applicationDate(),
+    accounting_month: item.accounting_month || applicationDate().slice(0, 7),
+    description: item.description || "",
+    version: item.version,
   });
   pendingExpenseFiles.value = [];
+  void loadProjectBudgetItems(item.project_id);
   expenseFormOpen.value = true;
 };
-const refreshExpenseTasks = async () => {
+const submitCostEntry = async () => {
+  const entry = selectedExpense.value;
+  if (!entry) return;
   try {
-    const result = await api<{ items: WorkflowTask[]; total: number }>(`/api/v1/approval/tasks${expenseTaskTab.value === "PENDING" ? "?status=PENDING" : ""}`);
-    expenseTasks.value = expenseTaskTab.value === "DONE" ? result.items.filter((item) => item.status !== "PENDING") : result.items;
+    selectedExpense.value = await api<ProjectCostEntry>(`/api/v1/project-cost-entries/${entry.id}/submit`, { method: "POST" });
+    await refreshProjectExpenses();
+    successMessage.value = "成本单已提交复核";
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "费用审批任务加载失败";
+    errorMessage.value = error instanceof Error ? error.message : "提交失败";
   }
 };
-const selectedExpensePendingTask = computed(() => {
-  const listed = expenseTasks.value.find((item) => item.document_id === selectedExpense.value?.id && item.status === "PENDING");
-  if (listed) return listed;
-  if (!selectedExpense.value?.current_task_id) return null;
-  return { id: selectedExpense.value.current_task_id, node_name: selectedExpense.value.current_node_name || "审批" } as WorkflowTask;
-});
-const approveExpense = async () => {
-  const task = selectedExpensePendingTask.value;
-  if (!task) return;
+const approveCostEntry = async () => {
+  const entry = selectedExpense.value;
+  if (!entry) return;
   try {
-    selectedExpense.value = await api<ProjectExpense>(`/api/v1/approval/tasks/${task.id}/approve`, { method: "POST", body: JSON.stringify({ comment: expenseActionComment.value || null }) });
-    expenseActionComment.value = "";
-    await refreshExpenseTasks();
-    successMessage.value = "当前审批节点已通过";
-  } catch (error) { errorMessage.value = error instanceof Error ? error.message : "审批失败"; }
+    selectedExpense.value = await api<ProjectCostEntry>(`/api/v1/project-cost-entries/${entry.id}/approve`, { method: "POST", body: JSON.stringify({ comment: costEntryActionComment.value || null }) });
+    costEntryActionComment.value = "";
+    await refreshCostReview();
+    successMessage.value = "复核已通过，成本已计入项目";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "复核失败";
+  }
 };
-const rejectExpense = async () => {
-  const task = selectedExpensePendingTask.value;
-  if (!task || expenseActionComment.value.trim().length < 2) { errorMessage.value = "驳回原因至少填写 2 个字"; return; }
+const rejectCostEntry = async () => {
+  const entry = selectedExpense.value;
+  if (!entry) return;
+  if (costEntryRejectReason.value.trim().length < 2) {
+    errorMessage.value = "驳回原因至少填写 2 个字";
+    return;
+  }
   try {
-    selectedExpense.value = await api<ProjectExpense>(`/api/v1/approval/tasks/${task.id}/reject`, { method: "POST", body: JSON.stringify({ reason: expenseActionComment.value.trim() }) });
-    expenseActionComment.value = "";
-    await refreshExpenseTasks();
-    successMessage.value = "费用单已驳回";
-  } catch (error) { errorMessage.value = error instanceof Error ? error.message : "驳回失败"; }
+    selectedExpense.value = await api<ProjectCostEntry>(`/api/v1/project-cost-entries/${entry.id}/reject`, { method: "POST", body: JSON.stringify({ reason: costEntryRejectReason.value.trim() }) });
+    costEntryRejectReason.value = "";
+    costEntryRejectOpen.value = false;
+    await refreshCostReview();
+    successMessage.value = "成本单已驳回";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "驳回失败";
+  }
 };
-const openExpensePayment = () => {
-  if (!selectedExpense.value) return;
-  Object.assign(expensePaymentForm, { payment_date: applicationDate(), amount: selectedExpense.value.amount, company_account: "", voucher_note: "", comment: "" });
-  expensePaymentOpen.value = true;
-};
-const confirmExpensePayment = async () => {
-  const task = selectedExpensePendingTask.value;
-  if (!task || !expensePaymentForm.company_account.trim()) { errorMessage.value = "请填写公司付款账户"; return; }
+const reverseCostEntry = async () => {
+  const entry = selectedExpense.value;
+  if (!entry) return;
   try {
-    selectedExpense.value = await api<ProjectExpense>(`/api/v1/approval/tasks/${task.id}/confirm-payment`, { method: "POST", body: JSON.stringify(expensePaymentForm) });
-    expensePaymentOpen.value = false;
-    await refreshExpenseTasks();
-    successMessage.value = "支付已确认并计入项目已付";
-  } catch (error) { errorMessage.value = error instanceof Error ? error.message : "支付确认失败"; }
+    selectedExpense.value = await api<ProjectCostEntry>(`/api/v1/project-cost-entries/${entry.id}/reverse`, { method: "POST", body: JSON.stringify({ reason: costEntryReverseReason.value.trim() || null }) });
+    costEntryReverseReason.value = "";
+    costEntryReverseOpen.value = false;
+    await refreshProjectExpenses();
+    successMessage.value = "成本单已冲销";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "冲销失败";
+  }
+};
+
+const refreshCostReview = async () => {
+  if (!canManage("cost_review")) return;
+  const params = new URLSearchParams({ tab: costReviewTab.value, page: String(costReviewPage.value), page_size: "20" });
+  try {
+    const result = await api<CostReviewList>(`/api/v1/cost-review?${params}`);
+    costReviewItems.value = result.items;
+    costReviewTotal.value = result.total;
+    costReviewCounts.pending = result.pending_count;
+    costReviewCounts.processed = result.processed_count;
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "费用复核加载失败";
+  }
+};
+const costReviewApiPath = (item: CostReviewItem) =>
+  item.kind === "PAYMENT" ? `/api/v1/payments/${item.entry_id}` : `/api/v1/project-cost-entries/${item.entry_id}`;
+const openCostReviewTarget = async (item: CostReviewItem) => {
+  if (item.kind === "PAYMENT") {
+    await openPaymentApproval({ id: item.entry_id } as Payment);
+    return;
+  }
+  await openExpenseDetail({ id: item.entry_id });
+};
+const approveCostReview = async (item: CostReviewItem) => {
+  try {
+    await api(`${costReviewApiPath(item)}/approve`, { method: "POST", body: JSON.stringify({ comment: costEntryActionComment.value || null }) });
+    costEntryActionComment.value = "";
+    await refreshCostReview();
+    successMessage.value = "复核已通过";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "复核失败";
+  }
+};
+const rejectCostReview = async (item: CostReviewItem) => {
+  costRejectTarget.value = item;
+  if (costEntryRejectReason.value.trim().length < 2) {
+    errorMessage.value = "驳回原因至少填写 2 个字";
+    return;
+  }
+  try {
+    await api(`${costReviewApiPath(item)}/reject`, { method: "POST", body: JSON.stringify({ reason: costEntryRejectReason.value.trim() }) });
+    costEntryRejectReason.value = "";
+    costEntryRejectOpen.value = false;
+    await refreshCostReview();
+    successMessage.value = "单据已驳回";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "驳回失败";
+  }
 };
 
 const refreshApprovalPositions = async () => {
@@ -6955,6 +7142,7 @@ const loadRequestedPage = async () => {
     await refreshProjectExpenses();
     await refreshExpenseTasks();
   }
+  if (page.value === "costReview") await refreshCostReview();
   if (page.value === "expenseDetail") {
     const expenseId = Number(new URLSearchParams(window.location.search).get("id") || 0);
     if (expenseId) selectedExpense.value = await api<ProjectExpense>(`/api/v1/project-expenses/${expenseId}`);
@@ -7145,6 +7333,22 @@ onMounted(() => {
           @click="go('projectExpenses')"
         >
           <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#cost"></use></svg></span><span>项目费用</span>
+        </button>
+        <button
+          v-if="canManage('labor_costs')"
+          class="nav-item"
+          :class="{ active: page === 'laborCosts' }"
+          @click="go('laborCosts')"
+        >
+          <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#cost"></use></svg></span><span>人工成本结转</span>
+        </button>
+        <button
+          v-if="canManage('cost_review')"
+          class="nav-item"
+          :class="{ active: page === 'costReview' }"
+          @click="go('costReview')"
+        >
+          <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#cost"></use></svg></span><span>费用复核</span>
         </button>
         <button
           v-if="canManage('project_board')"
@@ -9395,7 +9599,7 @@ onMounted(() => {
             <section v-else-if="projectDetailTab === 'expenses'" class="card project-tab-panel">
               <div class="section-head"><div><h2>项目费用明细</h2><p class="muted">审批通过后计入项目成本，支付完成后计入已付</p></div><button v-if="canAction('project_expenses','CREATE')" class="primary" @click="openExpenseForm">＋ 新增费用</button></div>
               <div class="project-kpi-row project-budget-kpis"><section><span>非人工预算</span><strong>{{ moneyText(selectedManagedProject.expense_budget) }}</strong></section><section><span>合同成本</span><strong>{{ moneyText(selectedManagedProject.actual_contract_cost) }}</strong></section><section><span>项目费用</span><strong>{{ moneyText(selectedManagedProject.actual_expense_cost) }}</strong></section><section><span>非人工剩余</span><strong :class="selectedManagedProject.expense_budget_remaining < 0 ? 'negative-number' : ''">{{ moneyText(selectedManagedProject.expense_budget_remaining) }}</strong></section></div>
-              <div v-if="!projectExpenses.length" class="empty">该项目暂无费用记录。</div><div v-else class="table-wrap"><table><thead><tr><th>费用单号</th><th>类型</th><th>申请人</th><th>发生日期</th><th>成本金额</th><th>当前节点</th><th>状态</th></tr></thead><tbody><tr v-for="item in projectExpenses" :key="item.id"><td><button class="detail-link" @click="openExpenseDetail(item)">{{ item.expense_no }}</button></td><td>{{ expenseTypeLabel(item.expense_type) }}</td><td>{{ item.applicant_name }}</td><td>{{ item.occurred_on }}</td><td>{{ moneyText(item.cost_amount) }}</td><td>{{ item.current_node_name || '—' }}</td><td><span class="tag" :class="expenseStatusClass(item.status)">{{ expenseStatusLabel(item.status) }}</span></td></tr></tbody></table></div>
+              <div v-if="!projectExpenses.length" class="empty">该项目暂无费用记录。</div><div v-else class="table-wrap"><table><thead><tr><th>单据编号</th><th>预算项</th><th>申请人</th><th>发生日期</th><th>金额</th><th>状态</th></tr></thead><tbody><tr v-for="item in projectExpenses" :key="item.id"><td><button class="detail-link" @click="openExpenseDetail(item)">{{ item.cost_no }}</button></td><td>{{ item.budget_item_name || '未归集' }}</td><td>{{ item.applicant_name }}</td><td>{{ item.occurred_on || item.accounting_month || '—' }}</td><td>{{ moneyText(item.amount) }}</td><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td></tr></tbody></table></div>
             </section>
 
             <section v-else-if="projectDetailTab === 'audit'" class="card project-tab-panel">
@@ -10072,7 +10276,7 @@ onMounted(() => {
             </div>
           </div>
           <div class="v3-tabs" role="tablist" aria-label="合同付款单范围">
-            <button type="button" :class="{ active: paymentTab === 'pending' }" @click="paymentTab = 'pending'">待我审批</button>
+            <button type="button" :class="{ active: paymentTab === 'pending' }" @click="paymentTab = 'pending'">待我复核</button>
             <button type="button" :class="{ active: paymentTab === 'all' }" @click="paymentTab = 'all'">全部单据</button>
           </div>
           <section class="card v3-filter-card">
@@ -10091,8 +10295,9 @@ onMounted(() => {
                 <select v-model="paymentFilterStatus">
                   <option value="">全部状态</option>
                   <option value="DRAFT">草稿</option>
-                  <option value="PENDING_APPROVAL">审批中</option>
-                  <option value="PENDING">待出纳审批（历史）</option>
+                  <option value="PENDING_REVIEW">待复核</option>
+                  <option value="PENDING_APPROVAL">待复核（历史）</option>
+                  <option value="PENDING">待复核（历史）</option>
                   <option value="APPROVED">已确认</option>
                   <option value="REJECTED">已驳回</option>
                   <option value="REVERSED">已冲销</option>
@@ -10255,11 +10460,11 @@ onMounted(() => {
                 <div class="full"><small>备注</small><strong>{{ selectedPayment.comment || "无" }}</strong></div>
               </div>
               <div v-if="selectedPayment.can_approve" class="cash-approval-confirm">
-                <strong>当前节点：{{ selectedPayment.current_node_name || '出纳审批' }}</strong>
-                <span>{{ selectedPayment.current_node_name === '出纳支付' || !selectedPayment.current_workflow_instance_id ? '确认后计入项目已付，并按本阶段金额核减应付。' : '本节点通过后流转至下一审批人，不提前计入项目已付。' }}</span>
+                <strong>当前节点：{{ selectedPayment.current_node_name || '费用复核' }}</strong>
+                <span>复核通过后计入项目成本与已付，并按本阶段金额核减应付。</span>
               </div>
               <div v-if="selectedPayment.can_approve" class="actions">
-                <button class="primary success-button" @click="approvePayment(selectedPayment)">{{ selectedPayment.current_node_name === '出纳支付' || !selectedPayment.current_workflow_instance_id ? '确认支付' : '通过' }}</button>
+                <button class="primary success-button" @click="approvePayment(selectedPayment)">复核通过</button>
                 <button class="secondary danger-button" @click="rejectPayment(selectedPayment)">驳回</button>
               </div>
               <div v-if="selectedPayment.status === 'REJECTED'" class="notice error"><strong>驳回意见</strong><span>{{ selectedPayment.comment || "未填写" }}</span></div>
@@ -10277,7 +10482,7 @@ onMounted(() => {
                 </template>
                 <template v-else>
                   <div><b>{{ selectedPayment.submitted_by_name || "申请人" }} 提交合同付款单</b><small>{{ formatDateTime(selectedPayment.submitted_at) || "未记录" }}</small></div>
-                  <div><b>{{ selectedPayment.status === "PENDING" ? "等待出纳审批" : selectedPayment.status === "APPROVED" ? `审批通过 · ${selectedPayment.approved_by_name || "出纳"}` : selectedPayment.status === "REJECTED" ? `已驳回 · ${selectedPayment.approved_by_name || "出纳"}` : "已冲销" }}</b><small>{{ formatDateTime(selectedPayment.approved_at) || "待处理" }}</small></div>
+                  <div><b>{{ selectedPayment.status === "PENDING" || selectedPayment.status === "PENDING_REVIEW" ? "等待费用复核" : selectedPayment.status === "APPROVED" ? `复核通过 · ${selectedPayment.approved_by_name || "费用复核"}` : selectedPayment.status === "REJECTED" ? `已驳回 · ${selectedPayment.approved_by_name || "费用复核"}` : "已冲销" }}</b><small>{{ formatDateTime(selectedPayment.approved_at) || "待处理" }}</small></div>
                 </template>
               </div>
             </section>
@@ -10297,55 +10502,69 @@ onMounted(() => {
            <section v-else class="card empty"><h2>合同付款单不存在</h2><button class="primary" @click="go('projectPayments')">返回合同付款</button></section>
         </section>
 
-        <section v-else-if="page === 'projectExpenses'" class="page-view expense-page">
+        <section v-else-if="page === 'projectExpenses' || page === 'laborCosts'" class="page-view expense-page">
           <div class="page-head">
-            <div><div class="eyebrow">PROJECT EXPENSE / WORKFLOW</div><h1>项目费用</h1><p class="muted">差旅、无合同发票和其他费用统一归集，审批通过计入成本，出纳支付计入已付。</p></div>
-            <button v-if="canAction('project_expenses', 'CREATE')" class="primary" @click="openExpenseForm">＋ 新增费用</button>
+            <div><div class="eyebrow">PROJECT COST / REVIEW</div><h1>{{ page === 'laborCosts' ? '人工成本结转' : '项目费用' }}</h1><p class="muted">{{ page === 'laborCosts' ? '按会计期间把人工成本结转到项目，复核通过后计入项目成本。' : '项目发生的各类费用，按统一 8 项预算项归集，复核通过后计入项目成本。' }}</p></div>
+            <button v-if="canAction(costEntryResourceKey, 'CREATE')" class="primary" @click="openExpenseForm">＋ 新增{{ page === 'laborCosts' ? '结转单' : '费用单' }}</button>
           </div>
           <section class="card filter-card expense-filter-card">
             <div class="filter-grid">
               <label>项目<select v-model.number="expenseFilterProject"><option :value="0">全部项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
-              <label>费用类型<select v-model="expenseFilterType"><option value="">全部类型</option><option value="TRAVEL">差旅费用</option><option value="INVOICE">无合同发票</option><option value="OTHER">其他费用</option><option value="PROJECT_COST">项目费用</option><option value="LABOR_COST">人工费用结转</option></select></label>
-              <label>状态<select v-model="expenseFilterStatus"><option value="">全部状态</option><option value="DRAFT">草稿</option><option value="PENDING_APPROVAL">审批中</option><option value="APPROVED_PENDING_PAYMENT">待支付</option><option value="PAID">已支付</option><option value="REJECTED">已驳回</option><option value="REVERSED">已冲销</option></select></label>
+              <label v-if="page === 'laborCosts'">会计期间<input v-model="expenseFilterMonth" type="month" /></label>
+              <label>状态<select v-model="expenseFilterStatus"><option value="">全部状态</option><option value="DRAFT">草稿</option><option value="PENDING_REVIEW">待复核</option><option value="APPROVED">已通过</option><option value="REJECTED">已驳回</option><option value="REVERSED">已冲销</option></select></label>
               <label>开始日期<input v-model="expenseFilterStart" type="date" /></label><label>结束日期<input v-model="expenseFilterEnd" type="date" /></label>
               <label>单号/说明<input v-model.trim="expenseFilterKeyword" placeholder="输入单号或说明" @keyup.enter="refreshProjectExpenses" /></label>
             </div>
-            <div class="filter-actions"><button class="primary" @click="expensePage = 1; refreshProjectExpenses()">查询</button><button class="secondary" @click="expenseFilterProject=0; expenseFilterType=''; expenseFilterStatus=''; expenseFilterStart=''; expenseFilterEnd=''; expenseFilterKeyword=''; expensePage=1; refreshProjectExpenses()">重置</button></div>
-          </section>
-          <section v-if="canManage('project_expenses')" class="card expense-task-strip">
-            <div class="section-head"><div><h2>我的费用审批</h2><p class="muted">只显示分配给当前用户的流程任务</p></div><div class="segmented"><button :class="{active: expenseTaskTab==='PENDING'}" @click="expenseTaskTab='PENDING'; refreshExpenseTasks()">待审批</button><button :class="{active: expenseTaskTab==='DONE'}" @click="expenseTaskTab='DONE'; refreshExpenseTasks()">已处理</button></div></div>
-            <div v-if="!expenseTasks.length" class="compact-empty muted">当前没有{{ expenseTaskTab === 'PENDING' ? '待审批' : '已处理' }}任务</div>
-            <div v-else class="expense-task-list"><button v-for="task in expenseTasks.slice(0, 6)" :key="task.id" @click="openExpenseDetail({id: task.document_id})"><span><strong>{{ task.document_no }}</strong><small>{{ task.project_name }} · {{ task.applicant_name }}</small></span><span><strong>{{ task.node_name }}</strong><small>{{ moneyText(task.amount) }}</small></span></button></div>
+            <div class="filter-actions"><button class="primary" @click="expensePage = 1; refreshProjectExpenses()">查询</button><button class="secondary" @click="expenseFilterProject=0; expenseFilterMonth=''; expenseFilterStatus=''; expenseFilterStart=''; expenseFilterEnd=''; expenseFilterKeyword=''; expensePage=1; refreshProjectExpenses()">重置</button></div>
           </section>
           <section class="card table-card">
-            <div class="section-head"><div><h2>费用台账</h2><p class="muted">共 {{ projectExpenseTotal }} 条</p></div></div>
-            <div class="table-wrap"><table><thead><tr><th>费用单号</th><th>类型</th><th>项目</th><th>申请人</th><th>发生日期</th><th>计入成本</th><th>当前节点</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in projectExpenses" :key="item.id"><td><button class="detail-link" @click="openExpenseDetail(item)">{{ item.expense_no }}</button></td><td>{{ expenseTypeLabel(item.expense_type) }}</td><td><strong>{{ item.project_name }}</strong><small>{{ item.project_code }}</small></td><td>{{ item.applicant_name }}</td><td>{{ item.occurred_on }}</td><td>{{ moneyText(item.cost_amount) }}</td><td>{{ item.current_node_name || '—' }}</td><td><span class="tag" :class="expenseStatusClass(item.status)">{{ expenseStatusLabel(item.status) }}</span></td><td><div class="table-actions"><button class="text-button" @click="openExpenseDetail(item)">查看</button><button v-if="item.can_edit" class="text-button" @click="editExpense(item)">编辑</button></div></td></tr></tbody></table></div>
-            <div v-if="!projectExpenses.length" class="empty">暂无符合条件的项目费用</div>
+            <div class="section-head"><div><h2>{{ page === 'laborCosts' ? '结转台账' : '费用台账' }}</h2><p class="muted">共 {{ projectExpenseTotal }} 条 · 已通过 {{ moneyText(costEntrySummary.total_amount || 0) }} · 待复核 {{ moneyText(costEntrySummary.pending_amount || 0) }}</p></div></div>
+            <div class="table-wrap"><table><thead><tr><th>单据编号</th><th>项目</th><th>预算项</th><th>申请人</th><th>{{ page === 'laborCosts' ? '会计期间' : '发生日期' }}</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in projectExpenses" :key="item.id"><td><button class="detail-link" @click="openExpenseDetail(item)">{{ item.cost_no }}</button></td><td><strong>{{ item.project_name }}</strong><small>{{ item.project_code }}</small></td><td>{{ item.budget_item_name || '未归集' }}</td><td>{{ item.applicant_name }}</td><td>{{ page === 'laborCosts' ? (item.accounting_month || '—') : (item.occurred_on || '—') }}</td><td>{{ moneyText(item.amount) }}</td><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td><td><div class="table-actions"><button class="text-button" @click="openExpenseDetail(item)">查看</button><button v-if="item.can_edit" class="text-button" @click="editCostEntry(item)">编辑</button></div></td></tr></tbody></table></div>
+            <div v-if="!projectExpenses.length" class="empty">暂无符合条件的单据</div>
             <div class="pagination"><button class="secondary" :disabled="expensePage<=1" @click="expensePage--; refreshProjectExpenses()">上一页</button><span>第 {{ expensePage }} 页</span><button class="secondary" :disabled="expensePage * expensePageSize >= projectExpenseTotal" @click="expensePage++; refreshProjectExpenses()">下一页</button><select v-model.number="expensePageSize" @change="expensePage=1; refreshProjectExpenses()"><option :value="10">10 条/页</option><option :value="20">20 条/页</option><option :value="50">50 条/页</option></select></div>
           </section>
           <div v-if="expenseFormOpen" class="modal-backdrop">
             <section class="modal-card expense-form-modal">
-              <div class="modal-head"><div><span class="eyebrow">EXPENSE DRAFT</span><h2>{{ selectedExpense ? '编辑费用草稿' : '新增项目费用' }}</h2></div><button class="modal-close" aria-label="关闭" @click="expenseFormOpen=false">×</button></div>
-              <div class="expense-form-section"><h3>基本信息</h3><div class="form-grid three-cols"><label>费用类型<select v-model="expenseForm.expense_type"><option value="TRAVEL">差旅费用</option><option value="INVOICE">无合同发票</option><option value="OTHER">其他费用</option><option value="LABOR_COST">人工费用结转</option></select></label><label>项目<select v-model.number="expenseForm.project_id"><option :value="0" disabled>请选择项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label>发生日期<input v-model="expenseForm.occurred_on" type="date" /></label></div></div>
-              <div class="expense-form-section"><h3>预算归集</h3><div class="form-grid three-cols"><label v-if="expenseForm.expense_type !== 'LABOR_COST'">预算项<select v-model.number="expenseForm.budget_item_id"><option :value="null" disabled>{{ projectBudgetLoading ? '正在加载预算项…' : '请选择预算项' }}</option><option v-for="item in budgetOptionsForExpense" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label v-else>预算项<input value="人工费用（系统自动归集）" readonly /></label><label>申请金额<input v-model.number="expenseForm.amount" type="number" min="0.01" step="0.01" @change="expenseForm.cost_amount ||= expenseForm.amount" /></label><label>计入项目成本<input v-model.number="expenseForm.cost_amount" type="number" min="0.01" step="0.01" /></label></div></div>
-              <div class="expense-form-section"><h3>附件与说明</h3><div class="form-grid"><label class="span-2">费用说明<textarea v-model.trim="expenseForm.purpose" rows="3"></textarea></label><label class="span-2">备注<textarea v-model.trim="expenseForm.notes" rows="2"></textarea></label><label class="file-drop span-2">选择费用凭证<input type="file" multiple accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.pdf,.png,.jpg,.jpeg,.webp" @change="chooseExpenseFiles" /><span>{{ pendingExpenseFiles.length ? `已选择 ${pendingExpenseFiles.length} 个文件` : '点击选择附件，保存后自动上传' }}</span></label></div></div>
-              <div class="form-footer"><button class="secondary" @click="expenseFormOpen=false">取消</button><button class="secondary" :disabled="expenseFormSaving" @click="saveExpense(false)">保存草稿</button><button class="primary" :disabled="expenseFormSaving" @click="saveExpense(true)">{{ expenseFormSaving ? '正在保存…' : '提交审批' }}</button></div>
+              <div class="modal-head"><div><span class="eyebrow">COST ENTRY DRAFT</span><h2>{{ selectedExpense ? '编辑成本单' : (page === 'laborCosts' ? '新增人工成本结转' : '新增项目费用') }}</h2></div><button class="modal-close" aria-label="关闭" @click="expenseFormOpen=false">×</button></div>
+              <div class="expense-form-section"><h3>基本信息</h3><div class="form-grid three-cols"><label>项目<select v-model.number="costEntryForm.project_id" @change="loadProjectBudgetItems(costEntryForm.project_id)"><option :value="0" disabled>请选择项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'">会计期间<input v-model="costEntryForm.accounting_month" type="month" /></label><label v-else>发生日期<input v-model="costEntryForm.occurred_on" type="date" /></label><label>金额<input v-model.number="costEntryForm.amount" type="number" min="0.01" step="0.01" /></label></div></div>
+              <div class="expense-form-section"><h3>预算归集</h3><div class="form-grid three-cols"><label>预算项<select v-model.number="costEntryForm.budget_item_id"><option :value="0">{{ projectBudgetLoading ? '正在加载预算项…' : '不归集' }}</option><option v-for="item in budgetOptionsForExpense" :key="item.id" :value="item.id">{{ item.name }}</option></select></label></div></div>
+              <div class="expense-form-section"><h3>附件与说明</h3><div class="form-grid"><label class="span-2">说明<textarea v-model.trim="costEntryForm.description" rows="3"></textarea></label><label class="file-drop span-2">选择凭证<input type="file" multiple accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.pdf,.png,.jpg,.jpeg,.webp" @change="chooseExpenseFiles" /><span>{{ pendingExpenseFiles.length ? `已选择 ${pendingExpenseFiles.length} 个文件` : '点击选择附件，保存后自动上传' }}</span></label></div></div>
+              <div class="form-footer"><button class="secondary" @click="expenseFormOpen=false">取消</button><button class="secondary" :disabled="expenseFormSaving" @click="saveCostEntry(false)">保存草稿</button><button class="primary" :disabled="expenseFormSaving" @click="saveCostEntry(true)">{{ expenseFormSaving ? '正在保存…' : '提交复核' }}</button></div>
             </section>
           </div>
         </section>
 
         <section v-else-if="page === 'expenseDetail'" class="page-view expense-detail-page">
-          <div class="page-head"><div><div class="eyebrow">EXPENSE DETAIL / {{ selectedExpense?.expense_no }}</div><h1>项目费用详情</h1><p class="muted">费用审批确认成本，出纳支付确认资金，两条事实链分别记录。</p></div><div class="actions"><span v-if="selectedExpense" class="tag" :class="expenseStatusClass(selectedExpense.status)">{{ expenseStatusLabel(selectedExpense.status) }}</span><button class="secondary" @click="go('projectExpenses')">返回费用台账</button></div></div>
+          <div class="page-head"><div><div class="eyebrow">COST ENTRY / {{ selectedExpense?.cost_no }}</div><h1>成本单详情</h1><p class="muted">{{ costKindLabel(selectedExpense?.entry_kind || 'PROJECT_EXPENSE') }} · 一级费用复核通过后计入项目成本</p></div><div class="actions"><span v-if="selectedExpense" class="tag" :class="costEntryStatusClass(selectedExpense.status)">{{ costEntryStatusLabel(selectedExpense.status) }}</span><button class="secondary" @click="go(costEntryKind === 'PERSONNEL_COST' ? 'laborCosts' : 'projectExpenses')">返回台账</button></div></div>
           <template v-if="selectedExpense">
-            <section class="expense-hero-grid"><div class="expense-kpi"><span>申请金额</span><strong>{{ moneyText(selectedExpense.amount) }}</strong></div><div class="expense-kpi"><span>计入项目成本</span><strong>{{ moneyText(selectedExpense.cost_amount) }}</strong></div><div class="expense-kpi"><span>归集预算项已用</span><strong>{{ moneyText(selectedExpense.expense_budget_used) }}</strong></div><div class="expense-kpi"><span>归集预算项剩余</span><strong :class="selectedExpense.expense_budget_remaining < 0 ? 'negative-number' : ''">{{ moneyText(selectedExpense.expense_budget_remaining) }}</strong></div></section>
-            <section class="expense-detail-grid"><section class="card"><div class="section-head"><div><h2>费用信息</h2><p class="muted">{{ expenseTypeLabel(selectedExpense.expense_type) }} · {{ selectedExpense.project_name }}</p></div><button v-if="selectedExpense.can_edit" class="secondary" @click="editExpense(selectedExpense)">编辑草稿</button></div><div class="detail-grid"><div><small>费用单号</small><strong>{{ selectedExpense.expense_no }}</strong></div><div><small>申请人</small><strong>{{ selectedExpense.applicant_name }}</strong></div><div><small>所属部门</small><strong>{{ selectedExpense.applicant_department_name || '未分配' }}</strong></div><div><small>发生日期</small><strong>{{ selectedExpense.occurred_on }}</strong></div><div><small>预算项</small><strong>{{ selectedExpense.budget_item_name || '未归集' }}</strong></div><div class="full"><small>费用说明</small><strong>{{ selectedExpense.purpose }}</strong></div><div class="full"><small>备注</small><strong>{{ selectedExpense.notes || '无' }}</strong></div></div></section>
-              <section class="card"><h2>审批路径</h2><div class="workflow-track"><div v-for="node in selectedExpense.approval_path" :key="node.sequence" :class="['workflow-node', node.status.toLowerCase()]"><i>{{ node.sequence }}</i><span><strong>{{ node.node_name }}</strong><small>{{ node.assignees.map(item => item.name).join(' / ') }}{{ node.approval_mode === 'ANY' ? ' · 任一人审批' : '' }}</small></span></div></div></section>
+            <section class="expense-hero-grid"><div class="expense-kpi"><span>单据金额</span><strong>{{ moneyText(selectedExpense.amount) }}</strong></div><div class="expense-kpi"><span>归集预算项</span><strong>{{ selectedExpense.budget_item_name || '未归集' }}</strong></div><div class="expense-kpi"><span>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? '会计期间' : '发生日期' }}</span><strong>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? (selectedExpense.accounting_month || '—') : (selectedExpense.occurred_on || '—') }}</strong></div><div class="expense-kpi"><span>同期间单据数</span><strong>{{ selectedExpense.same_month_count }}</strong></div></section>
+            <section class="expense-detail-grid"><section class="card"><div class="section-head"><div><h2>单据信息</h2><p class="muted">{{ selectedExpense.project_name }} · {{ selectedExpense.project_code }}</p></div><button v-if="selectedExpense.can_edit" class="secondary" @click="editCostEntry(selectedExpense)">编辑草稿</button></div><div class="detail-grid"><div><small>单据编号</small><strong>{{ selectedExpense.cost_no }}</strong></div><div><small>单据类型</small><strong>{{ costKindLabel(selectedExpense.entry_kind) }}</strong></div><div><small>申请人</small><strong>{{ selectedExpense.applicant_name }}</strong></div><div><small>所属部门</small><strong>{{ selectedExpense.applicant_department_name || '未分配' }}</strong></div><div class="full"><small>说明</small><strong>{{ selectedExpense.description || '无' }}</strong></div></div></section>
+              <section class="card"><h2>复核信息</h2><div class="workflow-track"><div :class="['workflow-node', selectedExpense.status === 'APPROVED' ? 'approved' : selectedExpense.status === 'REJECTED' ? 'rejected' : selectedExpense.status === 'PENDING_REVIEW' ? 'pending' : 'draft']"><i>1</i><span><strong>费用复核</strong><small>{{ selectedExpense.reviewed_by_name || '待费用复核岗位处理' }}</small></span></div></div><div class="timeline"><div v-if="selectedExpense.submitted_at"><b>{{ selectedExpense.submitted_by_name || '申请人' }} 提交复核</b><small>{{ formatDateTime(selectedExpense.submitted_at) }}</small></div><div v-if="selectedExpense.reviewed_at"><b>{{ selectedExpense.reviewed_by_name }} {{ costEntryStatusLabel(selectedExpense.status) }}</b><small>{{ formatDateTime(selectedExpense.reviewed_at) }}<span v-if="selectedExpense.review_comment"> · {{ selectedExpense.review_comment }}</span></small></div><div v-else><b>等待费用复核</b><small>{{ formatDateTime(selectedExpense.created_at) }}</small></div></div></section>
             </section>
-            <section class="card contract-attachments-card"><div class="section-head"><div><h2>费用附件</h2><p class="muted">审批依据与费用凭证</p></div><span>{{ selectedExpense.attachments.length }} 个文件</span></div><div v-if="!selectedExpense.attachments.length" class="empty">暂无附件</div><div v-else class="contract-attachment-list"><div v-for="attachment in selectedExpense.attachments" :key="attachment.id" class="contract-attachment-row"><div class="attachment-file-icon" :class="`attachment-${attachment.preview_kind}`">{{ attachmentKindLabel(attachment.preview_kind) }}</div><div class="attachment-file-main"><strong>{{ attachment.file_name }}</strong><small>{{ attachmentSizeText(attachment.file_size) }} · {{ formatDateTime(attachment.created_at) }}</small></div><div class="table-actions"><button v-if="attachment.can_preview" class="text-button" @click="previewContractAttachment(attachment)">预览</button><button class="text-button" @click="downloadContractAttachment(attachment)">下载</button></div></div></div></section>
-            <section class="card"><h2>审批记录</h2><div class="timeline"><div v-for="entry in selectedExpense.approval_logs" :key="entry.id"><b>{{ entry.actor_name }} · {{ expenseApprovalActionLabel(entry.action) }}</b><small>{{ formatDateTime(entry.created_at) }}<span v-if="entry.comment"> · {{ entry.comment }}</span></small></div><div v-if="!selectedExpense.approval_logs.length"><b>费用草稿已创建</b><small>{{ formatDateTime(selectedExpense.created_at) }}</small></div></div></section>
-            <section v-if="selectedExpensePendingTask" class="card expense-action-bar"><div><strong>当前节点：{{ selectedExpensePendingTask.node_name }}</strong><small>请核对项目、费用类型、金额、收款方及附件后处理</small></div><textarea v-if="selectedExpensePendingTask.node_name !== '出纳支付'" v-model.trim="expenseActionComment" rows="2" placeholder="审批意见；驳回时必填"></textarea><div class="actions"><button v-if="selectedExpensePendingTask.node_name !== '出纳支付'" class="secondary danger-button" @click="rejectExpense">驳回</button><button v-if="selectedExpensePendingTask.node_name !== '出纳支付'" class="primary" @click="approveExpense">通过</button><button v-else class="primary" @click="openExpensePayment">确认支付</button></div></section>
+            <section class="card contract-attachments-card"><div class="section-head"><div><h2>单据附件</h2><p class="muted">复核依据与费用凭证</p></div><span>{{ selectedExpense.attachments.length }} 个文件</span></div><div v-if="!selectedExpense.attachments.length" class="empty">暂无附件</div><div v-else class="contract-attachment-list"><div v-for="attachment in selectedExpense.attachments" :key="attachment.id" class="contract-attachment-row"><div class="attachment-file-icon" :class="`attachment-${attachment.preview_kind}`">{{ attachmentKindLabel(attachment.preview_kind) }}</div><div class="attachment-file-main"><strong>{{ attachment.file_name }}</strong><small>{{ attachmentSizeText(attachment.file_size) }} · {{ formatDateTime(attachment.created_at) }}</small></div><div class="table-actions"><button v-if="attachment.can_preview" class="text-button" @click="previewContractAttachment(attachment)">预览</button><button class="text-button" @click="downloadContractAttachment(attachment)">下载</button></div></div></div></section>
+            <section v-if="selectedExpense.can_review" class="card expense-action-bar"><div><strong>当前节点：费用复核</strong><small>请核对项目、预算项、金额与附件后处理</small></div><textarea v-model.trim="costEntryActionComment" rows="2" placeholder="复核意见"></textarea><div class="actions"><button class="secondary danger-button" @click="costEntryRejectOpen = true">驳回</button><button class="primary" @click="approveCostEntry">复核通过</button></div></section>
+            <section v-else-if="selectedExpense.status === 'DRAFT' || selectedExpense.status === 'REJECTED'" class="card expense-action-bar"><div><strong>草稿可继续编辑</strong><small>提交后进入费用复核</small></div><div class="actions"><button class="primary" @click="submitCostEntry">提交复核</button></div></section>
+            <section v-else-if="selectedExpense.can_reverse" class="card expense-action-bar"><div><strong>已通过单据可冲销</strong><small>冲销后按净额口径扣减项目成本</small></div><div class="actions"><button class="secondary danger-button" @click="costEntryReverseOpen = true">冲销</button></div></section>
           </template>
-          <div v-if="expensePaymentOpen" class="modal-backdrop"><section class="modal-card compact-modal"><div class="modal-head"><div><span class="eyebrow">CASHIER CONFIRM</span><h2>确认费用支付</h2></div><button class="modal-close" @click="expensePaymentOpen=false">×</button></div><div class="form-grid"><label>实际支付日期<input v-model="expensePaymentForm.payment_date" type="date" /></label><label>支付金额<input v-model.number="expensePaymentForm.amount" type="number" readonly /></label><label class="span-2">公司付款账户<input v-model.trim="expensePaymentForm.company_account" /></label><label class="span-2">凭证说明<input v-model.trim="expensePaymentForm.voucher_note" /></label><label class="span-2">处理意见<textarea v-model.trim="expensePaymentForm.comment" rows="2"></textarea></label></div><div class="form-footer"><button class="secondary" @click="expensePaymentOpen=false">取消</button><button class="primary" @click="confirmExpensePayment">确认支付</button></div></section></div>
+          <div v-if="costEntryRejectOpen" class="modal-backdrop"><section class="modal-card compact-modal"><div class="modal-head"><div><span class="eyebrow">COST REVIEW REJECT</span><h2>驳回成本单</h2></div><button class="modal-close" @click="costEntryRejectOpen=false">×</button></div><div class="form-grid"><label class="span-2">驳回原因<textarea v-model.trim="costEntryRejectReason" rows="3" placeholder="至少填写 2 个字"></textarea></label></div><div class="form-footer"><button class="secondary" @click="costEntryRejectOpen=false">取消</button><button class="primary" @click="rejectCostEntry">确认驳回</button></div></section></div>
+          <div v-if="costEntryReverseOpen" class="modal-backdrop"><section class="modal-card compact-modal"><div class="modal-head"><div><span class="eyebrow">COST REVERSAL</span><h2>冲销成本单</h2></div><button class="modal-close" @click="costEntryReverseOpen=false">×</button></div><div class="form-grid"><label class="span-2">冲销原因<textarea v-model.trim="costEntryReverseReason" rows="3" placeholder="可留空"></textarea></label></div><div class="form-footer"><button class="secondary" @click="costEntryReverseOpen=false">取消</button><button class="primary" @click="reverseCostEntry">确认冲销</button></div></section></div>
+        </section>
+
+        <section v-else-if="page === 'costReview'" class="page-view v3-ops-page">
+          <div class="page-head">
+            <div><div class="eyebrow">COST REVIEW</div><h1>费用复核</h1><p class="muted">合同付款、项目费用与人工成本结转统一一级复核，通过后计入项目成本。</p></div>
+          </div>
+          <div class="v3-tabs" role="tablist" aria-label="费用复核范围">
+            <button type="button" :class="{ active: costReviewTab === 'pending' }" @click="costReviewTab = 'pending'; costReviewPage = 1; refreshCostReview()">待复核（{{ costReviewCounts.pending }}）</button>
+            <button type="button" :class="{ active: costReviewTab === 'processed' }" @click="costReviewTab = 'processed'; costReviewPage = 1; refreshCostReview()">已处理（{{ costReviewCounts.processed }}）</button>
+            <button type="button" :class="{ active: costReviewTab === 'all' }" @click="costReviewTab = 'all'; costReviewPage = 1; refreshCostReview()">全部</button>
+          </div>
+          <section class="card">
+            <div class="section-head"><div><h2>复核清单</h2><p class="muted">共 {{ costReviewTotal }} 条</p></div><button class="secondary" @click="refreshCostReview">刷新</button></div>
+            <div class="table-wrap"><table class="v3-ops-table"><thead><tr><th>单据编号</th><th>单据类型</th><th>项目</th><th>预算项</th><th>申请人</th><th>金额</th><th>提交时间</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in costReviewItems" :key="`${item.kind}-${item.entry_id}`"><td><button class="detail-link" @click="openCostReviewTarget(item)">{{ item.document_no }}</button></td><td>{{ item.document_label }}</td><td><strong>{{ item.project_name }}</strong><small>{{ item.project_code }}</small></td><td>{{ item.budget_item_name || '—' }}</td><td>{{ item.applicant_name }}</td><td>{{ moneyText(item.amount) }}</td><td>{{ formatDateTime(item.submitted_at) }}</td><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td><td><div class="table-actions"><button class="text-button" @click="openCostReviewTarget(item)">查看</button><button v-if="item.status === 'PENDING_REVIEW'" class="text-button" @click="costRejectTarget = item; costEntryRejectOpen = true">驳回</button><button v-if="item.status === 'PENDING_REVIEW'" class="text-button" @click="approveCostReview(item)">通过</button></div></td></tr></tbody></table></div>
+            <div v-if="!costReviewItems.length" class="empty">当前没有符合条件的单据</div>
+          </section>
+          <div v-if="costEntryRejectOpen" class="modal-backdrop"><section class="modal-card compact-modal"><div class="modal-head"><div><span class="eyebrow">COST REVIEW REJECT</span><h2>驳回单据</h2></div><button class="modal-close" @click="costEntryRejectOpen=false">×</button></div><div class="form-grid"><label class="span-2">驳回原因<textarea v-model.trim="costEntryRejectReason" rows="3" placeholder="至少填写 2 个字"></textarea></label></div><div class="form-footer"><button class="secondary" @click="costEntryRejectOpen=false">取消</button><button class="primary" @click="costRejectTarget ? rejectCostReview(costRejectTarget) : rejectCostEntry()">确认驳回</button></div></section></div>
         </section>
 
         <section v-else-if="page === 'suppliers' || page === 'customers'" class="page-view v3-ops-page">

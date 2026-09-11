@@ -163,7 +163,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.62"
+API_VERSION = "3.0.63"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -1165,6 +1165,60 @@ def reset_rbac_configuration(db: Session, *, force: bool = False) -> bool:
     return True
 
 
+def grant_cost_review_permissions(db: Session) -> None:
+    """一级费用复核上线后，把复核权限补给原本能审批合同付款或项目费用的角色。
+
+    同时补发「人工成本结转」权限（沿用项目费用的动作集合），并创建「费用复核」
+    岗位、纳入现有会计岗位成员。全过程幂等，管理员后续在界面上的调整不会被覆盖。
+    """
+    review_menu = db.scalar(select(Menu).where(Menu.code == COST_REVIEW_RESOURCE))
+    if not review_menu:
+        return
+    labor_menu = db.scalar(select(Menu).where(Menu.code == "labor_costs"))
+    expense_menu = db.scalar(select(Menu).where(Menu.code == "project_expenses"))
+    payment_menu = db.scalar(select(Menu).where(Menu.code == "payments"))
+    labor_actions = json.loads(labor_menu.actions or "[]") if labor_menu else []
+
+    def actions_of(role_id: int, menu: Menu | None) -> list[str]:
+        if not menu:
+            return []
+        row = db.scalar(select(RolePermission).where(RolePermission.role_id == role_id, RolePermission.menu_id == menu.id))
+        if not row:
+            return []
+        try:
+            return list(json.loads(row.actions or "[]"))
+        except ValueError:
+            return []
+
+    def permission_row(role_id: int, menu: Menu) -> RolePermission | None:
+        return db.scalar(select(RolePermission).where(RolePermission.role_id == role_id, RolePermission.menu_id == menu.id))
+
+    for role in db.scalars(select(Role)).all():
+        approvable = "APPROVE" in actions_of(role.id, payment_menu) or "APPROVE" in actions_of(role.id, expense_menu)
+        if not approvable:
+            continue
+        if not permission_row(role.id, review_menu):
+            db.add(RolePermission(role_id=role.id, menu_id=review_menu.id, actions=json.dumps(["VIEW", "APPROVE"])))
+        if labor_menu and expense_menu and not permission_row(role.id, labor_menu):
+            wanted = [action for action in actions_of(role.id, expense_menu) if action in labor_actions] or ["VIEW"]
+            db.add(RolePermission(role_id=role.id, menu_id=labor_menu.id, actions=json.dumps(wanted)))
+    db.flush()
+
+    position = db.scalar(select(ApprovalPosition).where(ApprovalPosition.code == "COST_REVIEWER"))
+    if not position:
+        position = ApprovalPosition(code="COST_REVIEWER", name="费用复核", description="一级复核合同付款、项目费用与人工成本结转", status="ACTIVE")
+        db.add(position)
+        db.flush()
+    accountant = db.scalar(select(ApprovalPosition).where(ApprovalPosition.code == "ACCOUNTANT"))
+    source_ids = set()
+    if accountant:
+        source_ids = {item.user_id for item in db.scalars(select(ApprovalPositionMember).where(ApprovalPositionMember.position_id == accountant.id)).all()}
+    existing_ids = {item.user_id for item in db.scalars(select(ApprovalPositionMember).where(ApprovalPositionMember.position_id == position.id)).all()}
+    for user_id in sorted(source_ids - existing_ids):
+        db.add(ApprovalPositionMember(position_id=position.id, user_id=user_id))
+    db.flush()
+
+
 def upgrade_schema() -> None:
     """为现有 SQLite 数据库增量补齐字段，所有操作均可重复执行。"""
     Base.metadata.create_all(bind=engine)
@@ -1479,6 +1533,7 @@ def seed_data() -> None:
         seed_rbac(db)
         seed_approval_workflows(db)
         disable_retired_menus(db)
+        grant_cost_review_permissions(db)
         normalize_project_categories(db)
         ensure_all_project_budget_items(db)
         backfill_ledger_budget_snapshots(db)
