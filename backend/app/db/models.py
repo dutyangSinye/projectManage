@@ -792,6 +792,60 @@ class ProjectExpensePayment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
 
 
+class ProjectCostEntry(Base):
+    """项目成本单：项目费用与人工成本结转共用一张表。
+
+    `entry_kind` 区分两类单据：
+    - `PROJECT_EXPENSE`：通用项目成本录入，按单据选择的预算项归集。
+    - `PERSONNEL_COST`：财务按项目 + 核算月份录入的人工成本，固定归入人工费用预算项。
+
+    两类单据都走一级费用复核（草稿 → 待复核 → 复核通过 / 驳回 → 冲销），
+    复核通过后写项目流水并计入项目成本。
+    """
+
+    __tablename__ = "project_cost_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cost_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    entry_kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    applicant_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    applicant_name: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    applicant_department_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    budget_item_id: Mapped[int | None] = mapped_column(ForeignKey("project_budget_items.id"), nullable=True)
+    budget_item_name_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    cost_major_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    cost_minor_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    occurred_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    accounting_month: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="DRAFT", nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    submitted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
+
+
+class ProjectCostAttachment(Base):
+    """项目成本单附件元数据；文件本体存储在数据卷内的随机文件名下。"""
+
+    __tablename__ = "project_cost_attachments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("project_cost_entries.id"), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    storage_name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(160), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+
+
 class WorkflowInstance(Base):
     """单据提交时生成的审批实例，固化流程版本和人员快照。"""
 

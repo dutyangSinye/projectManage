@@ -436,7 +436,8 @@ class PaymentCreate(BaseModel):
     stage_id: int = Field(gt=0)
     amount: float = Field(gt=0)
     payment_date: date
-    payee_name: str = Field(min_length=1, max_length=300)
+    # 收款方留空时由支出合同的供应商主数据带出，允许在单据上覆盖。
+    payee_name: str | None = Field(default=None, max_length=300)
     payee_bank_name: str | None = Field(default=None, max_length=200)
     payee_bank_account: str | None = Field(default=None, max_length=100)
     comment: str | None = Field(default=None, max_length=2000)
@@ -1461,3 +1462,135 @@ class ReportView(BaseModel):
     # Keep that state as null instead of failing the entire report response.
     breakdowns: dict[str, list[dict[str, str | float | int | None]]]
     generated_at: datetime
+
+
+PROJECT_COST_KINDS = ("PROJECT_EXPENSE", "PERSONNEL_COST")
+
+
+class ProjectCostEntryCreate(BaseModel):
+    """项目成本单新增入参；项目费用只保留项目、预算项、金额、发生时间、附件和说明。"""
+
+    entry_kind: Literal["PROJECT_EXPENSE", "PERSONNEL_COST"] = "PROJECT_EXPENSE"
+    project_id: int = Field(gt=0)
+    budget_item_id: int | None = Field(default=None, gt=0)
+    cost_minor: str | None = Field(default=None, max_length=120)
+    amount: float = Field(gt=0, le=1000000000)
+    occurred_on: date | None = None
+    accounting_month: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    description: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def _validate_kind_fields(self) -> "ProjectCostEntryCreate":
+        if self.entry_kind == "PERSONNEL_COST":
+            if not self.accounting_month:
+                raise ValueError("PERSONNEL_COST_ACCOUNTING_MONTH_REQUIRED")
+        elif not self.occurred_on:
+            raise ValueError("PROJECT_EXPENSE_OCCURRED_ON_REQUIRED")
+        return self
+
+
+class ProjectCostEntryUpdate(ProjectCostEntryCreate):
+    version: int = Field(ge=1)
+
+
+class ProjectCostReviewAction(BaseModel):
+    comment: str | None = Field(default=None, max_length=2000)
+
+
+class ProjectCostRejectAction(BaseModel):
+    reason: str = Field(min_length=2, max_length=2000)
+
+
+class ProjectCostReversalAction(BaseModel):
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class ProjectCostAttachmentView(BaseModel):
+    id: int
+    entry_id: int
+    file_name: str
+    mime_type: str
+    file_size: int
+    uploaded_by: int
+    uploaded_by_name: str = "系统"
+    created_at: datetime
+    can_preview: bool = False
+    preview_kind: str = "download"
+
+
+class ProjectCostEntryView(BaseModel):
+    id: int
+    cost_no: str
+    entry_kind: str
+    project_id: int
+    project_name: str
+    project_code: str
+    applicant_user_id: int | None = None
+    applicant_name: str = ""
+    applicant_department_name: str | None = None
+    budget_item_id: int | None = None
+    budget_item_name: str | None = None
+    cost_major: str | None = None
+    cost_minor: str | None = None
+    amount: float
+    occurred_on: date | None = None
+    accounting_month: str | None = None
+    description: str | None = None
+    status: str
+    version: int = 1
+    submitted_by: int | None = None
+    submitted_by_name: str | None = None
+    submitted_at: datetime | None = None
+    reviewed_by: int | None = None
+    reviewed_by_name: str | None = None
+    reviewed_at: datetime | None = None
+    review_comment: str | None = None
+    created_at: datetime | None = None
+    attachments: list[ProjectCostAttachmentView] = []
+    can_edit: bool = False
+    can_review: bool = False
+    can_reverse: bool = False
+    same_month_count: int = 0
+
+
+class ProjectCostEntryPage(BaseModel):
+    items: list[ProjectCostEntryView]
+    total: int
+    page: int
+    page_size: int
+    page_count: int
+    summary: dict[str, float] = {}
+
+
+class CostReviewItem(BaseModel):
+    kind: str
+    entry_id: int
+    document_no: str
+    document_label: str
+    project_id: int
+    project_name: str
+    project_code: str
+    budget_item_name: str | None = None
+    cost_major: str | None = None
+    cost_minor: str | None = None
+    amount: float
+    occurred_on: date | None = None
+    accounting_month: str | None = None
+    applicant_name: str = ""
+    status: str
+    submitted_at: datetime | None = None
+    reviewed_by_name: str | None = None
+    reviewed_at: datetime | None = None
+    review_comment: str | None = None
+    description: str | None = None
+
+
+class CostReviewPage(BaseModel):
+    tab: str
+    items: list[CostReviewItem]
+    total: int
+    page: int
+    page_size: int
+    page_count: int
+    pending_count: int = 0
+    processed_count: int = 0

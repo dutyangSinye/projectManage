@@ -124,6 +124,15 @@ class V3MigrationIntegrationTest(unittest.TestCase):
         )
         return project, contract, stage, payment
 
+    def grant_cost_review_position(self, db, user_id: int):
+        """把费用复核岗位成员收敛为指定用户，用于验证一级费用复核的授权边界。"""
+        position = db.scalar(select(ApprovalPosition).where(ApprovalPosition.code == "COST_REVIEWER"))
+        self.assertIsNotNone(position, "费用复核岗位未初始化")
+        db.query(ApprovalPositionMember).delete(synchronize_session=False)
+        db.add(ApprovalPositionMember(position_id=position.id, user_id=user_id))
+        db.commit()
+        return position
+
     def test_upgrade_is_idempotent_and_adds_v3_columns(self):
         project_columns = {column["name"] for column in inspect(engine).get_columns("projects")}
         permission_columns = {column["name"] for column in inspect(engine).get_columns("admin_permissions")}
@@ -684,29 +693,20 @@ class V3MigrationIntegrationTest(unittest.TestCase):
                 db=db,
             )
             self.assertEqual(payment.status, "DRAFT")
-            for position in db.scalars(select(ApprovalPosition)).all():
-                db.query(ApprovalPositionMember).filter(ApprovalPositionMember.position_id == position.id).delete()
-                db.add(ApprovalPositionMember(position_id=position.id, user_id=3))
-            db.commit()
-            with patch.dict(os.environ, {"SYSTEM_ADMIN_USER_IDS": "1,2,3"}):
-                submitted_payment = submit_payment(payment.id, x_demo_user_id=1, db=db)
-                self.assertEqual(submitted_payment.status, "PENDING_APPROVAL")
-                self.assertEqual(len(submitted_payment.approval_path), 8)
-                while True:
-                    payment_row = db.get(Payment, payment.id)
-                    task = db.scalar(select(WorkflowTask).where(
-                        WorkflowTask.workflow_instance_id == payment_row.current_workflow_instance_id,
-                        WorkflowTask.status == "PENDING",
-                    ).order_by(WorkflowTask.node_sequence))
-                    self.assertIsNotNone(task)
-                    self.assertEqual(int(db.scalar(select(func.count()).select_from(ProjectLedgerEntry).where(
-                        ProjectLedgerEntry.source_type == "PAYMENT",
-                        ProjectLedgerEntry.source_id == payment.id,
-                        ProjectLedgerEntry.entry_type == "PAYMENT",
-                    )) or 0), 0)
-                    approved_payment = approve_payment(payment.id, x_demo_user_id=task.assignee_user_id, db=db)
-                    if approved_payment.status == "APPROVED":
-                        break
+            # 一级费用复核：单据只挂一个费用复核节点，任一人通过即完成。
+            self.grant_cost_review_position(db, 3)
+            submitted_payment = submit_payment(payment.id, x_demo_user_id=1, db=db)
+            self.assertEqual(submitted_payment.status, "PENDING_REVIEW")
+            self.assertIsNone(submitted_payment.current_workflow_instance_id)
+            self.assertEqual([node.node_name for node in submitted_payment.approval_path], ["费用复核"])
+            self.assertEqual(submitted_payment.approval_path[0].status, "CURRENT")
+            self.assertEqual(submitted_payment.approval_path[0].approval_mode, "ANY")
+            self.assertEqual(int(db.scalar(select(func.count()).select_from(ProjectLedgerEntry).where(
+                ProjectLedgerEntry.source_type == "PAYMENT",
+                ProjectLedgerEntry.source_id == payment.id,
+                ProjectLedgerEntry.entry_type == "PAYMENT",
+            )) or 0), 0)
+            approved_payment = approve_payment(payment.id, x_demo_user_id=3, db=db)
             self.assertEqual(approved_payment.status, "APPROVED")
             payment_ledger_count = db.scalar(
                 select(func.count())
@@ -1118,130 +1118,24 @@ class V3MigrationIntegrationTest(unittest.TestCase):
         finally:
             db.close()
 
-    def test_payment_workflow_blocks_unassigned_user_closes_any_tasks_and_notifies_deep_link(self):
-        db = SessionLocal()
-        try:
-            _project, _contract, _stage, payment = self.create_payment_fixture(db, "FLOW")
-            for position in db.scalars(select(ApprovalPosition)).all():
-                db.query(ApprovalPositionMember).filter(ApprovalPositionMember.position_id == position.id).delete()
-                member_ids = [2, 3] if position.code == "OPERATIONS_REVIEWER" else [3]
-                for user_id in member_ids:
-                    db.add(ApprovalPositionMember(position_id=position.id, user_id=user_id))
-            db.commit()
-            notify_result = SimpleNamespace(status="SENT", message_id="msg-payment-flow", error_message=None)
-            with patch("app.main.feishu.notify_cash_approval_submitted", return_value=notify_result) as notify_mock:
-                submitted = submit_payment(payment.id, x_demo_user_id=1, db=db)
-            self.assertEqual(submitted.status, "PENDING_APPROVAL")
-            self.assertTrue(any(f"page=paymentDetail&id={payment.id}&task=" in str(call) for call in notify_mock.call_args_list))
-
-            payment_row = db.get(Payment, payment.id)
-            first_task = db.scalar(select(WorkflowTask).where(
-                WorkflowTask.workflow_instance_id == payment_row.current_workflow_instance_id,
-                WorkflowTask.status == "PENDING",
-            ).order_by(WorkflowTask.node_sequence, WorkflowTask.id))
-            self.assertEqual(first_task.node_name, "项目审批")
-            pending_notification = db.scalar(select(SystemNotification).where(
-                SystemNotification.notification_type == "PENDING_PAYMENT",
-                SystemNotification.source_id == payment.id,
-                SystemNotification.recipient_user_id == first_task.assignee_user_id,
-            ))
-            self.assertIsNotNone(pending_notification)
-            pending_notification.status = "FAILED"
-            pending_notification.error_message = "TEST_RETRY"
-            db.commit()
-            before_notification_count = int(db.scalar(select(func.count()).select_from(SystemNotification).where(
-                SystemNotification.notification_type == "PENDING_PAYMENT",
-                SystemNotification.source_id == payment.id,
-            )) or 0)
-            with patch("app.main.feishu.notify_cash_approval_submitted", return_value=notify_result):
-                retried = retry_integration_notification(pending_notification.id, record_kind="system", x_demo_user_id=1, db=db)
-            self.assertEqual(retried.status, "SENT")
-            self.assertEqual(retried.retry_count, 1)
-            self.assertEqual(int(db.scalar(select(func.count()).select_from(SystemNotification).where(
-                SystemNotification.notification_type == "PENDING_PAYMENT",
-                SystemNotification.source_id == payment.id,
-            )) or 0), before_notification_count)
-            with self.assertRaises(HTTPException) as denied:
-                approve_payment(payment.id, x_demo_user_id=3, db=db)
-            self.assertEqual(denied.exception.status_code, 403)
-
-            approve_payment(payment.id, x_demo_user_id=first_task.assignee_user_id, db=db)
-            accountant_task = db.scalar(select(WorkflowTask).where(
-                WorkflowTask.workflow_instance_id == payment_row.current_workflow_instance_id,
-                WorkflowTask.status == "PENDING",
-            ).order_by(WorkflowTask.node_sequence, WorkflowTask.id))
-            self.assertIsNotNone(accountant_task)
-            self.assertEqual(accountant_task.node_name, "会计审核")
-            approve_payment(payment.id, x_demo_user_id=accountant_task.assignee_user_id, db=db)
-
-            any_tasks = list(db.scalars(select(WorkflowTask).where(
-                WorkflowTask.workflow_instance_id == payment_row.current_workflow_instance_id,
-                WorkflowTask.node_name == "经营审批",
-            ).order_by(WorkflowTask.id)).all())
-            self.assertEqual(len(any_tasks), 2)
-            approve_payment(payment.id, x_demo_user_id=any_tasks[0].assignee_user_id, db=db)
-            db.expire_all()
-            self.assertEqual(
-                sorted(item.status for item in db.scalars(select(WorkflowTask).where(
-                    WorkflowTask.workflow_instance_id == payment_row.current_workflow_instance_id,
-                    WorkflowTask.node_name == "经营审批",
-                )).all()),
-                ["APPROVED", "CLOSED"],
-            )
-            self.assertEqual(list_payment_attachments(payment.id, x_demo_user_id=2, db=db), [])
-
-            while True:
-                payment_row = db.get(Payment, payment.id)
-                current = db.scalar(select(WorkflowTask).where(
-                    WorkflowTask.workflow_instance_id == payment_row.current_workflow_instance_id,
-                    WorkflowTask.status == "PENDING",
-                ).order_by(WorkflowTask.node_sequence, WorkflowTask.id))
-                self.assertIsNotNone(current)
-                ledger_count = int(db.scalar(select(func.count()).select_from(ProjectLedgerEntry).where(
-                    ProjectLedgerEntry.entry_type == "PAYMENT",
-                    ProjectLedgerEntry.source_type == "PAYMENT",
-                    ProjectLedgerEntry.source_id == payment.id,
-                )) or 0)
-                self.assertEqual(ledger_count, 0)
-                approved = approve_payment(payment.id, x_demo_user_id=current.assignee_user_id, db=db)
-                if approved.status == "APPROVED":
-                    break
-            self.assertEqual(int(db.scalar(select(func.count()).select_from(ProjectLedgerEntry).where(
-                ProjectLedgerEntry.entry_type == "PAYMENT",
-                ProjectLedgerEntry.source_type == "PAYMENT",
-                ProjectLedgerEntry.source_id == payment.id,
-            )) or 0), 1)
-            with self.assertRaises(HTTPException):
-                approve_payment(payment.id, x_demo_user_id=current.assignee_user_id, db=db)
-            self.assertEqual(int(db.scalar(select(func.count()).select_from(ProjectLedgerEntry).where(
-                ProjectLedgerEntry.entry_type == "PAYMENT",
-                ProjectLedgerEntry.source_type == "PAYMENT",
-                ProjectLedgerEntry.source_id == payment.id,
-            )) or 0), 1)
-        finally:
-            db.close()
-
-    def test_payment_rejection_result_retry_and_resubmission_create_new_instance(self):
+    def test_payment_rejection_result_retry_and_resubmission_keeps_single_path(self):
         db = SessionLocal()
         try:
             _project, contract, stage, payment = self.create_payment_fixture(db, "RESUBMIT")
-            for position in db.scalars(select(ApprovalPosition)).all():
-                db.query(ApprovalPositionMember).filter(ApprovalPositionMember.position_id == position.id).delete()
-                db.add(ApprovalPositionMember(position_id=position.id, user_id=3))
-            db.commit()
+            self.grant_cost_review_position(db, 3)
             submit_payment(payment.id, x_demo_user_id=1, db=db)
-            payment_row = db.get(Payment, payment.id)
-            first_instance_id = payment_row.current_workflow_instance_id
-            task = db.scalar(select(WorkflowTask).where(
-                WorkflowTask.workflow_instance_id == first_instance_id,
-                WorkflowTask.status == "PENDING",
-            ))
-            rejected = reject_payment(payment.id, CashRejectAction(reason="付款资料不完整"), x_demo_user_id=task.assignee_user_id, db=db)
+            submitted_row = db.get(Payment, payment.id)
+            self.assertEqual(submitted_row.status, "PENDING_REVIEW")
+            self.assertIsNone(submitted_row.current_workflow_instance_id)
+            first_version = submitted_row.version
+            reviewer = db.get(User, 3)
+
+            rejected = reject_payment(payment.id, CashRejectAction(reason="付款资料不完整"), x_demo_user_id=3, db=db)
             self.assertEqual(rejected.status, "REJECTED")
-            self.assertTrue(any(task.node_name in event.event for event in rejected.approval_timeline if event.event.startswith("审批驳回")))
+            self.assertTrue(any(event.event.startswith("审批驳回") for event in rejected.approval_timeline))
 
             result_notification = db.scalar(select(SystemNotification).where(
-                SystemNotification.notification_type == "PAYMENT_RESULT",
+                SystemNotification.notification_type == "COST_REVIEW_RESULT",
                 SystemNotification.source_id == payment.id,
             ))
             self.assertIsNotNone(result_notification)
@@ -1249,16 +1143,17 @@ class V3MigrationIntegrationTest(unittest.TestCase):
             result_notification.error_message = "TEST_RETRY"
             db.commit()
             before_count = int(db.scalar(select(func.count()).select_from(SystemNotification).where(
-                SystemNotification.notification_type == "PAYMENT_RESULT",
+                SystemNotification.notification_type == "COST_REVIEW_RESULT",
                 SystemNotification.source_id == payment.id,
             )) or 0)
             retry_result = SimpleNamespace(status="SENT", message_id="msg-result-retry", error_message=None)
             with patch("app.main.feishu.notify_settlement_result", return_value=retry_result) as result_mock:
                 retried = retry_integration_notification(result_notification.id, record_kind="system", x_demo_user_id=1, db=db)
             self.assertEqual(retried.status, "SENT")
-            self.assertEqual(result_mock.call_args.kwargs["approver_name"], task.assignee_name)
+            self.assertEqual(retried.retry_count, 1)
+            self.assertEqual(result_mock.call_args.kwargs["approver_name"], reviewer.name)
             self.assertEqual(int(db.scalar(select(func.count()).select_from(SystemNotification).where(
-                SystemNotification.notification_type == "PAYMENT_RESULT",
+                SystemNotification.notification_type == "COST_REVIEW_RESULT",
                 SystemNotification.source_id == payment.id,
             )) or 0), before_count)
 
@@ -1278,13 +1173,65 @@ class V3MigrationIntegrationTest(unittest.TestCase):
             )
             self.assertEqual(updated.status, "REJECTED")
             resubmitted = submit_payment(payment.id, x_demo_user_id=1, db=db)
-            self.assertEqual(resubmitted.status, "PENDING_APPROVAL")
-            self.assertNotEqual(resubmitted.current_workflow_instance_id, first_instance_id)
-            self.assertEqual(resubmitted.version, 3)
-            self.assertFalse(db.scalar(select(WorkflowTask.id).where(
-                WorkflowTask.workflow_instance_id == first_instance_id,
-                WorkflowTask.status == "PENDING",
-            )))
+            self.assertEqual(resubmitted.status, "PENDING_REVIEW")
+            self.assertIsNone(resubmitted.current_workflow_instance_id)
+            self.assertEqual(resubmitted.version, first_version + 1)
+        finally:
+            db.close()
+
+    def test_payment_review_blocks_unassigned_user_and_notifies_deep_link(self):
+        db = SessionLocal()
+        try:
+            _project, _contract, _stage, payment = self.create_payment_fixture(db, "FLOW")
+            self.grant_cost_review_position(db, 2)
+            notify_result = SimpleNamespace(status="SENT", message_id="msg-payment-flow", error_message=None)
+            with patch("app.main.feishu.notify_cash_approval_submitted", return_value=notify_result) as notify_mock:
+                submitted = submit_payment(payment.id, x_demo_user_id=1, db=db)
+            self.assertEqual(submitted.status, "PENDING_REVIEW")
+            self.assertTrue(any(f"page=paymentDetail&id={payment.id}" in str(call) for call in notify_mock.call_args_list))
+
+            pending_notification = db.scalar(select(SystemNotification).where(
+                SystemNotification.notification_type == "PENDING_PAYMENT_REVIEW",
+                SystemNotification.source_id == payment.id,
+                SystemNotification.recipient_user_id == 2,
+            ))
+            self.assertIsNotNone(pending_notification)
+            pending_notification.status = "FAILED"
+            pending_notification.error_message = "TEST_RETRY"
+            db.commit()
+            before_notification_count = int(db.scalar(select(func.count()).select_from(SystemNotification).where(
+                SystemNotification.notification_type == "PENDING_PAYMENT_REVIEW",
+                SystemNotification.source_id == payment.id,
+            )) or 0)
+            with patch("app.main.feishu.notify_cash_approval_submitted", return_value=notify_result):
+                retried = retry_integration_notification(pending_notification.id, record_kind="system", x_demo_user_id=1, db=db)
+            self.assertEqual(retried.status, "SENT")
+            self.assertEqual(retried.retry_count, 1)
+            self.assertEqual(int(db.scalar(select(func.count()).select_from(SystemNotification).where(
+                SystemNotification.notification_type == "PENDING_PAYMENT_REVIEW",
+                SystemNotification.source_id == payment.id,
+            )) or 0), before_notification_count)
+
+            # 3 号用户既不是费用复核岗位成员也不是系统管理员，必须被拒绝。
+            with self.assertRaises(HTTPException) as denied:
+                approve_payment(payment.id, x_demo_user_id=3, db=db)
+            self.assertEqual(denied.exception.status_code, 403)
+            self.assertEqual(db.get(Payment, payment.id).status, "PENDING_REVIEW")
+
+            approved = approve_payment(payment.id, x_demo_user_id=2, db=db)
+            self.assertEqual(approved.status, "APPROVED")
+            self.assertEqual(approved.approved_by, 2)
+            ledger_filter = (
+                ProjectLedgerEntry.entry_type == "PAYMENT",
+                ProjectLedgerEntry.source_type == "PAYMENT",
+                ProjectLedgerEntry.source_id == payment.id,
+            )
+            self.assertEqual(int(db.scalar(select(func.count()).select_from(ProjectLedgerEntry).where(*ledger_filter)) or 0), 1)
+            # 复核通过后再次复核应被拒绝，且不会重复记账。
+            with self.assertRaises(HTTPException):
+                approve_payment(payment.id, x_demo_user_id=2, db=db)
+            self.assertEqual(int(db.scalar(select(func.count()).select_from(ProjectLedgerEntry).where(*ledger_filter)) or 0), 1)
+            self.assertEqual(list_payment_attachments(payment.id, x_demo_user_id=1, db=db), [])
         finally:
             db.close()
 
@@ -1292,10 +1239,7 @@ class V3MigrationIntegrationTest(unittest.TestCase):
         db = SessionLocal()
         try:
             _project, contract, stage, first = self.create_payment_fixture(db, "RESERVE", stage_amount=1000, payment_amount=600)
-            for position in db.scalars(select(ApprovalPosition)).all():
-                db.query(ApprovalPositionMember).filter(ApprovalPositionMember.position_id == position.id).delete()
-                db.add(ApprovalPositionMember(position_id=position.id, user_id=3))
-            db.commit()
+            self.grant_cost_review_position(db, 3)
             submit_payment(first.id, x_demo_user_id=1, db=db)
             second = create_payment(
                 PaymentCreate(
@@ -1315,12 +1259,19 @@ class V3MigrationIntegrationTest(unittest.TestCase):
             self.assertEqual(exceeded.exception.detail, "STAGE_REMAINING_INSUFFICIENT")
             self.assertEqual(db.get(Payment, second.id).status, "DRAFT")
 
+            # 历史在途单据（迁移前为 PENDING / PENDING_APPROVAL）跑完迁移后仍可被一级复核处理。
             _project, _legacy_contract, _legacy_stage, legacy = self.create_payment_fixture(db, "LEGACY", stage_amount=700, payment_amount=700)
             legacy_row = db.get(Payment, legacy.id)
-            legacy_row.status = "PENDING"
+            legacy_row.status = "PENDING_APPROVAL"
+            legacy_row.submitted_by = 1
             legacy_row.submitted_at = legacy_row.created_at
             db.commit()
-            approved = approve_payment(legacy.id, x_demo_user_id=1, db=db)
+            upgrade_schema()
+            db.expire_all()
+            migrated = db.get(Payment, legacy.id)
+            self.assertEqual(migrated.status, "PENDING_REVIEW")
+            self.assertIsNone(migrated.current_workflow_instance_id)
+            approved = approve_payment(legacy.id, x_demo_user_id=3, db=db)
             self.assertEqual(approved.status, "APPROVED")
             self.assertIsNone(approved.current_workflow_instance_id)
             self.assertEqual(int(db.scalar(select(func.count()).select_from(ProjectLedgerEntry).where(
@@ -1328,6 +1279,53 @@ class V3MigrationIntegrationTest(unittest.TestCase):
                 ProjectLedgerEntry.source_type == "PAYMENT",
                 ProjectLedgerEntry.source_id == legacy.id,
             )) or 0), 1)
+        finally:
+            db.close()
+
+    def test_payment_defaults_payee_from_supplier_bank_account(self):
+        db = SessionLocal()
+        try:
+            supplier = create_supplier(
+                SupplierCreate(
+                    code="SUP-PAY-DEFAULT",
+                    name="默认收款方供应商",
+                    status="ACTIVE",
+                    bank_name="招商银行",
+                    bank_branch="深圳分行",
+                    bank_account="6225888888888888",
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            project = db.scalar(select(Project).where(Project.status != "DELETED").order_by(Project.id))
+            contract = create_contract(
+                ContractCreate(
+                    contract_no="CT-PAY-DEFAULT",
+                    name="默认收款方合同",
+                    project_id=project.id,
+                    contract_type="EXPENSE",
+                    counterparty_type="SUPPLIER",
+                    counterparty_id=supplier.id,
+                    amount=1000,
+                    status="ACTIVE",
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            stage = create_contract_stage(
+                contract.id,
+                ContractStageCreate(name="默认阶段", amount=1000, planned_date="2030-09-30"),
+                x_demo_user_id=1,
+                db=db,
+            )
+            payment = create_payment(
+                PaymentCreate(contract_id=contract.id, stage_id=stage.id, amount=300, payment_date="2026-09-10"),
+                x_demo_user_id=1,
+                db=db,
+            )
+            self.assertEqual(payment.payee_name, supplier.name)
+            self.assertEqual(payment.payee_bank_name, supplier.bank_branch or supplier.bank_name)
+            self.assertEqual(payment.payee_bank_account, supplier.bank_account)
         finally:
             db.close()
 

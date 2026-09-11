@@ -32,7 +32,7 @@ from sqlalchemy import and_, func, inspect, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .db.models import AdminPermission, ApprovalPosition, ApprovalPositionMember, AuditLog, ApprovalTask, BudgetItemTemplate, CashDocumentAttachment, ConfigOption, Contract, ContractAttachment, ContractStage, Customer, Department, Menu, Notification, NotificationPolicy, OrgSyncLog, Payment, PermissionAudit, Project, ProjectBudgetItem, ProjectExpense, ProjectExpenseAttachment, ProjectExpensePayment, ProjectLedgerEntry, Receipt, ReminderEvent, Role, RoleDataScope, RolePermission, Supplier, SystemNotification, Timesheet, User, UserRole, UserRoleScope, WorkflowActionLog, WorkflowDefinition, WorkflowInstance, WorkflowNode, WorkflowTask, WorkflowVersion, Worklog
+from .db.models import AdminPermission, ApprovalPosition, ApprovalPositionMember, AuditLog, ApprovalTask, BudgetItemTemplate, CashDocumentAttachment, ConfigOption, Contract, ContractAttachment, ContractStage, Customer, Department, Menu, Notification, NotificationPolicy, OrgSyncLog, Payment, PermissionAudit, Project, ProjectBudgetItem, ProjectCostAttachment, ProjectCostEntry, ProjectExpense, ProjectExpenseAttachment, ProjectExpensePayment, ProjectLedgerEntry, Receipt, ReminderEvent, Role, RoleDataScope, RolePermission, Supplier, SystemNotification, Timesheet, User, UserRole, UserRoleScope, WorkflowActionLog, WorkflowDefinition, WorkflowInstance, WorkflowNode, WorkflowTask, WorkflowVersion, Worklog
 from .db.session import Base, SessionLocal, engine, get_db
 from .time_utils import now_local, today_local
 from .schemas import (
@@ -114,6 +114,16 @@ from .schemas import (
     ProjectExpenseView,
     ProjectList,
     ProjectApproverUpdate,
+    ProjectCostAttachmentView,
+    ProjectCostEntryCreate,
+    ProjectCostEntryPage,
+    ProjectCostEntryUpdate,
+    ProjectCostEntryView,
+    ProjectCostRejectAction,
+    ProjectCostReviewAction,
+    ProjectCostReversalAction,
+    CostReviewItem,
+    CostReviewPage,
     ProjectUpdate,
     ProjectView,
     RoleCreate,
@@ -154,7 +164,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.60"
+API_VERSION = "3.0.61"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -172,30 +182,38 @@ RBAC_MENU_SEED = [
     ("approvals", "worklogs", "工时审批", "approvals", 21, ["VIEW", "APPROVE"]),
     ("reports", "worklogs", "工时看板", "reports", 22, ["VIEW", "EXPORT"]),
     ("projects", None, "项目管理", "projects", 30, ["VIEW", "CREATE", "EDIT", "DELETE"]),
-    ("contracts", None, "项目合同", "projectContracts", 31, ["VIEW", "CREATE", "EDIT", "DELETE"]),
-    ("receipts", None, "合同收款", "projectReceipts", 32, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "EXPORT"]),
-    ("payments", None, "合同付款", "projectPayments", 33, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "EXPORT"]),
-    ("project_expenses", None, "项目费用", "projectExpenses", 34, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "EXPORT", "REVERSE"]),
-    ("project_board", None, "项目看板", "projectBoard", 35, ["VIEW", "EXPORT"]),
-    ("counterparties", None, "客户与供应商", "customers", 36, ["VIEW", "CREATE", "EDIT", "DELETE"]),
-    ("cash_approval", None, "出纳审批", "projectReceipts", 37, ["VIEW", "APPROVE"]),
-    ("personnel_costs", None, "人员成本", "personnelCosts", 40, ["VIEW", "EDIT", "EXPORT"]),
+    ("project_budget", "projects", "项目预算项", "projectBudgetItems", 31, ["VIEW", "CREATE", "EDIT", "DELETE", "IMPORT", "EXPORT"]),
+    ("contracts", None, "项目合同", "projectContracts", 32, ["VIEW", "CREATE", "EDIT", "DELETE"]),
+    ("receipts", None, "合同收款", "projectReceipts", 33, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "EXPORT"]),
+    ("payments", None, "合同付款", "projectPayments", 34, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "EXPORT"]),
+    ("project_expenses", None, "项目费用", "projectExpenses", 35, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "REVERSE", "EXPORT"]),
+    ("labor_costs", None, "人工成本结转", "laborCosts", 36, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "REVERSE", "EXPORT"]),
+    ("cost_review", None, "费用复核", "costReview", 37, ["VIEW", "APPROVE"]),
+    ("project_board", None, "项目看板", "projectBoard", 38, ["VIEW", "EXPORT"]),
+    ("counterparties", None, "客户与供应商", "customers", 39, ["VIEW", "CREATE", "EDIT", "DELETE"]),
+    ("cash_approval", None, "收付款复核", "projectReceipts", 40, ["VIEW", "APPROVE"]),
     ("budget_templates", None, "预算项模板", "budgetTemplates", 45, ["VIEW", "CREATE", "EDIT", "DELETE"]),
     ("integrations", None, "集成与通知", "integrations", 50, ["VIEW", "CONFIGURE", "SYNC", "EXPORT"]),
     ("admins", None, "管理员管理", "adminPermissions", 51, ["VIEW", "CONFIGURE"]),
-    ("approval_positions", None, "审批岗位", "approvalPositions", 52, ["VIEW", "CONFIGURE"]),
-    ("approval_workflows", None, "审批流程", "approvalWorkflows", 53, ["VIEW", "CREATE", "EDIT", "PUBLISH", "DISABLE"]),
+    ("approval_positions", None, "复核岗位", "approvalPositions", 52, ["VIEW", "CONFIGURE"]),
     ("configuration", None, "基础配置", "configuration", 54, ["VIEW", "CREATE", "EDIT", "DELETE"]),
+    # 已退役菜单：仍保留在权限表里，历史接口与历史授权才能继续解析，仅从导航下线。
+    ("personnel_costs", None, "人员成本", "personnelCosts", 91, ["VIEW", "EDIT", "EXPORT"]),
+    ("approval_workflows", None, "审批流程", "approvalWorkflows", 92, ["VIEW", "CREATE", "EDIT", "PUBLISH", "DISABLE"]),
 ]
+# v3.0.59 起不再作为新单据入口的内置菜单：保留菜单行与授权，仅从导航下线。
+# 注意：这些 code 必须同时存在于 RBAC_MENU_SEED，否则 require_access 会因未知资源直接报错。
+RETIRED_MENU_SEED = ["personnel_costs", "approval_workflows"]
 RBAC_ROLE_SEED = {
     "system_admin": ("系统管理员", "拥有全部菜单、操作和数据范围", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED}, "ALL"),
-    "project_manager": ("项目经营管理员", "维护项目经营主数据和收付款", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED if code in {"projects", "contracts", "receipts", "payments", "project_board", "counterparties"}}, "ALL"),
-    "project_owner": ("项目负责人", "管理负责项目的经营数据", {code: ["VIEW", "CREATE", "EDIT"] for code in ["projects", "contracts", "receipts", "payments"]} | {"project_board": ["VIEW"]}, "OWNED_PROJECTS"),
-    "cashier": ("出纳", "处理合同收付款单据和出纳审批", {"receipts": ["VIEW", "CREATE", "EDIT", "APPROVE"], "payments": ["VIEW", "CREATE", "EDIT", "APPROVE"], "cash_approval": ["VIEW", "APPROVE"]}, "OWNED_PROJECTS"),
+    "project_manager": ("项目经营管理员", "维护项目经营主数据、预算、成本和收付款", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED if code in {"projects", "project_budget", "contracts", "receipts", "payments", "project_expenses", "labor_costs", "cost_review", "project_board", "counterparties"}}, "ALL"),
+    "project_owner": ("项目负责人", "管理负责项目的经营数据", {code: ["VIEW", "CREATE", "EDIT"] for code in ["projects", "contracts", "receipts", "payments", "project_expenses", "labor_costs"]} | {"project_budget": ["VIEW"], "project_board": ["VIEW"], "cost_review": ["VIEW"]}, "OWNED_PROJECTS"),
+    "cashier": ("出纳", "处理合同收付款单据和收付款复核", {"receipts": ["VIEW", "CREATE", "EDIT", "APPROVE"], "payments": ["VIEW", "CREATE", "EDIT", "APPROVE"], "cash_approval": ["VIEW", "APPROVE"], "cost_review": ["VIEW"]}, "OWNED_PROJECTS"),
     "worklog_manager": ("工时管理员", "维护工时台账和工时看板", {"worklogs": ["VIEW", "EDIT", "DELETE", "EXPORT"], "reports": ["VIEW", "EXPORT"]}, "DEPARTMENT_AND_CHILDREN"),
     "worklog_approver": ("工时审批人", "处理分配给自己的工时审批", {"approvals": ["VIEW", "APPROVE"]}, "SELF"),
-    "personnel_cost_manager": ("人员成本管理员", "维护人员单天成本", {"personnel_costs": ["VIEW", "EDIT", "EXPORT"]}, "DEPARTMENT_AND_CHILDREN"),
-    "business_viewer": ("经营查看者", "只读查看项目经营数据", {code: ["VIEW"] for code in ["projects", "contracts", "receipts", "payments", "project_board", "counterparties"]}, "DEPARTMENT_AND_CHILDREN"),
+    "cost_reviewer": ("费用复核员", "一级复核合同付款、项目费用和人工成本结转", {"cost_review": ["VIEW", "APPROVE"], "payments": ["VIEW"], "project_expenses": ["VIEW"], "labor_costs": ["VIEW"]}, "ALL"),
+    "finance": ("财务", "按月录入人工成本结转并维护项目成本", {"labor_costs": ["VIEW", "CREATE", "EDIT", "DELETE", "REVERSE", "EXPORT"], "project_expenses": ["VIEW", "CREATE", "EDIT", "DELETE", "REVERSE", "EXPORT"], "project_budget": ["VIEW", "EXPORT"], "cost_review": ["VIEW"], "projects": ["VIEW"], "project_board": ["VIEW"]}, "ALL"),
+    "business_viewer": ("经营查看者", "只读查看项目经营数据", {code: ["VIEW"] for code in ["projects", "project_budget", "contracts", "receipts", "payments", "project_expenses", "labor_costs", "project_board", "counterparties"]}, "DEPARTMENT_AND_CHILDREN"),
     "integration_manager": ("集成管理员", "维护飞书集成和通知策略", {"integrations": ["VIEW", "CONFIGURE", "SYNC", "EXPORT"]}, "ALL"),
 }
 CONFIG_CATEGORY_LABELS = {
@@ -339,12 +357,19 @@ DEFAULT_NOTIFICATION_POLICIES = [
     ("STAGE_OVERDUE", "合同阶段逾期", True, 0),
     ("COST_BUDGET_NEAR", "成本预算接近上限", True, 0),
     ("COST_BUDGET_OVER", "成本预算超支", True, 0),
-    ("PENDING_RECEIPT", "待审批合同收款单", True, 0),
-    ("PENDING_PAYMENT", "待审批合同付款单", True, 0),
-    ("PAYMENT_RESULT", "合同付款单审批结果", True, 0),
-    ("EXPENSE_APPROVAL", "项目费用审批提醒", True, 0),
-    ("EXPENSE_RESULT", "项目费用审批结果", True, 0),
-    ("EXPENSE_PAYMENT", "项目费用支付提醒", True, 0),
+    ("PENDING_RECEIPT", "待复核合同收款单", True, 0),
+    ("PENDING_PAYMENT_REVIEW", "合同付款待复核", True, 0),
+    ("PENDING_EXPENSE_REVIEW", "项目费用待复核", True, 0),
+    ("PENDING_LABOR_REVIEW", "人工成本待复核", True, 0),
+    ("COST_REVIEW_RESULT", "费用复核结果", True, 0),
+]
+# v3.0.59 多级审批与出纳确认口径作废，对应通知策略随之下线（保留记录不再触发）。
+RETIRED_NOTIFICATION_TYPES = [
+    "PENDING_PAYMENT",
+    "PAYMENT_RESULT",
+    "EXPENSE_APPROVAL",
+    "EXPENSE_RESULT",
+    "EXPENSE_PAYMENT",
 ]
 app = FastAPI(title="综合项目管理系统 API", version=API_VERSION)
 
@@ -1068,6 +1093,15 @@ def seed_notification_policies(db: Session) -> None:
             db.add(NotificationPolicy(notification_type=notification_type, label=label, enabled=enabled, send_channel="app", remind_days_before=remind_days_before))
         elif policy.label != label:
             policy.label = label
+    # v3.0.59：多级审批相关的旧策略不再触发，改为停用而非删除，便于追溯历史通知。
+    for policy in db.scalars(select(NotificationPolicy).where(NotificationPolicy.notification_type.in_(RETIRED_NOTIFICATION_TYPES))).all():
+        policy.enabled = False
+
+
+def disable_retired_menus(db: Session) -> None:
+    """下线不再作为新入口的内置菜单，保留菜单行以兼容历史授权记录。"""
+    for menu in db.scalars(select(Menu).where(Menu.code.in_(RETIRED_MENU_SEED), Menu.is_active.is_(True))).all():
+        menu.is_active = False
 
 
 def _json_list(value: str | None) -> list[str]:
@@ -1120,8 +1154,14 @@ def seed_rbac(db: Session) -> None:
 
 
 def seed_approval_workflows(db: Session) -> None:
-    """初始化审批岗位和两套已确认流程；已有发布版本绝不覆盖。"""
+    """初始化复核岗位和两套已确认流程；已有发布版本绝不覆盖。
+
+    v3.0.59 起新单据只走一级费用复核，岗位改为“复核岗位”，
+    历史多级流程定义保留只读，不再作为新单据配置入口。
+    """
     position_specs = [
+        ("COST_REVIEWER", "费用复核", "一级复核合同付款、项目费用和人工成本结转"),
+        ("RECEIPT_REVIEWER", "收款复核", "一级复核合同收款"),
         ("OPERATIONS_REVIEWER", "经营审批", "核对项目经营合理性"),
         ("OPERATIONS_VP", "经营副总", "经营条线复核"),
         ("ACCOUNTANT", "会计", "核对票据、金额和成本归属"),
@@ -1411,16 +1451,19 @@ def upgrade_schema() -> None:
                 f"PRAGMA user_version = {TIMEZONE_DATA_MIGRATION_VERSION}"
             )
         connection.execute(text("UPDATE worklogs SET approval_version = 0 WHERE approval_version IS NULL"))
-        # v3.0 人员成本快照：已审批且快照仍为 0 的历史工时按当前单天成本补齐，并同步经营流水。
-        connection.execute(text("UPDATE worklogs SET daily_cost_snapshot = COALESCE((SELECT daily_cost FROM users WHERE users.id = worklogs.user_id), 0), cost_amount_snapshot = ROUND(quantity * COALESCE((SELECT daily_cost FROM users WHERE users.id = worklogs.user_id), 0), 2) WHERE status IN ('APPROVED', 'LOCKED') AND (daily_cost_snapshot IS NULL OR daily_cost_snapshot = 0)"))
-        connection.execute(text("UPDATE project_ledger_entries SET amount = COALESCE((SELECT w.cost_amount_snapshot FROM worklogs w WHERE w.id = project_ledger_entries.source_id), amount), occurred_on = COALESCE((SELECT w.start_date FROM worklogs w WHERE w.id = project_ledger_entries.source_id), occurred_on) WHERE entry_type = 'PERSONNEL_COST' AND source_type = 'WORKLOG' AND (amount IS NULL OR amount = 0)"))
-        connection.execute(text("INSERT INTO project_ledger_entries (project_id, entry_type, source_type, source_id, amount, occurred_on, idempotency_key, created_at) SELECT w.project_id, 'PERSONNEL_COST', 'WORKLOG', w.id, w.cost_amount_snapshot, w.start_date, 'personnel:' || w.id, datetime('now', '+8 hours') FROM worklogs w WHERE w.status IN ('APPROVED', 'LOCKED') AND w.cost_amount_snapshot IS NOT NULL AND w.cost_amount_snapshot > 0 AND NOT EXISTS (SELECT 1 FROM project_ledger_entries e WHERE e.entry_type = 'PERSONNEL_COST' AND e.source_type = 'WORKLOG' AND e.source_id = w.id)"))
-        connection.execute(text("DELETE FROM project_ledger_entries WHERE entry_type = 'PERSONNEL_COST' AND source_type = 'WORKLOG' AND idempotency_key LIKE 'personnel:%' AND EXISTS (SELECT 1 FROM project_ledger_entries e2 WHERE e2.entry_type = 'PERSONNEL_COST' AND e2.source_type = 'WORKLOG' AND e2.source_id = project_ledger_entries.source_id AND e2.idempotency_key <> project_ledger_entries.idempotency_key)"))
+        # v3.0.61 起人工成本改由财务在本系统内按项目 + 核算月份录入（project_cost_entries），
+        # 工时只统计人天、不再按单天成本折算，因此这里不再回填工时成本快照，也不再补写
+        # source_type='WORKLOG' 的 PERSONNEL_COST 流水。历史已生成的流水保留原样以便追溯。
         # 统一旧版本中文类型，避免历史项目无法匹配新的动态配置编码。
         connection.execute(text("UPDATE projects SET project_type = 'RND_PROJECT' WHERE project_type IN ('研发项目', '客户项目', '内部项目') OR project_type IS NULL OR project_type = ''"))
         connection.execute(text("UPDATE projects SET budget_cost = 0 WHERE budget_cost IS NULL"))
         connection.execute(text("UPDATE projects SET expense_budget = 0 WHERE expense_budget IS NULL"))
         connection.execute(text("UPDATE payments SET version = 1 WHERE version IS NULL OR version < 1"))
+        # v3.0.61 合同付款由七级审批改为一级费用复核：历史在途单据挂到新状态并解绑旧流程实例，
+        # 否则新复核入口的 can_approve 会因为仍挂着工作流实例而拒绝复核人处理。
+        connection.execute(text("UPDATE workflow_tasks SET status = 'CLOSED' WHERE status = 'PENDING' AND workflow_instance_id IN (SELECT id FROM workflow_instances WHERE document_type = 'PAYMENT')"))
+        connection.execute(text("UPDATE workflow_instances SET status = 'CLOSED', completed_at = datetime('now', '+8 hours') WHERE document_type = 'PAYMENT' AND status = 'RUNNING'"))
+        connection.execute(text("UPDATE payments SET status = 'PENDING_REVIEW', current_workflow_instance_id = NULL WHERE status IN ('PENDING', 'PENDING_APPROVAL')"))
         # 旧项目类型已不再属于当前业务范围，配置记录也直接删除而非仅停用。
         connection.execute(text("DELETE FROM config_options WHERE category = 'project_type' AND (value IN ('研发项目', '客户项目', '内部项目', 'CUSTOMER_PROJECT', 'INTERNAL_PROJECT') OR label IN ('研发项目', '客户项目', '内部项目'))"))
         # v3.0.59 起项目分类改用 project_category / project_sub_category 两级树，扁平的 project_type 分类整体下线。
@@ -1510,6 +1553,7 @@ def seed_data() -> None:
         seed_notification_policies(db)
         seed_rbac(db)
         seed_approval_workflows(db)
+        disable_retired_menus(db)
         normalize_project_categories(db)
         ensure_all_project_budget_items(db)
         backfill_ledger_budget_snapshots(db)
@@ -1736,6 +1780,18 @@ def effective_permission_details(db: Session, user_id: int) -> dict[str, dict[st
             if current_type is None or RBAC_SCOPE_RANK.get(scope_type, 0) > RBAC_SCOPE_RANK.get(str(current_type), 0):
                 target["scope_type"] = scope_type
                 target["scope_department_id"] = department_id
+    # 岗位制复核：费用复核岗位成员即使没有单独授权菜单，也应看到并处理费用复核。
+    if user_id in {member.id for member in position_members(db, COST_REVIEW_POSITION_CODE)}:
+        target = details.setdefault(
+            COST_REVIEW_RESOURCE,
+            {"actions": [], "scope_type": "ALL", "scope_department_id": None, "source_roles": []},
+        )
+        target["actions"] = sorted(
+            set(target["actions"]) | {"VIEW", "APPROVE"},
+            key=lambda action: RBAC_ACTIONS.index(action) if action in RBAC_ACTIONS else len(RBAC_ACTIONS),
+        )
+        if "费用复核岗位" not in target["source_roles"]:
+            target["source_roles"].append("费用复核岗位")
     return details
 
 
@@ -2694,8 +2750,16 @@ def payment_view(db: Session, payment: Payment, viewer_id: int | None = None) ->
         can_approve=bool(viewer_task) or bool(
             viewer_id
             and not payment.current_workflow_instance_id
-            and payment.status == "PENDING"
-            and "cash_approval" in user_admin_permissions(db, viewer_id)
+            and (
+                (payment.status == "PENDING" and "cash_approval" in user_admin_permissions(db, viewer_id))
+                or (
+                    payment.status == "PENDING_REVIEW"
+                    and (
+                        "APPROVE" in effective_permission_details(db, viewer_id).get(COST_REVIEW_RESOURCE, {}).get("actions", [])
+                        or any(member.id == viewer_id for member in position_members(db, COST_REVIEW_POSITION_CODE))
+                    )
+                )
+            )
         ),
     )
 
@@ -2760,7 +2824,7 @@ def payment_submission_remaining(db: Session, stage: ContractStage, payment_id: 
         select(func.coalesce(func.sum(Payment.amount), 0)).where(
             Payment.stage_id == stage.id,
             Payment.id != payment_id,
-            Payment.status.in_(("PENDING", "PENDING_APPROVAL", "APPROVED")),
+            Payment.status.in_(("PENDING", "PENDING_APPROVAL", "PENDING_REVIEW", "APPROVED")),
         )
     ) or 0)
     return round(max(float(stage.amount or 0) - committed, 0), 2)
@@ -2863,18 +2927,50 @@ def project_finance_summary(db: Session, project: Project, as_of: date | None = 
     }
 
 
+def reversal_target_types(rows: list[ProjectLedgerEntry]) -> dict[int, str]:
+    """把冲销流水归回被冲销的原始类型，便于人工成本与项目费用分别按净额口径统计。
+
+    优先读取 `reversal_of_id` 指向的原始流水类型；历史数据没有关联时按 `source_type` 回退。
+    """
+    kind_by_id = {row.id: row.entry_type for row in rows}
+    targets: dict[int, str] = {}
+    for row in rows:
+        if row.entry_type != "REVERSAL":
+            continue
+        target = kind_by_id.get(row.reversal_of_id) if row.reversal_of_id else None
+        if not target:
+            if row.source_type == "PAYMENT":
+                target = "PAYMENT"
+            elif row.source_type == "PROJECT_EXPENSE":
+                target = "PROJECT_EXPENSE_COST"
+            else:
+                target = "PERSONNEL_COST"
+        targets[row.id] = target
+    return targets
+
+
 def project_analysis_view(db: Session, project: Project, as_of: date) -> ProjectAnalysisView:
     """组装单项目经营分析，统一返回成本、合同阶段、结项风险和可下钻来源。"""
     finance = project_finance_summary(db, project, as_of=as_of)
     project_detail = project_view(db, project)
     approved_days = float(db.scalar(select(func.coalesce(func.sum(Worklog.quantity), 0)).where(Worklog.project_id == project.id, Worklog.status.in_(("APPROVED", "LOCKED")))) or 0)
-    personnel_cost = float(db.scalar(select(func.coalesce(func.sum(ProjectLedgerEntry.amount), 0)).where(ProjectLedgerEntry.project_id == project.id, ProjectLedgerEntry.entry_type == "PERSONNEL_COST")) or 0)
-    personnel_cost -= float(db.scalar(select(func.coalesce(func.sum(ProjectLedgerEntry.amount), 0)).where(ProjectLedgerEntry.project_id == project.id, ProjectLedgerEntry.entry_type == "REVERSAL", ProjectLedgerEntry.source_type.in_(("WORKLOG", "PERSONNEL_COST")))) or 0)
+    ledger_rows = db.scalars(select(ProjectLedgerEntry).where(ProjectLedgerEntry.project_id == project.id)).all()
+    reversal_targets = reversal_target_types(ledger_rows)
+    personnel_cost = 0.0
+    expense_cost = 0.0
+    for ledger_row in ledger_rows:
+        amount = float(ledger_row.amount or 0)
+        if ledger_row.entry_type == "PERSONNEL_COST":
+            personnel_cost += amount
+        elif ledger_row.entry_type == "PROJECT_EXPENSE_COST":
+            expense_cost += amount
+        elif ledger_row.entry_type == "REVERSAL" and reversal_targets.get(ledger_row.id) == "PERSONNEL_COST":
+            personnel_cost -= amount
+        elif ledger_row.entry_type == "REVERSAL" and reversal_targets.get(ledger_row.id) == "PROJECT_EXPENSE_COST":
+            expense_cost -= amount
     personnel_cost = round(max(personnel_cost, 0), 2)
     contract_cost = round(float(db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.project_id == project.id, Payment.status == "APPROVED")) or 0), 2)
-    expense_cost = round(float(db.scalar(select(func.coalesce(func.sum(ProjectLedgerEntry.amount), 0)).where(ProjectLedgerEntry.project_id == project.id, ProjectLedgerEntry.entry_type == "PROJECT_EXPENSE_COST")) or 0), 2)
-    expense_cost -= round(float(db.scalar(select(func.coalesce(func.sum(ProjectLedgerEntry.amount), 0)).where(ProjectLedgerEntry.project_id == project.id, ProjectLedgerEntry.entry_type == "REVERSAL", ProjectLedgerEntry.source_type == "PROJECT_EXPENSE")) or 0), 2)
-    expense_cost = max(expense_cost, 0)
+    expense_cost = round(max(expense_cost, 0), 2)
     total_cost = round(personnel_cost + contract_cost + expense_cost, 2)
     budget_item_rows = project_budget_item_views(db, project.id)
     budget_cost = round(sum(float(item.budget_amount or 0) for item in budget_item_rows if item.is_active), 2)
@@ -2893,7 +2989,6 @@ def project_analysis_view(db: Session, project: Project, as_of: date) -> Project
         current_index = month_index - offset
         year, month_zero = divmod(current_index, 12)
         trend[f"{year:04d}-{month_zero + 1:02d}"] = {"personnel_cost": 0.0, "contract_cost": 0.0, "expense_cost": 0.0}
-    ledger_rows = db.scalars(select(ProjectLedgerEntry).where(ProjectLedgerEntry.project_id == project.id)).all()
     for entry in ledger_rows:
         occurred_on = entry.occurred_on or entry.created_at.date()
         key = f"{occurred_on.year:04d}-{occurred_on.month:02d}"
@@ -2909,7 +3004,7 @@ def project_analysis_view(db: Session, project: Project, as_of: date) -> Project
         elif entry.entry_type == "REVERSAL":
             if entry.source_type == "PAYMENT":
                 trend[key]["contract_cost"] -= amount
-            elif entry.source_type == "PROJECT_EXPENSE":
+            elif reversal_targets.get(entry.id) == "PROJECT_EXPENSE_COST":
                 trend[key]["expense_cost"] -= amount
             else:
                 trend[key]["personnel_cost"] -= amount
@@ -2997,7 +3092,7 @@ def project_analysis_view(db: Session, project: Project, as_of: date) -> Project
     income_contracts = [contract_view(contract) for contract in contracts if contract.contract_type == "INCOME"]
     expense_contracts = [contract_view(contract) for contract in contracts if contract.contract_type == "EXPENSE"]
     pending_receipt_amount = float(db.scalar(select(func.coalesce(func.sum(Receipt.amount), 0)).where(Receipt.project_id == project.id, Receipt.status == "PENDING")) or 0)
-    pending_payment_amount = float(db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.project_id == project.id, Payment.status.in_(("PENDING", "PENDING_APPROVAL")))) or 0)
+    pending_payment_amount = float(db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.project_id == project.id, Payment.status.in_(("PENDING", "PENDING_APPROVAL", "PENDING_REVIEW")))) or 0)
     if pending_receipt_amount > 0:
         warnings.append(ProjectAnalysisWarningView(level="INFO", warning_type="PENDING_APPROVAL", title="存在待审批合同收款单", detail=f"¥{pending_receipt_amount:,.2f} 尚未确认，不计入已收", amount=round(pending_receipt_amount, 2), source_type="RECEIPT"))
     if pending_payment_amount > 0:
@@ -3227,52 +3322,11 @@ def add_ledger_entry(
 
 
 def refresh_missing_worklog_cost(db: Session, user_id: int | None = None) -> int:
-    """将已审批且成本快照仍为 0 的工时按当前单天成本补齐并同步流水。"""
-    query = (
-        select(Worklog, User.daily_cost)
-        .join(User, Worklog.user_id == User.id)
-        .where(
-            Worklog.status.in_(("APPROVED", "LOCKED")),
-            or_(Worklog.daily_cost_snapshot.is_(None), Worklog.daily_cost_snapshot == 0),
-            User.daily_cost.is_not(None),
-            User.daily_cost > 0,
-        )
-    )
-    if user_id is not None:
-        query = query.where(Worklog.user_id == user_id)
-    updated = 0
-    for worklog, daily_cost in db.execute(query).all():
-        cost_amount = round(float(worklog.quantity) * float(daily_cost), 2)
-        worklog.daily_cost_snapshot = float(daily_cost)
-        worklog.cost_amount_snapshot = cost_amount
-        existing = db.scalar(select(ProjectLedgerEntry).where(
-            ProjectLedgerEntry.entry_type == "PERSONNEL_COST",
-            ProjectLedgerEntry.source_type == "WORKLOG",
-            ProjectLedgerEntry.source_id == worklog.id,
-        ))
-        if existing:
-            existing.amount = cost_amount
-            existing.occurred_on = worklog.start_date
-            apply_budget_snapshot(existing, project_labor_budget_item(db, worklog.project_id))
-        else:
-            labor_budget_item = project_labor_budget_item(db, worklog.project_id)
-            db.add(ProjectLedgerEntry(
-                project_id=worklog.project_id,
-                entry_type="PERSONNEL_COST",
-                source_type="WORKLOG",
-                source_id=worklog.id,
-                amount=cost_amount,
-                occurred_on=worklog.start_date,
-                budget_item_id=labor_budget_item.id if labor_budget_item else None,
-                budget_item_name_snapshot=labor_budget_item.name if labor_budget_item else None,
-                cost_major_snapshot=labor_budget_item.cost_major if labor_budget_item else None,
-                cost_minor_snapshot=labor_budget_item.cost_minor if labor_budget_item else None,
-                idempotency_key=f"PERSONNEL_COST:WORKLOG:{worklog.id}",
-            ))
-        updated += 1
-    if updated:
-        db.flush()
-    return updated
+    """已退役：v3.0.61 起工时不再折算人员成本，人工成本由财务录入。
+
+    保留函数签名只为兼容历史调用点，既不回填工时成本快照，也不创建任何经营流水。
+    """
+    return 0
 
 
 def notification_policy(db: Session, notification_type: str) -> NotificationPolicy | None:
@@ -3589,7 +3643,7 @@ def run_stage_reminder_scan_once() -> dict[str, int]:
                     submitter.name if submitter else "申请人",
                 )
             pending_payments = db.scalars(
-                select(Payment).where(Payment.project_id == project.id, Payment.status.in_(("PENDING", "PENDING_APPROVAL")))
+                select(Payment).where(Payment.project_id == project.id, Payment.status.in_(("PENDING", "PENDING_APPROVAL", "PENDING_REVIEW")))
             ).all()
             for payment in pending_payments:
                 submitter = db.get(User, payment.submitted_by) if payment.submitted_by else None
@@ -5826,7 +5880,7 @@ def delete_contract(contract_id: int, x_demo_user_id: int | None = Header(defaul
     contract = resolve_contract(db, contract_id)
     ensure_project_in_scope(db, user, contract.project_id)
     active_cash = db.scalar(select(Receipt.id).where(Receipt.contract_id == contract.id, Receipt.status.in_(("DRAFT", "PENDING", "APPROVED"))).limit(1))
-    active_cash = active_cash or db.scalar(select(Payment.id).where(Payment.contract_id == contract.id, Payment.status.in_(("DRAFT", "PENDING", "PENDING_APPROVAL", "APPROVED"))).limit(1))
+    active_cash = active_cash or db.scalar(select(Payment.id).where(Payment.contract_id == contract.id, Payment.status.in_(("DRAFT", "PENDING", "PENDING_APPROVAL", "PENDING_REVIEW", "APPROVED"))).limit(1))
     if active_cash:
         raise HTTPException(409, "CONTRACT_HAS_CASH_DOCUMENTS")
     old_status = contract.status
@@ -6206,6 +6260,15 @@ def list_payments(
     return [payment_view(db, item, user.id) for item in db.scalars(query).all()]
 
 
+def resolve_payment_payee(db: Session, contract: Contract, payee_name: str | None, payee_bank_name: str | None, payee_bank_account: str | None) -> tuple[str, str | None, str | None]:
+    """收款方留空时按支出合同的供应商主数据带出，避免重复录入并保持快照一致。"""
+    supplier = db.get(Supplier, contract.counterparty_id) if contract.counterparty_type == "SUPPLIER" else None
+    name = (payee_name or "").strip() or (supplier.name if supplier else contract.counterparty_name)
+    bank_name = (payee_bank_name or "").strip() or ((supplier.bank_branch or supplier.bank_name) if supplier else None)
+    bank_account = (payee_bank_account or "").strip() or (supplier.bank_account if supplier else None)
+    return name, bank_name, bank_account
+
+
 @app.post("/api/v1/payments", response_model=PaymentView, status_code=201)
 def create_payment(payload: PaymentCreate, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> PaymentView:
     user = require_admin_permission(db, "payments", x_demo_user_id)
@@ -6217,6 +6280,7 @@ def create_payment(payload: PaymentCreate, x_demo_user_id: int | None = Header(d
     stage = resolve_contract_stage(db, payload.stage_id, contract.id)
     if payload.amount > stage_remaining(db, stage, "EXPENSE"):
         raise HTTPException(400, "STAGE_REMAINING_INSUFFICIENT")
+    payee_name, payee_bank_name, payee_bank_account = resolve_payment_payee(db, contract, payload.payee_name, payload.payee_bank_name, payload.payee_bank_account)
     payment = Payment(
         payment_no=next_document_no(db, Payment, "PAY"),
         project_id=contract.project_id,
@@ -6224,9 +6288,9 @@ def create_payment(payload: PaymentCreate, x_demo_user_id: int | None = Header(d
         stage_id=stage.id if stage else None,
         amount=payload.amount,
         payment_date=payload.payment_date,
-        payee_name=payload.payee_name,
-        payee_bank_name=payload.payee_bank_name,
-        payee_bank_account=payload.payee_bank_account,
+        payee_name=payee_name,
+        payee_bank_name=payee_bank_name,
+        payee_bank_account=payee_bank_account,
         status="DRAFT",
         submitted_by=user.id,
         submitted_at=None,
@@ -6272,9 +6336,10 @@ def update_payment(payment_id: int, payload: PaymentUpdate, x_demo_user_id: int 
     payment.stage_id = stage.id if stage else None
     payment.amount = payload.amount
     payment.payment_date = payload.payment_date
-    payment.payee_name = payload.payee_name
-    payment.payee_bank_name = payload.payee_bank_name
-    payment.payee_bank_account = payload.payee_bank_account
+    payee_name, payee_bank_name, payee_bank_account = resolve_payment_payee(db, contract, payload.payee_name, payload.payee_bank_name, payload.payee_bank_account)
+    payment.payee_name = payee_name
+    payment.payee_bank_name = payee_bank_name
+    payment.payee_bank_account = payee_bank_account
     payment.comment = payload.comment
     apply_contract_budget_snapshot(db, payment, contract)
     audit(db, "payment", payment.id, "UPDATE", user.id, payment.status, payment.status)
@@ -6299,8 +6364,172 @@ def delete_payment(payment_id: int, x_demo_user_id: int | None = Header(default=
     return {"deleted": True, "payment_id": payment.id}
 
 
+COST_REVIEW_POSITION_CODE = "COST_REVIEWER"
+COST_REVIEW_RESOURCE = "cost_review"
+
+
+def position_members(db: Session, code: str) -> list[User]:
+    """返回复核岗位内的在职成员，作为一级复核候选人。"""
+    position = db.scalar(select(ApprovalPosition).where(ApprovalPosition.code == code))
+    if not position:
+        return []
+    return list(
+        db.scalars(
+            select(User)
+            .join(ApprovalPositionMember, ApprovalPositionMember.user_id == User.id)
+            .where(ApprovalPositionMember.position_id == position.id, User.employment_status == "ACTIVE")
+            .order_by(User.name)
+        ).all()
+    )
+
+
+def cost_reviewer_users(db: Session) -> list[User]:
+    """一级费用复核候选人：优先取费用复核岗位成员，岗位为空时回退到持有费用复核权限的人员。"""
+    members = position_members(db, COST_REVIEW_POSITION_CODE)
+    if members:
+        return members
+    return [
+        user
+        for user in db.scalars(select(User).where(User.employment_status == "ACTIVE")).all()
+        if "APPROVE" in effective_permission_details(db, user.id).get(COST_REVIEW_RESOURCE, {}).get("actions", [])
+    ]
+
+
+def cost_can_review(db: Session, user: User | None) -> bool:
+    """判断用户是否可执行一级费用复核：属于费用复核岗位，或直接持有费用复核权限。"""
+    if not user:
+        return False
+    if "APPROVE" in effective_permission_details(db, user.id).get(COST_REVIEW_RESOURCE, {}).get("actions", []):
+        return True
+    return any(member.id == user.id for member in position_members(db, COST_REVIEW_POSITION_CODE))
+
+
+def require_cost_reviewer(db: Session, demo_user_id: int | None = None) -> User:
+    """校验当前用户可执行一级费用复核；不满足时返回统一错误。"""
+    user = current_user(db, demo_user_id)
+    if not cost_can_review(db, user):
+        raise HTTPException(403, "COST_REVIEW_FORBIDDEN")
+    return user
+
+
+def notify_cost_review_submitted(
+    db: Session,
+    *,
+    source_type: str,
+    source_id: int,
+    version: int,
+    notification_type: str,
+    document_label: str,
+    serial_no: str,
+    project_name: str,
+    amount: float,
+    submitter_name: str,
+    page: str,
+) -> int:
+    """通知费用复核岗位全部有效成员；任一人处理后其余待办自然关闭，无需关闭任务。"""
+    if not notification_policy_enabled(db, notification_type):
+        return 0
+    base = os.getenv("SYSTEM_PUBLIC_URL", "http://localhost:8088").rstrip("/")
+    channel = notification_policy_channel(db, notification_type)
+    sent = 0
+    for recipient in cost_reviewer_users(db):
+        key = f"cost-review:{source_type}:{source_id}:{version}:{recipient.id}"
+        notification = db.scalar(select(SystemNotification).where(SystemNotification.idempotency_key == key))
+        if notification and notification.status == "SENT":
+            continue
+        result = feishu.notify_cash_approval_submitted(
+            recipient.name,
+            submitter_name,
+            document_label,
+            serial_no,
+            project_name,
+            amount,
+            f"{base}/?page={page}&id={source_id}",
+            recipient.open_id,
+            channel=channel,
+        )
+        if not notification:
+            notification = SystemNotification(
+                notification_type=notification_type,
+                source_type=source_type,
+                source_id=source_id,
+                recipient_user_id=recipient.id,
+                channel=channel or feishu.notification_mode,
+                idempotency_key=key,
+            )
+            db.add(notification)
+        else:
+            notification.retry_count = int(notification.retry_count or 0) + 1
+        notification.status = result.status
+        notification.channel = channel or feishu.notification_mode
+        notification.message_id = result.message_id
+        notification.error_message = result.error_message
+        notification.sent_at = now_local() if result.status == "SENT" else None
+        sent += 1
+    return sent
+
+
+def notify_cost_review_result(
+    db: Session,
+    *,
+    source_type: str,
+    source_id: int,
+    version: int,
+    recipient_user_id: int | None,
+    document_label: str,
+    serial_no: str,
+    project_name: str,
+    amount: float,
+    status_label: str,
+    page: str,
+    actor_name: str,
+) -> None:
+    """向申请人发送一级复核结果，失败不影响单据状态。"""
+    if not notification_policy_enabled(db, "COST_REVIEW_RESULT"):
+        return
+    recipient = db.get(User, recipient_user_id) if recipient_user_id else None
+    if not recipient:
+        return
+    base = os.getenv("SYSTEM_PUBLIC_URL", "http://localhost:8088").rstrip("/")
+    key = f"cost-review-result:{source_type}:{source_id}:{version}:{status_label}"
+    notification = db.scalar(select(SystemNotification).where(SystemNotification.idempotency_key == key))
+    if notification and notification.status == "SENT":
+        return
+    channel = notification_policy_channel(db, "COST_REVIEW_RESULT")
+    result = feishu.notify_settlement_result(
+        recipient.name,
+        document_label,
+        serial_no,
+        project_name,
+        amount,
+        status_label,
+        f"{base}/?page={page}&id={source_id}",
+        recipient.open_id,
+        channel=channel,
+        approver_name=actor_name,
+    )
+    if not notification:
+        notification = SystemNotification(
+            notification_type="COST_REVIEW_RESULT",
+            source_type=source_type,
+            source_id=source_id,
+            recipient_user_id=recipient.id,
+            channel=channel or feishu.notification_mode,
+            idempotency_key=key,
+        )
+        db.add(notification)
+    else:
+        notification.retry_count = int(notification.retry_count or 0) + 1
+    notification.status = result.status
+    notification.channel = channel or feishu.notification_mode
+    notification.message_id = result.message_id
+    notification.error_message = result.error_message
+    notification.sent_at = now_local() if result.status == "SENT" else None
+
+
 @app.post("/api/v1/payments/{payment_id}/submit", response_model=PaymentView)
 def submit_payment(payment_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> PaymentView:
+    """提交一级费用复核；不再生成多级审批实例，费用复核岗位任一人通过即完成。"""
     user = require_admin_permission(db, "payments", x_demo_user_id)
     require_access(db, "payments", "CREATE", x_demo_user_id)
     payment = db.get(Payment, payment_id)
@@ -6317,29 +6546,29 @@ def submit_payment(payment_id: int, x_demo_user_id: int | None = Header(default=
         raise HTTPException(409, "STAGE_REMAINING_INSUFFICIENT")
     old_status = payment.status
     payment.submitted_by = user.id
-    version, path = resolve_payment_workflow_path(db, payment)
-    payment.version += 1
-    instance = WorkflowInstance(
-        document_type="PAYMENT",
-        document_id=payment.id,
-        workflow_version_id=version.id,
-        applicant_user_id=user.id,
-        status="RUNNING",
-        current_sequence=int(path[0]["sequence"]),
-        snapshot_json=json.dumps({"payment_version": payment.version, "nodes": path}, ensure_ascii=False),
-        submitted_at=now_local(),
-    )
-    db.add(instance)
-    db.flush()
-    payment.current_workflow_instance_id = instance.id
-    payment.status = "PENDING_APPROVAL"
     payment.submitted_at = now_local()
+    payment.version += 1
+    payment.status = "PENDING_REVIEW"
     payment.comment = None
-    tasks = assign_workflow_sequence(db, instance, int(path[0]["sequence"]))
-    db.add(WorkflowActionLog(workflow_instance_id=instance.id, action="SUBMIT", actor_user_id=user.id, actor_name=user.name, from_status=old_status, to_status="PENDING_APPROVAL"))
-    audit(db, "payment", payment.id, "SUBMIT", user.id, old_status, "PENDING_APPROVAL")
+    payment.approved_by = None
+    payment.approved_at = None
+    payment.current_workflow_instance_id = None
+    project = db.get(Project, payment.project_id)
+    audit(db, "payment", payment.id, "SUBMIT", user.id, old_status, "PENDING_REVIEW")
     db.commit()
-    notify_payment_tasks(db, payment, tasks)
+    notify_cost_review_submitted(
+        db,
+        source_type="payment",
+        source_id=payment.id,
+        version=payment.version,
+        notification_type="PENDING_PAYMENT_REVIEW",
+        document_label="合同付款单",
+        serial_no=payment.payment_no,
+        project_name=project.name if project else "",
+        amount=float(payment.amount),
+        submitter_name=user.name,
+        page="paymentDetail",
+    )
     db.commit()
     db.refresh(payment)
     return payment_view(db, payment, user.id)
@@ -6347,143 +6576,80 @@ def submit_payment(payment_id: int, x_demo_user_id: int | None = Header(default=
 
 @app.post("/api/v1/payments/{payment_id}/approve", response_model=PaymentView)
 def approve_payment(payment_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> PaymentView:
+    """一级费用复核通过：通过即视为已付并计入合同成本，同时记录实际复核人。"""
+    user = require_cost_reviewer(db, x_demo_user_id)
     payment = db.get(Payment, payment_id)
     if not payment:
         raise HTTPException(404, "PAYMENT_NOT_FOUND")
-    if payment.current_workflow_instance_id:
-        user = current_user(db, x_demo_user_id)
-        task, instance, node = active_payment_workflow_task(db, payment, user)
-        if node.is_payment:
-            task.status = "PAID"
-            task.processed_by = user.id
-            task.processed_at = now_local()
-            db.query(WorkflowTask).filter(
-                WorkflowTask.workflow_instance_id == instance.id,
-                WorkflowTask.node_sequence == task.node_sequence,
-                WorkflowTask.id != task.id,
-                WorkflowTask.status == "PENDING",
-            ).update({"status": "CLOSED"}, synchronize_session=False)
-            instance.status = "COMPLETED"
-            instance.completed_at = now_local()
-            payment.status = "APPROVED"
-            payment.approved_by = user.id
-            payment.approved_at = now_local()
-            budget_item = db.get(ProjectBudgetItem, payment.budget_item_id) if payment.budget_item_id else None
-            add_ledger_entry(db, payment.project_id, "PAYMENT", "PAYMENT", payment.id, float(payment.amount), occurred_on=payment.payment_date, budget_item=budget_item)
-            stage = db.get(ContractStage, payment.stage_id) if payment.stage_id else None
-            refresh_stage_status(db, stage, "EXPENSE")
-            db.add(WorkflowActionLog(workflow_instance_id=instance.id, workflow_task_id=task.id, action="CONFIRM_PAYMENT", actor_user_id=user.id, actor_name=user.name, from_status="PENDING_APPROVAL", to_status="APPROVED"))
-            audit(db, "payment", payment.id, "CONFIRM_PAYMENT", user.id, "PENDING_APPROVAL", "APPROVED")
-            db.commit()
-            notify_payment_result(db, payment, "审批通过并已确认支付", user.name)
-            db.commit()
-            db.refresh(payment)
-            return payment_view(db, payment, user.id)
-        task.status = "APPROVED"
-        task.processed_by = user.id
-        task.processed_at = now_local()
-        if task.approval_mode == "ANY":
-            db.query(WorkflowTask).filter(
-                WorkflowTask.workflow_instance_id == instance.id,
-                WorkflowTask.node_sequence == task.node_sequence,
-                WorkflowTask.id != task.id,
-                WorkflowTask.status == "PENDING",
-            ).update({"status": "CLOSED"}, synchronize_session=False)
-            node_done = True
-        else:
-            db.flush()
-            node_done = not bool(db.scalar(select(WorkflowTask.id).where(
-                WorkflowTask.workflow_instance_id == instance.id,
-                WorkflowTask.node_sequence == task.node_sequence,
-                WorkflowTask.status == "PENDING",
-            ).limit(1)))
-        db.add(WorkflowActionLog(workflow_instance_id=instance.id, workflow_task_id=task.id, action="APPROVE", actor_user_id=user.id, actor_name=user.name, from_status="PENDING", to_status="APPROVED"))
-        next_tasks = advance_payment_workflow(db, instance, user.id) if node_done else []
-        audit(db, "payment", payment.id, "APPROVE_NODE", user.id, "PENDING_APPROVAL", "PENDING_APPROVAL", task.node_name)
-        db.commit()
-        notify_payment_tasks(db, payment, next_tasks)
-        db.commit()
-        db.refresh(payment)
-        return payment_view(db, payment, user.id)
-    user = require_admin_permission(db, "cash_approval", x_demo_user_id)
-    require_access(db, "cash_approval", "APPROVE", x_demo_user_id)
-    if payment.status != "PENDING":
-        raise HTTPException(409, "PAYMENT_NOT_PENDING")
+    if payment.status != "PENDING_REVIEW":
+        raise HTTPException(409, "PAYMENT_NOT_PENDING_REVIEW")
     payment.status = "APPROVED"
     payment.approved_by = user.id
     payment.approved_at = now_local()
     budget_item = db.get(ProjectBudgetItem, payment.budget_item_id) if payment.budget_item_id else None
-    add_ledger_entry(
-        db,
-        payment.project_id,
-        "PAYMENT",
-        "PAYMENT",
-        payment.id,
-        float(payment.amount),
-        occurred_on=payment.payment_date,
-        budget_item=budget_item,
-    )
+    add_ledger_entry(db, payment.project_id, "PAYMENT", "PAYMENT", payment.id, float(payment.amount), occurred_on=payment.payment_date, budget_item=budget_item)
     stage = db.get(ContractStage, payment.stage_id) if payment.stage_id else None
     refresh_stage_status(db, stage, "EXPENSE")
-    audit(db, "payment", payment.id, "APPROVE", user.id, "PENDING", "APPROVED")
+    audit(db, "payment", payment.id, "APPROVE", user.id, "PENDING_REVIEW", "APPROVED")
     db.commit()
     db.refresh(payment)
     project = db.get(Project, payment.project_id)
-    if payment.submitted_by:
-        send_settlement_notification(
-            db,
-            "payment",
-            payment.id,
-            "合同付款单",
-            payment.payment_no,
-            project.name if project else "",
-            float(payment.amount),
-            payment.submitted_by,
-            user.name,
-        )
+    notify_cost_review_result(
+        db,
+        source_type="payment",
+        source_id=payment.id,
+        version=payment.version,
+        recipient_user_id=payment.submitted_by,
+        document_label="合同付款单",
+        serial_no=payment.payment_no,
+        project_name=project.name if project else "",
+        amount=float(payment.amount),
+        status_label="复核通过",
+        page="paymentDetail",
+        actor_name=user.name,
+    )
+    db.commit()
     return payment_view(db, payment, user.id)
 
 
 @app.post("/api/v1/payments/{payment_id}/reject", response_model=PaymentView)
 def reject_payment(payment_id: int, payload: CashRejectAction, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> PaymentView:
+    """一级费用复核驳回：驳回后不计入合同成本和已付。"""
+    user = require_cost_reviewer(db, x_demo_user_id)
     payment = db.get(Payment, payment_id)
     if not payment:
         raise HTTPException(404, "PAYMENT_NOT_FOUND")
-    if payment.current_workflow_instance_id:
-        user = current_user(db, x_demo_user_id)
-        task, instance, _node = active_payment_workflow_task(db, payment, user)
-        task.status = "REJECTED"
-        task.processed_by = user.id
-        task.processed_at = now_local()
-        task.comment = payload.reason
-        db.query(WorkflowTask).filter(WorkflowTask.workflow_instance_id == instance.id, WorkflowTask.status == "PENDING").update({"status": "CLOSED"}, synchronize_session=False)
-        instance.status = "REJECTED"
-        instance.completed_at = now_local()
-        payment.status = "REJECTED"
-        payment.comment = payload.reason
-        db.add(WorkflowActionLog(workflow_instance_id=instance.id, workflow_task_id=task.id, action="REJECT", actor_user_id=user.id, actor_name=user.name, from_status="PENDING_APPROVAL", to_status="REJECTED", comment=payload.reason))
-        audit(db, "payment", payment.id, "REJECT", user.id, "PENDING_APPROVAL", "REJECTED", payload.reason)
-        db.commit()
-        notify_payment_result(db, payment, "已驳回", user.name)
-        db.commit()
-        db.refresh(payment)
-        return payment_view(db, payment, user.id)
-    user = require_admin_permission(db, "cash_approval", x_demo_user_id)
-    require_access(db, "cash_approval", "APPROVE", x_demo_user_id)
-    if payment.status != "PENDING":
-        raise HTTPException(409, "PAYMENT_NOT_PENDING")
+    if payment.status != "PENDING_REVIEW":
+        raise HTTPException(409, "PAYMENT_NOT_PENDING_REVIEW")
     payment.status = "REJECTED"
     payment.comment = payload.reason
-    audit(db, "payment", payment.id, "REJECT", user.id, "PENDING", "REJECTED", payload.reason)
+    payment.approved_by = user.id
+    payment.approved_at = now_local()
+    audit(db, "payment", payment.id, "REJECT", user.id, "PENDING_REVIEW", "REJECTED", payload.reason)
     db.commit()
     db.refresh(payment)
+    project = db.get(Project, payment.project_id)
+    notify_cost_review_result(
+        db,
+        source_type="payment",
+        source_id=payment.id,
+        version=payment.version,
+        recipient_user_id=payment.submitted_by,
+        document_label="合同付款单",
+        serial_no=payment.payment_no,
+        project_name=project.name if project else "",
+        amount=float(payment.amount),
+        status_label="复核驳回",
+        page="paymentDetail",
+        actor_name=user.name,
+    )
+    db.commit()
     return payment_view(db, payment, user.id)
 
 
 @app.post("/api/v1/payments/{payment_id}/reverse", response_model=PaymentView)
 def reverse_payment(payment_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> PaymentView:
-    user = require_admin_permission(db, "cash_approval", x_demo_user_id)
-    require_access(db, "cash_approval", "APPROVE", x_demo_user_id)
+    user = require_cost_reviewer(db, x_demo_user_id)
     payment = db.get(Payment, payment_id)
     if not payment:
         raise HTTPException(404, "PAYMENT_NOT_FOUND")
@@ -6758,7 +6924,6 @@ def update_personnel_cost(user_id: int, payload: PersonnelCostUpdate, x_demo_use
     if not user or user.employment_status != "ACTIVE":
         raise HTTPException(404, "USER_NOT_FOUND")
     user.daily_cost = payload.daily_cost
-    refresh_missing_worklog_cost(db, user_id=user.id)
     audit(db, "user", user.id, "UPDATE_DAILY_COST", current_user(db, x_demo_user_id).id, None, None, str(payload.daily_cost) if payload.daily_cost is not None else "")
     db.commit()
     db.refresh(user)
@@ -6986,22 +7151,8 @@ def approve_task(task_id: int, payload: ApprovalAction, x_demo_user_id: int | No
     item.status = "APPROVED"
     item.approved_at = task.processed_at
     item.approval_comment = payload.comment
-    submitter = db.get(User, item.user_id)
-    daily_cost = float(submitter.daily_cost) if submitter and submitter.daily_cost is not None else 0
-    item.daily_cost_snapshot = daily_cost
-    item.cost_amount_snapshot = round(float(item.quantity) * daily_cost, 2)
-    labor_budget_item = project_labor_budget_item(db, item.project_id)
-    add_ledger_entry(
-        db,
-        item.project_id,
-        "PERSONNEL_COST",
-        "WORKLOG",
-        item.id,
-        item.cost_amount_snapshot,
-        occurred_on=item.start_date,
-        budget_item=labor_budget_item,
-    )
-    audit(db, "approval_task", task.id, "APPROVE", user.id, old, "APPROVED", payload.comment)
+    # v3.0.61 起工时审批只推进审批状态，不再折算人员成本、不再写 PERSONNEL_COST 流水；
+    # 人工成本统一由财务按项目 + 核算月份录入并走一级费用复核。
     db.commit()
     db.refresh(task)
     return task_view(db, task)
@@ -7507,6 +7658,46 @@ def get_integration_notification(
     return integration_notification_view(db, item)
 
 
+COST_REVIEW_RESULT_LABELS = {"APPROVED": "复核通过", "REJECTED": "复核驳回", "REVERSED": "已冲销", "DRAFT": "草稿", "PENDING_REVIEW": "待复核"}
+
+
+def cost_review_notification_payload(db: Session, notification: SystemNotification) -> dict[str, object] | None:
+    """解析费用复核类通知对应的来源单据，供发送与失败重试共用同一份口径。"""
+    if notification.source_type == "payment":
+        payment = db.get(Payment, notification.source_id)
+        if not payment:
+            return None
+        project = db.get(Project, payment.project_id)
+        applicant = db.get(User, payment.submitted_by) if payment.submitted_by else None
+        reviewer = db.get(User, payment.approved_by) if payment.approved_by else None
+        return {
+            "document_label": "合同付款单",
+            "serial_no": payment.payment_no,
+            "project_name": project.name if project else "",
+            "amount": float(payment.amount or 0),
+            "submitter_name": applicant.name if applicant else "系统",
+            "status_label": COST_REVIEW_RESULT_LABELS.get(payment.status, "待复核"),
+            "actor_name": reviewer.name if reviewer else "系统",
+            "page": "paymentDetail",
+        }
+    entry = db.get(ProjectCostEntry, notification.source_id)
+    if not entry:
+        return None
+    project = db.get(Project, entry.project_id)
+    applicant = db.get(User, entry.applicant_user_id) if entry.applicant_user_id else None
+    reviewer = db.get(User, entry.reviewed_by) if entry.reviewed_by else None
+    return {
+        "document_label": PROJECT_COST_KIND_LABELS.get(entry.entry_kind, "项目成本单"),
+        "serial_no": entry.cost_no,
+        "project_name": project.name if project else "",
+        "amount": float(entry.amount or 0),
+        "submitter_name": applicant.name if applicant else "系统",
+        "status_label": COST_REVIEW_RESULT_LABELS.get(entry.status, "待复核"),
+        "actor_name": reviewer.name if reviewer else "系统",
+        "page": PROJECT_COST_KIND_PAGES.get(entry.entry_kind, "projectExpenses"),
+    }
+
+
 @app.post("/api/v1/integrations/notifications/{notification_id}/retry", response_model=IntegrationNotificationView)
 def retry_integration_notification(
     notification_id: int,
@@ -7547,6 +7738,51 @@ def retry_integration_notification(
         raise HTTPException(404, "NOTIFICATION_NOT_FOUND")
     if notification.status == "SENT":
         raise HTTPException(409, "NOTIFICATION_ALREADY_SENT")
+    if notification.notification_type in {"PENDING_PAYMENT_REVIEW", "PENDING_EXPENSE_REVIEW", "PENDING_LABOR_REVIEW", "COST_REVIEW_RESULT"}:
+        payload = cost_review_notification_payload(db, notification)
+        recipient = db.get(User, notification.recipient_user_id) if notification.recipient_user_id else None
+        if not payload or not recipient:
+            raise HTTPException(404, "NOTIFICATION_SOURCE_NOT_FOUND")
+        channel = notification_policy_channel(db, notification.notification_type)
+        if channel and not notification_policy_enabled(db, notification.notification_type):
+            raise HTTPException(409, "NOTIFICATION_POLICY_DISABLED")
+        base = os.getenv("SYSTEM_PUBLIC_URL", "http://localhost:8088").rstrip("/")
+        deep_link = f"{base}/?page={payload['page']}&id={notification.source_id}"
+        if notification.notification_type == "COST_REVIEW_RESULT":
+            result = feishu.notify_settlement_result(
+                recipient.name,
+                str(payload["document_label"]),
+                str(payload["serial_no"]),
+                str(payload["project_name"]),
+                float(payload["amount"]),
+                str(payload["status_label"]),
+                deep_link,
+                recipient.open_id,
+                channel=channel,
+                approver_name=str(payload["actor_name"]),
+            )
+        else:
+            result = feishu.notify_cash_approval_submitted(
+                recipient.name,
+                str(payload["submitter_name"]),
+                str(payload["document_label"]),
+                str(payload["serial_no"]),
+                str(payload["project_name"]),
+                float(payload["amount"]),
+                deep_link,
+                recipient.open_id,
+                channel=channel,
+            )
+        notification.status = result.status
+        notification.channel = channel or feishu.notification_mode
+        notification.message_id = result.message_id
+        notification.error_message = result.error_message
+        notification.sent_at = now_local() if result.status == "SENT" else None
+        notification.retry_count = int(notification.retry_count or 0) + 1
+        audit(db, "system_notification", notification.id, "RETRY", admin.id, "FAILED", result.status)
+        db.commit()
+        db.refresh(notification)
+        return integration_notification_view(db, notification)
     if notification.notification_type in {"PENDING_RECEIPT", "PENDING_PAYMENT"}:
         expected_source_type = "receipt" if notification.notification_type == "PENDING_RECEIPT" else "payment"
         if notification.source_type != expected_source_type:
@@ -7874,20 +8110,32 @@ def expense_workflow_path_views(db: Session, expense: ProjectExpense) -> list[Wo
     return result
 
 
+COST_REVIEW_PATH_STATUS = {"PENDING_REVIEW": "CURRENT", "APPROVED": "DONE", "REVERSED": "DONE", "REJECTED": "REJECTED"}
+
+
 def payment_workflow_path_views(db: Session, payment: Payment) -> list[WorkflowPathNodeView]:
-    """返回合同付款单提交快照对应的节点状态；草稿使用当前发布流程预览。"""
+    """返回合同付款单的复核路径。
+
+    v3.0.61 起合同付款只走一级费用复核，未挂在历史流程实例上的单据固定展示单节点路径；
+    历史多级流程实例仍按实例快照展开，保证旧单据的审批轨迹可追溯。
+    """
     instance = db.get(WorkflowInstance, payment.current_workflow_instance_id) if payment.current_workflow_instance_id else None
-    if instance:
-        try:
-            path = json.loads(instance.snapshot_json or "{}").get("nodes", [])
-        except json.JSONDecodeError:
-            path = []
-    else:
-        try:
-            _version, path = resolve_payment_workflow_path(db, payment)
-        except HTTPException:
-            return []
-    tasks = list(db.scalars(select(WorkflowTask).where(WorkflowTask.workflow_instance_id == instance.id)).all()) if instance else []
+    if not instance:
+        return [
+            WorkflowPathNodeView(
+                sequence=1,
+                node_code="COST_REVIEW",
+                node_name="费用复核",
+                approval_mode="ANY",
+                assignees=[{"id": user.id, "name": user.name} for user in cost_reviewer_users(db)],
+                status=COST_REVIEW_PATH_STATUS.get(payment.status, "WAITING"),
+            )
+        ]
+    try:
+        path = json.loads(instance.snapshot_json or "{}").get("nodes", [])
+    except json.JSONDecodeError:
+        path = []
+    tasks = list(db.scalars(select(WorkflowTask).where(WorkflowTask.workflow_instance_id == instance.id)).all())
     by_sequence: dict[int, list[WorkflowTask]] = defaultdict(list)
     for task in tasks:
         by_sequence[task.node_sequence].append(task)
@@ -8770,6 +9018,783 @@ def delete_expense_attachment(attachment_id: int, x_demo_user_id: int | None = H
     if path.exists():
         path.unlink()
     return {"deleted": True, "attachment_id": attachment_id}
+
+
+PROJECT_COST_KIND_LABELS = {"PROJECT_EXPENSE": "项目费用单", "PERSONNEL_COST": "人工成本结转单"}
+PROJECT_COST_KIND_RESOURCES = {"PROJECT_EXPENSE": "project_expenses", "PERSONNEL_COST": "labor_costs"}
+PROJECT_COST_KIND_PREFIXES = {"PROJECT_EXPENSE": "CE", "PERSONNEL_COST": "LC"}
+PROJECT_COST_LEDGER_TYPES = {"PROJECT_EXPENSE": "PROJECT_EXPENSE_COST", "PERSONNEL_COST": "PERSONNEL_COST"}
+PROJECT_COST_KIND_PAGES = {"PROJECT_EXPENSE": "projectExpenses", "PERSONNEL_COST": "laborCosts"}
+PROJECT_COST_KIND_NOTIFICATIONS = {"PROJECT_EXPENSE": "PENDING_EXPENSE_REVIEW", "PERSONNEL_COST": "PENDING_LABOR_REVIEW"}
+EDITABLE_COST_ENTRY_STATUSES = {"DRAFT", "REJECTED"}
+
+
+def cost_attachment_root() -> Path:
+    """返回项目成本单附件持久化目录，并确保目录存在。"""
+    root = Path(os.getenv("PROJECT_COST_ATTACHMENT_DIR", "/app/data/project-cost-attachments"))
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def cost_attachment_path(attachment: ProjectCostAttachment) -> Path:
+    """解析项目成本单附件路径并阻止随机存储名越界。"""
+    root = cost_attachment_root().resolve()
+    path = (root / attachment.storage_name).resolve()
+    if path.parent != root:
+        raise HTTPException(500, "PROJECT_COST_ATTACHMENT_STORAGE_INVALID")
+    return path
+
+
+def cost_attachment_view(db: Session, attachment: ProjectCostAttachment) -> ProjectCostAttachmentView:
+    """将项目成本单附件实体转换为安全的前端响应。"""
+    uploader = db.get(User, attachment.uploaded_by)
+    kind = attachment_preview_kind(attachment.file_name)
+    return ProjectCostAttachmentView(
+        id=attachment.id,
+        entry_id=attachment.entry_id,
+        file_name=attachment.file_name,
+        mime_type=attachment.mime_type,
+        file_size=attachment.file_size,
+        uploaded_by=attachment.uploaded_by,
+        uploaded_by_name=uploader.name if uploader else "系统",
+        created_at=attachment.created_at,
+        can_preview=kind != "download",
+        preview_kind=kind,
+    )
+
+
+def cost_entry_attachment_views(db: Session, entry_id: int) -> list[ProjectCostAttachmentView]:
+    rows = db.scalars(select(ProjectCostAttachment).where(ProjectCostAttachment.entry_id == entry_id).order_by(ProjectCostAttachment.id)).all()
+    return [cost_attachment_view(db, item) for item in rows]
+
+
+def project_cost_kind(entry_kind: str | None) -> str:
+    value = (entry_kind or "PROJECT_EXPENSE").strip().upper()
+    if value not in PROJECT_COST_KIND_LABELS:
+        raise HTTPException(400, "COST_ENTRY_KIND_INVALID")
+    return value
+
+
+def cost_entry_resource(entry_kind: str | None) -> str:
+    return PROJECT_COST_KIND_RESOURCES[project_cost_kind(entry_kind)]
+
+
+def labor_budget_item(db: Session, project_id: int) -> ProjectBudgetItem | None:
+    """返回项目的人工费用预算项；人工成本结转固定归入该项。"""
+    items = db.scalars(select(ProjectBudgetItem).where(ProjectBudgetItem.project_id == project_id).order_by(ProjectBudgetItem.sort_order, ProjectBudgetItem.id)).all()
+    return next((item for item in items if item.source_kind == "LABOR"), items[0] if items else None)
+
+
+def cost_item_minor_options(item: ProjectBudgetItem) -> list[str]:
+    """预算项可归集的成本小类候选，空集合表示按默认小类归集。"""
+    options = parse_cost_minor_options(item.cost_minor_options)
+    if options:
+        return options
+    return [item.cost_minor] if item.cost_minor else []
+
+
+def apply_cost_entry_snapshot(entry: ProjectCostEntry, item: ProjectBudgetItem, cost_minor: str | None) -> None:
+    """写入预算项与成本分类快照；多小类预算项在候选范围内选择，超范围直接拒绝。"""
+    allowed = cost_item_minor_options(item)
+    minor = (cost_minor or "").strip() or None
+    if minor and allowed and minor not in allowed:
+        raise HTTPException(400, "INVALID_COST_MINOR")
+    entry.budget_item_id = item.id
+    entry.budget_item_name_snapshot = item.name
+    entry.cost_major_snapshot = item.cost_major
+    entry.cost_minor_snapshot = minor or item.cost_minor or (allowed[0] if allowed else None)
+
+
+def resolve_cost_entry_budget_item(db: Session, entry_kind: str, project_id: int, budget_item_id: int | None) -> ProjectBudgetItem:
+    """人工成本固定归入人工费用预算项；项目费用必须显式选择项目内启用中的预算项。"""
+    if entry_kind == "PERSONNEL_COST":
+        item = labor_budget_item(db, project_id)
+        if not item:
+            raise HTTPException(400, "LABOR_BUDGET_ITEM_MISSING")
+        return item
+    if not budget_item_id:
+        raise HTTPException(400, "BUDGET_ITEM_REQUIRED")
+    item = db.get(ProjectBudgetItem, budget_item_id)
+    if not item or item.project_id != project_id:
+        raise HTTPException(400, "BUDGET_ITEM_INVALID")
+    if not item.is_active:
+        raise HTTPException(400, "BUDGET_ITEM_INACTIVE")
+    return item
+
+
+def ensure_cost_entry_scope(db: Session, user: User, project_id: int, entry_kind: str | None = None) -> Project:
+    """同时按单据类型的数据范围与项目范围校验可见性。"""
+    scope = project_scope_ids(db, user, cost_entry_resource(entry_kind))
+    if scope is not None and project_id not in scope:
+        raise HTTPException(403, "PROJECT_OUT_OF_SCOPE")
+    return ensure_project_in_scope(db, user, project_id)
+
+
+def cost_entry_access(db: Session, entry: ProjectCostEntry, demo_user_id: int | None, *, action: str = "VIEW") -> User:
+    """校验成本单菜单、数据范围或复核岗位授权；申请人本人始终可读。"""
+    user = current_user(db, demo_user_id)
+    if action == "VIEW" and entry.applicant_user_id == user.id:
+        return user
+    resource = cost_entry_resource(entry.entry_kind)
+    require_access(db, resource, action, demo_user_id)
+    scope = project_scope_ids(db, user, resource)
+    if scope is not None and entry.project_id not in scope and entry.applicant_user_id != user.id:
+        raise HTTPException(403, "PROJECT_OUT_OF_SCOPE")
+    return user
+
+
+def same_month_labor_entries(db: Session, entry: ProjectCostEntry) -> int:
+    """同一项目同一核算月份的其他人工成本笔数，用于录入提示而不阻止录入。"""
+    if entry.entry_kind != "PERSONNEL_COST" or not entry.accounting_month:
+        return 0
+    return int(
+        db.scalar(
+            select(func.count(ProjectCostEntry.id)).where(
+                ProjectCostEntry.entry_kind == "PERSONNEL_COST",
+                ProjectCostEntry.project_id == entry.project_id,
+                ProjectCostEntry.accounting_month == entry.accounting_month,
+                ProjectCostEntry.status != "REVERSED",
+                ProjectCostEntry.id != entry.id,
+            )
+        )
+        or 0
+    )
+
+
+def cost_entry_view(db: Session, entry: ProjectCostEntry, viewer: User | None = None) -> ProjectCostEntryView:
+    project = db.get(Project, entry.project_id)
+    submitter = db.get(User, entry.submitted_by) if entry.submitted_by else None
+    reviewer = db.get(User, entry.reviewed_by) if entry.reviewed_by else None
+    can_edit = bool(
+        viewer
+        and entry.status in EDITABLE_COST_ENTRY_STATUSES
+        and (
+            entry.applicant_user_id == viewer.id
+            or "EDIT" in effective_permission_details(db, viewer.id).get(cost_entry_resource(entry.entry_kind), {}).get("actions", [])
+        )
+    )
+    return ProjectCostEntryView(
+        id=entry.id,
+        cost_no=entry.cost_no,
+        entry_kind=entry.entry_kind,
+        project_id=entry.project_id,
+        project_name=project.name if project else "",
+        project_code=project.code if project else "",
+        applicant_user_id=entry.applicant_user_id,
+        applicant_name=entry.applicant_name or "",
+        applicant_department_name=entry.applicant_department_name,
+        budget_item_id=entry.budget_item_id,
+        budget_item_name=entry.budget_item_name_snapshot,
+        cost_major=entry.cost_major_snapshot,
+        cost_minor=entry.cost_minor_snapshot,
+        amount=float(entry.amount or 0),
+        occurred_on=entry.occurred_on,
+        accounting_month=entry.accounting_month,
+        description=entry.description,
+        status=entry.status,
+        version=entry.version,
+        submitted_by=entry.submitted_by,
+        submitted_by_name=submitter.name if submitter else None,
+        submitted_at=entry.submitted_at,
+        reviewed_by=entry.reviewed_by,
+        reviewed_by_name=reviewer.name if reviewer else None,
+        reviewed_at=entry.reviewed_at,
+        review_comment=entry.review_comment,
+        created_at=entry.created_at,
+        attachments=cost_entry_attachment_views(db, entry.id),
+        can_edit=can_edit,
+        can_review=bool(viewer) and entry.status == "PENDING_REVIEW" and cost_can_review(db, viewer),
+        can_reverse=bool(viewer) and entry.status == "APPROVED" and (
+            cost_can_review(db, viewer)
+            or "REVERSE" in effective_permission_details(db, viewer.id).get(cost_entry_resource(entry.entry_kind), {}).get("actions", [])
+        ),
+        same_month_count=same_month_labor_entries(db, entry),
+    )
+
+
+def cost_entry_query(
+    db: Session,
+    user: User,
+    *,
+    entry_kind: str | None = None,
+    project_id: int | None = None,
+    status: str | None = None,
+    department_id: int | None = None,
+    applicant_user_id: int | None = None,
+    accounting_month: str | None = None,
+    cost_major: str | None = None,
+    cost_minor: str | None = None,
+    period_start: date | None = None,
+    period_end: date | None = None,
+    data_scope: str = "ALL",
+) -> list[ProjectCostEntry]:
+    """按筛选条件读取成本单；数据范围沿用角色配置。"""
+    query = select(ProjectCostEntry)
+    if entry_kind:
+        query = query.where(ProjectCostEntry.entry_kind == project_cost_kind(entry_kind))
+    if data_scope == "OWNED":
+        query = query.where(ProjectCostEntry.applicant_user_id == user.id)
+    else:
+        resource = cost_entry_resource(entry_kind) if entry_kind else "project_expenses"
+        scope = project_scope_ids(db, user, resource)
+        if scope is not None:
+            query = query.where(ProjectCostEntry.project_id.in_(scope or {-1}))
+    if project_id:
+        query = query.where(ProjectCostEntry.project_id == project_id)
+    if status:
+        query = query.where(ProjectCostEntry.status == status)
+    if applicant_user_id:
+        query = query.where(ProjectCostEntry.applicant_user_id == applicant_user_id)
+    if accounting_month:
+        query = query.where(ProjectCostEntry.accounting_month == accounting_month)
+    if cost_major:
+        query = query.where(ProjectCostEntry.cost_major_snapshot == cost_major)
+    if cost_minor:
+        query = query.where(ProjectCostEntry.cost_minor_snapshot == cost_minor)
+    if period_start:
+        query = query.where(func.coalesce(ProjectCostEntry.occurred_on, ProjectCostEntry.created_at) >= period_start)
+    if period_end:
+        query = query.where(func.coalesce(ProjectCostEntry.occurred_on, ProjectCostEntry.created_at) <= period_end)
+    if department_id:
+        index = DepartmentIndex(db.scalars(select(Department)).all())
+        department_ids = index.descendants(department_id)
+        if not department_ids:
+            raise HTTPException(400, "INVALID_DEPARTMENT")
+        query = query.where(ProjectCostEntry.project_id.in_(select(Project.id).where(Project.department_id.in_(department_ids))))
+    return list(db.scalars(query.order_by(ProjectCostEntry.id.desc())).all())
+
+
+@app.get("/api/v1/project-cost-entries", response_model=ProjectCostEntryPage)
+def list_project_cost_entries(
+    entry_kind: str = Query(default="PROJECT_EXPENSE"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    project_id: int | None = Query(default=None, gt=0),
+    status: str | None = None,
+    department_id: int | None = Query(default=None, gt=0),
+    applicant_user_id: int | None = Query(default=None, gt=0),
+    accounting_month: str | None = None,
+    cost_major: str | None = None,
+    cost_minor: str | None = None,
+    period_start: date | None = None,
+    period_end: date | None = None,
+    data_scope: str = Query(default="ALL", pattern="^(OWNED|ALL)$"),
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> ProjectCostEntryPage:
+    """项目费用与人工成本结转共用列表接口，按 entry_kind 区分。"""
+    user = current_user(db, x_demo_user_id)
+    require_access(db, cost_entry_resource(entry_kind), "VIEW", x_demo_user_id)
+    rows = cost_entry_query(
+        db,
+        user,
+        entry_kind=entry_kind,
+        project_id=project_id,
+        status=status,
+        department_id=department_id,
+        applicant_user_id=applicant_user_id,
+        accounting_month=accounting_month,
+        cost_major=cost_major,
+        cost_minor=cost_minor,
+        period_start=period_start,
+        period_end=period_end,
+        data_scope=data_scope,
+    )
+    total = len(rows)
+    page_count = max(1, (total + page_size - 1) // page_size)
+    start = (page - 1) * page_size
+    items = [cost_entry_view(db, item, user) for item in rows[start : start + page_size]]
+    summary = {
+        "total_amount": round(sum(float(item.amount or 0) for item in rows if item.status == "APPROVED"), 2),
+        "pending_amount": round(sum(float(item.amount or 0) for item in rows if item.status == "PENDING_REVIEW"), 2),
+        "approved_count": float(sum(1 for item in rows if item.status == "APPROVED")),
+        "pending_count": float(sum(1 for item in rows if item.status == "PENDING_REVIEW")),
+    }
+    return ProjectCostEntryPage(items=items, total=total, page=page, page_size=page_size, page_count=page_count, summary=summary)
+
+
+@app.post("/api/v1/project-cost-entries", response_model=ProjectCostEntryView, status_code=201)
+def create_project_cost_entry(payload: ProjectCostEntryCreate, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ProjectCostEntryView:
+    """新增项目费用或人工成本结转草稿；复核通过前不参与项目成本口径。"""
+    entry_kind = project_cost_kind(payload.entry_kind)
+    resource = PROJECT_COST_KIND_RESOURCES[entry_kind]
+    user = require_admin_permission(db, resource, x_demo_user_id)
+    require_access(db, resource, "CREATE", x_demo_user_id)
+    project = ensure_cost_entry_scope(db, user, payload.project_id, entry_kind)
+    item = resolve_cost_entry_budget_item(db, entry_kind, payload.project_id, payload.budget_item_id)
+    entry = ProjectCostEntry(
+        cost_no=next_document_no(db, ProjectCostEntry, PROJECT_COST_KIND_PREFIXES[entry_kind]),
+        entry_kind=entry_kind,
+        project_id=payload.project_id,
+        applicant_user_id=user.id,
+        applicant_name=user.name,
+        applicant_department_name=DepartmentIndex(db.scalars(select(Department)).all()).path(user.department_id),
+        amount=payload.amount,
+        occurred_on=payload.occurred_on,
+        accounting_month=payload.accounting_month,
+        description=(payload.description or "").strip() or None,
+        status="DRAFT",
+        version=1,
+    )
+    apply_cost_entry_snapshot(entry, item, payload.cost_minor)
+    db.add(entry)
+    db.flush()
+    audit(db, "project_cost_entry", entry.id, "CREATE", user.id, None, "DRAFT", f"{PROJECT_COST_KIND_LABELS[entry_kind]} · {project.name}")
+    db.commit()
+    db.refresh(entry)
+    return cost_entry_view(db, entry, user)
+
+
+@app.get("/api/v1/project-cost-entries/{entry_id}", response_model=ProjectCostEntryView)
+def get_project_cost_entry(entry_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ProjectCostEntryView:
+    entry = db.get(ProjectCostEntry, entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    user = cost_entry_access(db, entry, x_demo_user_id)
+    return cost_entry_view(db, entry, user)
+
+
+@app.patch("/api/v1/project-cost-entries/{entry_id}", response_model=ProjectCostEntryView)
+def update_project_cost_entry(entry_id: int, payload: ProjectCostEntryUpdate, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ProjectCostEntryView:
+    """修改草稿或被驳回的成本单；复核中和已通过的单据只读。"""
+    entry = db.get(ProjectCostEntry, entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    user = cost_entry_access(db, entry, x_demo_user_id, action="EDIT")
+    if entry.status not in EDITABLE_COST_ENTRY_STATUSES:
+        raise HTTPException(409, "PROJECT_COST_ENTRY_READ_ONLY")
+    if payload.version != entry.version:
+        raise HTTPException(409, "PROJECT_COST_ENTRY_VERSION_CONFLICT")
+    if payload.entry_kind and project_cost_kind(payload.entry_kind) != entry.entry_kind:
+        raise HTTPException(400, "COST_ENTRY_KIND_IMMUTABLE")
+    ensure_cost_entry_scope(db, user, payload.project_id, entry.entry_kind)
+    item = resolve_cost_entry_budget_item(db, entry.entry_kind, payload.project_id, payload.budget_item_id)
+    entry.project_id = payload.project_id
+    entry.amount = payload.amount
+    entry.occurred_on = payload.occurred_on
+    entry.accounting_month = payload.accounting_month
+    entry.description = (payload.description or "").strip() or None
+    apply_cost_entry_snapshot(entry, item, payload.cost_minor)
+    entry.version += 1
+    audit(db, "project_cost_entry", entry.id, "UPDATE", user.id, entry.status, entry.status)
+    db.commit()
+    db.refresh(entry)
+    return cost_entry_view(db, entry, user)
+
+
+@app.delete("/api/v1/project-cost-entries/{entry_id}")
+def delete_project_cost_entry(entry_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
+    """只允许删除草稿或被驳回的成本单；已产生流水的单据必须走冲销。"""
+    entry = db.get(ProjectCostEntry, entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    user = cost_entry_access(db, entry, x_demo_user_id, action="DELETE")
+    if entry.status not in EDITABLE_COST_ENTRY_STATUSES:
+        raise HTTPException(409, "PROJECT_COST_ENTRY_READ_ONLY")
+    attachments = list(db.scalars(select(ProjectCostAttachment).where(ProjectCostAttachment.entry_id == entry.id)).all())
+    paths = [cost_attachment_path(item) for item in attachments]
+    for item in attachments:
+        db.delete(item)
+    audit(db, "project_cost_entry", entry.id, "DELETE", user.id, entry.status, None, entry.cost_no)
+    db.delete(entry)
+    db.commit()
+    for path in paths:
+        if path.exists():
+            path.unlink()
+    return {"deleted": True, "entry_id": entry_id}
+
+
+@app.post("/api/v1/project-cost-entries/{entry_id}/submit", response_model=ProjectCostEntryView)
+def submit_project_cost_entry(entry_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ProjectCostEntryView:
+    """提交一级费用复核，并通知费用复核岗位全部有效成员。"""
+    entry = db.get(ProjectCostEntry, entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    resource = cost_entry_resource(entry.entry_kind)
+    user = cost_entry_access(db, entry, x_demo_user_id, action="EDIT")
+    if entry.status not in EDITABLE_COST_ENTRY_STATUSES:
+        raise HTTPException(409, "PROJECT_COST_ENTRY_NOT_RESUBMITTABLE")
+    if float(entry.amount or 0) <= 0:
+        raise HTTPException(400, "PROJECT_COST_ENTRY_AMOUNT_REQUIRED")
+    if not cost_entry_attachment_views(db, entry.id):
+        raise HTTPException(400, "PROJECT_COST_ENTRY_ATTACHMENT_REQUIRED")
+    old_status = entry.status
+    entry.submitted_by = user.id
+    entry.submitted_at = now_local()
+    entry.reviewed_by = None
+    entry.reviewed_at = None
+    entry.review_comment = None
+    entry.version += 1
+    entry.status = "PENDING_REVIEW"
+    project = db.get(Project, entry.project_id)
+    audit(db, "project_cost_entry", entry.id, "SUBMIT", user.id, old_status, "PENDING_REVIEW")
+    db.commit()
+    kind = entry.entry_kind
+    notify_cost_review_submitted(
+        db,
+        source_type=f"project_cost_{kind.lower()}",
+        source_id=entry.id,
+        version=entry.version,
+        notification_type=PROJECT_COST_KIND_NOTIFICATIONS[kind],
+        document_label=PROJECT_COST_KIND_LABELS[kind],
+        serial_no=entry.cost_no,
+        project_name=project.name if project else "",
+        amount=float(entry.amount),
+        submitter_name=user.name,
+        page=PROJECT_COST_KIND_PAGES[kind],
+    )
+    db.commit()
+    db.refresh(entry)
+    require_access(db, resource, "VIEW", x_demo_user_id)
+    return cost_entry_view(db, entry, user)
+
+
+@app.post("/api/v1/project-cost-entries/{entry_id}/approve", response_model=ProjectCostEntryView)
+def approve_project_cost_entry(entry_id: int, payload: ProjectCostReviewAction, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ProjectCostEntryView:
+    """一级费用复核通过：写项目流水并计入项目成本，记录实际复核人。"""
+    user = require_cost_reviewer(db, x_demo_user_id)
+    entry = db.get(ProjectCostEntry, entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    if entry.status != "PENDING_REVIEW":
+        raise HTTPException(409, "PROJECT_COST_ENTRY_NOT_PENDING_REVIEW")
+    entry.status = "APPROVED"
+    entry.reviewed_by = user.id
+    entry.reviewed_at = now_local()
+    entry.review_comment = payload.comment
+    budget_item = db.get(ProjectBudgetItem, entry.budget_item_id) if entry.budget_item_id else None
+    add_ledger_entry(
+        db,
+        entry.project_id,
+        PROJECT_COST_LEDGER_TYPES[entry.entry_kind],
+        "PROJECT_COST_ENTRY",
+        entry.id,
+        float(entry.amount),
+        occurred_on=entry.occurred_on or today_local(),
+        budget_item=budget_item,
+    )
+    audit(db, "project_cost_entry", entry.id, "APPROVE", user.id, "PENDING_REVIEW", "APPROVED")
+    db.commit()
+    db.refresh(entry)
+    project = db.get(Project, entry.project_id)
+    notify_cost_review_result(
+        db,
+        source_type=f"project_cost_{entry.entry_kind.lower()}",
+        source_id=entry.id,
+        version=entry.version,
+        recipient_user_id=entry.applicant_user_id,
+        document_label=PROJECT_COST_KIND_LABELS[entry.entry_kind],
+        serial_no=entry.cost_no,
+        project_name=project.name if project else "",
+        amount=float(entry.amount),
+        status_label="复核通过",
+        page=PROJECT_COST_KIND_PAGES[entry.entry_kind],
+        actor_name=user.name,
+    )
+    db.commit()
+    return cost_entry_view(db, entry, user)
+
+
+@app.post("/api/v1/project-cost-entries/{entry_id}/reject", response_model=ProjectCostEntryView)
+def reject_project_cost_entry(entry_id: int, payload: ProjectCostRejectAction, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ProjectCostEntryView:
+    """一级费用复核驳回：驳回不计入项目成本，申请人可修改后重新提交。"""
+    user = require_cost_reviewer(db, x_demo_user_id)
+    entry = db.get(ProjectCostEntry, entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    if entry.status != "PENDING_REVIEW":
+        raise HTTPException(409, "PROJECT_COST_ENTRY_NOT_PENDING_REVIEW")
+    entry.status = "REJECTED"
+    entry.reviewed_by = user.id
+    entry.reviewed_at = now_local()
+    entry.review_comment = payload.reason
+    audit(db, "project_cost_entry", entry.id, "REJECT", user.id, "PENDING_REVIEW", "REJECTED", payload.reason)
+    db.commit()
+    db.refresh(entry)
+    project = db.get(Project, entry.project_id)
+    notify_cost_review_result(
+        db,
+        source_type=f"project_cost_{entry.entry_kind.lower()}",
+        source_id=entry.id,
+        version=entry.version,
+        recipient_user_id=entry.applicant_user_id,
+        document_label=PROJECT_COST_KIND_LABELS[entry.entry_kind],
+        serial_no=entry.cost_no,
+        project_name=project.name if project else "",
+        amount=float(entry.amount),
+        status_label="复核驳回",
+        page=PROJECT_COST_KIND_PAGES[entry.entry_kind],
+        actor_name=user.name,
+    )
+    db.commit()
+    return cost_entry_view(db, entry, user)
+
+
+@app.post("/api/v1/project-cost-entries/{entry_id}/reverse", response_model=ProjectCostEntryView)
+def reverse_project_cost_entry(entry_id: int, payload: ProjectCostReversalAction, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ProjectCostEntryView:
+    """冲销已通过的成本单：追加反向流水，原流水保留便于追溯。"""
+    user = require_cost_reviewer(db, x_demo_user_id)
+    entry = db.get(ProjectCostEntry, entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    if entry.status != "APPROVED":
+        raise HTTPException(409, "PROJECT_COST_ENTRY_NOT_APPROVED")
+    entry.status = "REVERSED"
+    entry.review_comment = payload.reason or entry.review_comment
+    original_entry = db.scalar(
+        select(ProjectLedgerEntry.id).where(
+            ProjectLedgerEntry.source_type == "PROJECT_COST_ENTRY",
+            ProjectLedgerEntry.source_id == entry.id,
+            ProjectLedgerEntry.entry_type == PROJECT_COST_LEDGER_TYPES[entry.entry_kind],
+        )
+    )
+    add_ledger_entry(
+        db,
+        entry.project_id,
+        "REVERSAL",
+        "PROJECT_COST_ENTRY",
+        entry.id,
+        float(entry.amount),
+        occurred_on=today_local(),
+        reversal_of_id=original_entry,
+        budget_item=db.get(ProjectBudgetItem, entry.budget_item_id) if entry.budget_item_id else None,
+    )
+    audit(db, "project_cost_entry", entry.id, "REVERSE", user.id, "APPROVED", "REVERSED", payload.reason)
+    db.commit()
+    db.refresh(entry)
+    return cost_entry_view(db, entry, user)
+
+
+@app.get("/api/v1/project-cost-entries/{entry_id}/attachments", response_model=list[ProjectCostAttachmentView])
+def list_project_cost_attachments(entry_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> list[ProjectCostAttachmentView]:
+    entry = db.get(ProjectCostEntry, entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    cost_entry_access(db, entry, x_demo_user_id)
+    return cost_entry_attachment_views(db, entry.id)
+
+
+@app.post("/api/v1/project-cost-entries/{entry_id}/attachments", response_model=ProjectCostAttachmentView, status_code=201)
+async def upload_project_cost_attachment(entry_id: int, file: UploadFile = File(...), x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ProjectCostAttachmentView:
+    entry = db.get(ProjectCostEntry, entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    user = cost_entry_access(db, entry, x_demo_user_id, action="EDIT")
+    if entry.status not in EDITABLE_COST_ENTRY_STATUSES:
+        raise HTTPException(409, "PROJECT_COST_ENTRY_READ_ONLY")
+    original_name = Path(file.filename or "").name
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in CONTRACT_ATTACHMENT_EXTENSIONS:
+        raise HTTPException(400, "ATTACHMENT_TYPE_NOT_ALLOWED")
+    content = await file.read(20 * 1024 * 1024 + 1)
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(413, "ATTACHMENT_TOO_LARGE")
+    storage_name = f"{secrets.token_hex(20)}{suffix}"
+    destination = cost_attachment_root() / storage_name
+    destination.write_bytes(content)
+    attachment = ProjectCostAttachment(
+        entry_id=entry.id,
+        file_name=original_name[:300],
+        storage_name=storage_name,
+        mime_type=(file.content_type or CONTRACT_ATTACHMENT_EXTENSIONS[suffix])[:160],
+        file_size=len(content),
+        uploaded_by=user.id,
+    )
+    db.add(attachment)
+    db.flush()
+    audit(db, "project_cost_attachment", attachment.id, "CREATE", user.id, None, None, f"上传附件：{attachment.file_name}")
+    db.commit()
+    db.refresh(attachment)
+    return cost_attachment_view(db, attachment)
+
+
+@app.delete("/api/v1/project-cost-attachments/{attachment_id}")
+def delete_project_cost_attachment(attachment_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
+    attachment = db.get(ProjectCostAttachment, attachment_id)
+    if not attachment:
+        raise HTTPException(404, "PROJECT_COST_ATTACHMENT_NOT_FOUND")
+    entry = db.get(ProjectCostEntry, attachment.entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    user = cost_entry_access(db, entry, x_demo_user_id, action="EDIT")
+    if entry.status not in EDITABLE_COST_ENTRY_STATUSES:
+        raise HTTPException(409, "PROJECT_COST_ENTRY_READ_ONLY")
+    path = cost_attachment_path(attachment)
+    db.delete(attachment)
+    audit(db, "project_cost_attachment", attachment.id, "DELETE", user.id, None, None, f"删除附件：{attachment.file_name}")
+    db.commit()
+    if path.exists():
+        path.unlink()
+    return {"deleted": True, "attachment_id": attachment_id}
+
+
+@app.get("/api/v1/project-cost-attachments/{attachment_id}/preview", response_model=None)
+def preview_project_cost_attachment(attachment_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> HTMLResponse | FileResponse:
+    attachment = db.get(ProjectCostAttachment, attachment_id)
+    if not attachment:
+        raise HTTPException(404, "PROJECT_COST_ATTACHMENT_NOT_FOUND")
+    entry = db.get(ProjectCostEntry, attachment.entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    cost_entry_access(db, entry, x_demo_user_id)
+    path = cost_attachment_path(attachment)
+    if not path.exists():
+        raise HTTPException(404, "PROJECT_COST_ATTACHMENT_FILE_NOT_FOUND")
+    kind = attachment_preview_kind(attachment.file_name)
+    if kind in {"word", "excel", "powerpoint"}:
+        try:
+            preview_path, preview_dir = _convert_office_to_pdf(path)
+            return FileResponse(preview_path, media_type="application/pdf", headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(attachment.file_name)}.pdf"}, background=BackgroundTask(shutil.rmtree, preview_dir, ignore_errors=True))
+        except (OSError, RuntimeError, subprocess.SubprocessError, ValueError):
+            if Path(attachment.file_name).suffix.lower() in {".docx", ".xlsx", ".pptx"}:
+                return HTMLResponse(render_contract_office_preview(attachment, path))
+            raise HTTPException(422, "ATTACHMENT_PREVIEW_FAILED")
+    return FileResponse(path, media_type=attachment.mime_type, headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(attachment.file_name)}"})
+
+
+@app.get("/api/v1/project-cost-attachments/{attachment_id}/download")
+def download_project_cost_attachment(attachment_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> FileResponse:
+    attachment = db.get(ProjectCostAttachment, attachment_id)
+    if not attachment:
+        raise HTTPException(404, "PROJECT_COST_ATTACHMENT_NOT_FOUND")
+    entry = db.get(ProjectCostEntry, attachment.entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    cost_entry_access(db, entry, x_demo_user_id)
+    path = cost_attachment_path(attachment)
+    if not path.exists():
+        raise HTTPException(404, "PROJECT_COST_ATTACHMENT_FILE_NOT_FOUND")
+    return FileResponse(path, media_type=attachment.mime_type, headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(attachment.file_name)}"})
+
+
+def cost_review_items(db: Session, entries: list[ProjectCostEntry]) -> list[CostReviewItem]:
+    items: list[CostReviewItem] = []
+    for entry in entries:
+        project = db.get(Project, entry.project_id)
+        reviewer = db.get(User, entry.reviewed_by) if entry.reviewed_by else None
+        items.append(
+            CostReviewItem(
+                kind=entry.entry_kind,
+                entry_id=entry.id,
+                document_no=entry.cost_no,
+                document_label=PROJECT_COST_KIND_LABELS.get(entry.entry_kind, entry.entry_kind),
+                project_id=entry.project_id,
+                project_name=project.name if project else "",
+                project_code=project.code if project else "",
+                budget_item_name=entry.budget_item_name_snapshot,
+                cost_major=entry.cost_major_snapshot,
+                cost_minor=entry.cost_minor_snapshot,
+                amount=float(entry.amount or 0),
+                occurred_on=entry.occurred_on,
+                accounting_month=entry.accounting_month,
+                applicant_name=entry.applicant_name or "",
+                status=entry.status,
+                submitted_at=entry.submitted_at,
+                reviewed_by_name=reviewer.name if reviewer else None,
+                reviewed_at=entry.reviewed_at,
+                review_comment=entry.review_comment,
+                description=entry.description,
+            )
+        )
+    return items
+
+
+@app.get("/api/v1/cost-review", response_model=CostReviewPage)
+def list_cost_review(
+    tab: str = Query(default="pending", pattern="^(pending|processed|all)$"),
+    kind: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    project_id: int | None = Query(default=None, gt=0),
+    department_id: int | None = Query(default=None, gt=0),
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> CostReviewPage:
+    """费用复核统一待办：合同付款、项目费用、人工成本结转三类单据合并展示。"""
+    require_access(db, COST_REVIEW_RESOURCE, "VIEW", x_demo_user_id)
+    wanted = (kind or "").strip().upper()
+    if wanted and wanted not in {"PROJECT_EXPENSE", "PERSONNEL_COST", "PAYMENT"}:
+        raise HTTPException(400, "COST_ENTRY_KIND_INVALID")
+    entry_kinds = (
+        [wanted] if wanted in {"PROJECT_EXPENSE", "PERSONNEL_COST"}
+        else ([] if wanted == "PAYMENT" else ["PROJECT_EXPENSE", "PERSONNEL_COST"])
+    )
+    # 费用复核是岗位制全局职责：待办按复核权限收敛，不再叠加项目数据范围，
+    # 否则只是被纳入复核岗位、没有业务角色的人会看不到任何待办。
+    cost_entries: list[ProjectCostEntry] = []
+    for entry_kind in entry_kinds:
+        query = select(ProjectCostEntry).where(ProjectCostEntry.entry_kind == entry_kind)
+        cost_entries.extend(db.scalars(query.order_by(ProjectCostEntry.id.desc())).all())
+
+    payments: list[Payment] = []
+    if not wanted or wanted == "PAYMENT":
+        payments = list(db.scalars(select(Payment).order_by(Payment.id.desc())).all())
+
+    if project_id:
+        cost_entries = [item for item in cost_entries if item.project_id == project_id]
+        payments = [item for item in payments if item.project_id == project_id]
+    if department_id:
+        index = DepartmentIndex(db.scalars(select(Department)).all())
+        department_ids = index.descendants(department_id)
+        if not department_ids:
+            raise HTTPException(400, "INVALID_DEPARTMENT")
+        allowed = {item.id for item in db.scalars(select(Project).where(Project.department_id.in_(department_ids))).all()}
+        cost_entries = [item for item in cost_entries if item.project_id in allowed]
+        payments = [item for item in payments if item.project_id in allowed]
+
+    rows = cost_review_items(db, cost_entries)
+    # 合同付款复用付款单表，按同一形状并入统一待办。
+    for payment in payments:
+        project = db.get(Project, payment.project_id)
+        reviewer = db.get(User, payment.approved_by) if payment.approved_by else None
+        rows.append(
+            CostReviewItem(
+                kind="PAYMENT",
+                entry_id=payment.id,
+                document_no=payment.payment_no,
+                document_label="合同付款单",
+                project_id=payment.project_id,
+                project_name=project.name if project else "",
+                project_code=project.code if project else "",
+                budget_item_name=payment.budget_item_name_snapshot,
+                cost_major=payment.cost_major_snapshot,
+                cost_minor=payment.cost_minor_snapshot,
+                amount=float(payment.amount or 0),
+                occurred_on=payment.payment_date,
+                applicant_name=(
+                    db.get(User, payment.submitted_by).name
+                    if payment.submitted_by and db.get(User, payment.submitted_by)
+                    else ""
+                ),
+                status=payment.status,
+                submitted_at=payment.submitted_at,
+                reviewed_by_name=reviewer.name if reviewer else None,
+                reviewed_at=payment.approved_at,
+                review_comment=payment.comment,
+                description=None,
+            )
+        )
+
+    rows.sort(key=lambda item: (item.submitted_at or datetime.min, item.entry_id), reverse=True)
+    pending = [item for item in rows if item.status == "PENDING_REVIEW"]
+    processed = [item for item in rows if item.status in {"APPROVED", "REJECTED", "REVERSED"}]
+    if tab == "pending":
+        rows = pending
+    elif tab == "processed":
+        rows = processed
+    total = len(rows)
+    page_count = max(1, (total + page_size - 1) // page_size)
+    start = (page - 1) * page_size
+    return CostReviewPage(
+        tab=tab,
+        items=rows[start : start + page_size],
+        total=total,
+        page=page,
+        page_size=page_size,
+        page_count=page_count,
+        pending_count=len(pending),
+        processed_count=len(processed),
+    )
 
 
 def approval_position_view(db: Session, position: ApprovalPosition) -> ApprovalPositionView:
