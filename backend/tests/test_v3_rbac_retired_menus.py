@@ -64,7 +64,7 @@ class RetiredMenuGrantTest(unittest.TestCase):
 
     def test_budget_templates_is_retired(self):
         self.assertIn("budget_templates", m.RETIRED_MENU_SEED)
-        self.assertIn("personnel_costs", m.RETIRED_MENU_SEED)
+        self.assertIn("approval_workflows", m.RETIRED_MENU_SEED)
         menu = self.db.scalar(select(Menu).where(Menu.code == "budget_templates"))
         self.assertIsNotNone(menu)
         self.assertFalse(menu.is_active)
@@ -100,7 +100,7 @@ class RetiredMenuGrantTest(unittest.TestCase):
         db = self.db
         role = db.scalar(select(Role).order_by(Role.id))
         self.assertIsNotNone(role)
-        retired = _grant_retired_menu(db, role, "personnel_costs")
+        retired = _grant_retired_menu(db, role, "approval_workflows")
 
         m.drop_retired_menu_grants(db)
         db.commit()
@@ -142,7 +142,7 @@ class RetiredMenuGrantTest(unittest.TestCase):
             self.assertIn(created.status_code, (200, 201), created.text)
             role_id = created.json()["id"]
 
-            retired_code = self.db.scalar(select(Menu.code).where(Menu.code == "personnel_costs"))
+            retired_code = self.db.scalar(select(Menu.code).where(Menu.code == "approval_workflows"))
             payload = {
                 "permissions": [
                     {"menu_code": retired_code, "actions": ["VIEW"]},

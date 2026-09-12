@@ -88,9 +88,6 @@ from .schemas import (
     PaymentCreate,
     PaymentUpdate,
     PaymentView,
-    PersonnelCostUpdate,
-    PersonnelCostList,
-    PersonnelCostView,
     ProjectBoardOption,
     ProjectBoardRow,
     ProjectBudgetItemUpdate,
@@ -164,7 +161,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.67"
+API_VERSION = "3.0.68"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -197,15 +194,17 @@ RBAC_MENU_SEED = [
     ("admins", None, "管理员管理", "adminPermissions", 51, ["VIEW", "CONFIGURE"]),
     ("approval_positions", None, "复核岗位", "approvalPositions", 52, ["VIEW", "CONFIGURE"]),
     ("configuration", None, "基础配置", "configuration", 54, ["VIEW", "CREATE", "EDIT", "DELETE"]),
-    # 已退役菜单：仍保留在权限表里，历史接口与历史授权才能继续解析，仅从导航下线。
-    ("personnel_costs", None, "人员成本", "personnelCosts", 91, ["VIEW", "EDIT", "EXPORT"]),
+    # 已退役菜单：仍保留在权限表里，历史授权才能继续解析，仅从导航下线。
     ("approval_workflows", None, "审批流程", "approvalWorkflows", 92, ["VIEW", "CREATE", "EDIT", "PUBLISH", "DISABLE"]),
 ]
 # v3.0.59 起不再作为新单据入口的内置菜单：保留菜单行与授权，仅从导航下线。
 # 注意：这些 code 必须同时存在于 RBAC_MENU_SEED，否则历史授权行会因找不到菜单而解析失败。
 # project_budget（项目预算项）：预算项接口的鉴权实际走 projects，该菜单只在权限管理里多出一个
 # 勾选项，容易让人以为预算项需要单独授权，v3.0.66 起下线。
-RETIRED_MENU_SEED = ["personnel_costs", "approval_workflows", "budget_templates", "project_budget"]
+RETIRED_MENU_SEED = ["approval_workflows", "budget_templates", "project_budget"]
+# v3.0.68 起彻底删除的功能入口：菜单行与其全部授权一次性清理，不再出现在任何位置。
+# personnel_costs（人员成本）：日成本折算在 v3.0.61 已由人工成本结转单取代，功能整体删除。
+PURGED_MENU_SEED = ["personnel_costs"]
 RBAC_ROLE_SEED = {
     "system_admin": ("系统管理员", "拥有全部菜单、操作和数据范围", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED}, "ALL"),
     "project_manager": ("项目经营管理员", "维护项目经营主数据、预算、成本和收付款", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED if code in {"projects", "project_budget", "contracts", "receipts", "payments", "project_expenses", "labor_costs", "cost_review", "project_board", "counterparties"}}, "ALL"),
@@ -1049,6 +1048,21 @@ def drop_retired_menu_grants(db: Session) -> None:
     db.query(UserRoleScope).filter(UserRoleScope.resource.in_(RETIRED_MENU_SEED)).delete(synchronize_session=False)
 
 
+def purge_personnel_cost_menu(db: Session) -> None:
+    """删除「人员成本」菜单行及其全部授权。
+
+    日成本折算在 v3.0.61 已由人工成本结转单取代，v3.0.68 起功能整体删除：
+    菜单行留着只会让权限管理多出一个无意义的勾选项。
+    """
+    menu_ids = [item.id for item in db.scalars(select(Menu).where(Menu.code.in_(PURGED_MENU_SEED))).all()]
+    if menu_ids:
+        db.query(RolePermission).filter(RolePermission.menu_id.in_(menu_ids)).delete(synchronize_session=False)
+    db.query(RoleDataScope).filter(RoleDataScope.resource.in_(PURGED_MENU_SEED)).delete(synchronize_session=False)
+    db.query(UserRoleScope).filter(UserRoleScope.resource.in_(PURGED_MENU_SEED)).delete(synchronize_session=False)
+    if menu_ids:
+        db.query(Menu).filter(Menu.id.in_(menu_ids)).delete(synchronize_session=False)
+
+
 def _json_list(value: str | None) -> list[str]:
     """读取权限 JSON；旧数据损坏时按空权限处理，避免阻断应用启动。"""
     try:
@@ -1272,8 +1286,15 @@ def upgrade_schema() -> None:
         "project_ledger_entries": ["cost_major_snapshot", "cost_minor_snapshot"],
         "project_cost_entries": ["cost_major_snapshot", "cost_minor_snapshot"],
     }
+    # 人工成本已完全由「人工成本结转单」承担，日成本口径连同旧「人员成本」模块一并删除。
+    retired_personnel_cost_columns = {
+        "users": ["daily_cost"],
+        "worklogs": ["daily_cost_snapshot", "cost_amount_snapshot"],
+        "admin_permissions": ["can_manage_personnel_costs"],
+    }
     additions = {
-        "users": [("open_id", "VARCHAR(128)"), ("email", "VARCHAR(200)"), ("daily_cost", "NUMERIC(10, 2)"), ("snapshot_at", "DATETIME")],
+        # daily_cost 等列已下线，见 retired_personnel_cost_columns。
+        "users": [("open_id", "VARCHAR(128)"), ("email", "VARCHAR(200)"), ("snapshot_at", "DATETIME")],
         "departments": [("parent_feishu_department_id", "VARCHAR(64)")],
         "projects": [
             ("project_type", "VARCHAR(80) NOT NULL DEFAULT 'RND_PROJECT'"),
@@ -1385,8 +1406,7 @@ def upgrade_schema() -> None:
             ("rejection_reason", "TEXT"),
             ("approval_comment", "TEXT"),
             ("approval_version", "INTEGER NOT NULL DEFAULT 0"),
-            ("daily_cost_snapshot", "NUMERIC(10, 2)"),
-            ("cost_amount_snapshot", "NUMERIC(14, 2)"),
+            # daily_cost_snapshot / cost_amount_snapshot 已下线，见 retired_personnel_cost_columns。
             ("last_notified_at", "DATETIME"),
         ],
         "system_notifications": [
@@ -1445,6 +1465,13 @@ def upgrade_schema() -> None:
                 if name not in existing:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
         for table, columns in retired_cost_classification_columns.items():
+            if not inspect(engine).has_table(table):
+                continue
+            existing = {column["name"] for column in inspect(engine).get_columns(table)}
+            for name in columns:
+                if name in existing:
+                    connection.execute(text(f'ALTER TABLE "{table}" DROP COLUMN "{name}"'))
+        for table, columns in retired_personnel_cost_columns.items():
             if not inspect(engine).has_table(table):
                 continue
             existing = {column["name"] for column in inspect(engine).get_columns(table)}
@@ -1579,6 +1606,7 @@ def seed_data() -> None:
         seed_approval_workflows(db)
         disable_retired_menus(db)
         drop_retired_menu_grants(db)
+        purge_personnel_cost_menu(db)
         grant_cost_review_permissions(db)
         normalize_project_categories(db)
         ensure_all_project_budget_items(db)
@@ -3204,13 +3232,6 @@ def org_department_view(department: Department) -> OrgDepartmentView:
     """组装组织部门选择项，仅暴露本地组织快照字段。"""
     # 单个部门对象无法解析祖先，调用方会在批量列表中补充完整路径。
     return OrgDepartmentView(id=department.id, feishu_department_id=department.feishu_department_id, name=department.name, parent_name=department.parent_name, is_active=department.is_active)
-
-
-def personnel_cost_view(db: Session, user: User) -> PersonnelCostView:
-    """组装管理员人员成本维护行，成本字段不暴露给普通组织接口。"""
-    department = db.get(Department, user.department_id) if user.department_id else None
-    index = DepartmentIndex(db.scalars(select(Department)).all())
-    return PersonnelCostView(id=user.id, name=user.name, department_name=index.path(department.id if department else None), daily_cost=float(user.daily_cost) if user.daily_cost is not None else None)
 
 
 def active_org_user(db: Session, user_id: int) -> User:
@@ -6995,64 +7016,6 @@ def export_admin_worklogs(
     return StreamingResponse(iter([output.getvalue().encode("utf-8-sig")]), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
-@app.get("/api/v1/admin/personnel-costs", response_model=PersonnelCostList)
-def list_personnel_costs(
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=200),
-    department_id: int | None = Query(default=None, gt=0),
-    department_name: str | None = Query(default=None),
-    user_id: int | None = Query(default=None, gt=0),
-    configured_only: bool = Query(default=False),
-    x_demo_user_id: int | None = Header(default=None),
-    db: Session = Depends(get_db),
-) -> PersonnelCostList:
-    """管理员分页读取组织用户的单天成本配置。"""
-    require_admin_permission(db, "personnel_costs", x_demo_user_id)
-    department_index = DepartmentIndex(db.scalars(select(Department)).all())
-    selected_department_id = department_index.resolve(department_id, department_name)
-    selected_department_ids = department_index.descendants(selected_department_id) if selected_department_id else set()
-    query = select(User).outerjoin(Department, User.department_id == Department.id).where(User.employment_status == "ACTIVE")
-    if configured_only:
-        query = query.where(User.daily_cost.is_not(None))
-    if selected_department_ids:
-        query = query.where(User.department_id.in_(selected_department_ids))
-    if user_id:
-        query = query.where(User.id == user_id)
-    users = db.scalars(query.order_by(User.name, User.id)).all()
-    total = len(users)
-    page_count = max(1, (total + page_size - 1) // page_size)
-    page = min(page, page_count)
-    page_items = users[(page - 1) * page_size:page * page_size]
-    department_options = department_index.options(active_only=True)
-    configured_costs = [float(user.daily_cost) for user in users if user.daily_cost is not None]
-    configured_user_ids = db.scalars(select(User.id).where(User.employment_status == "ACTIVE", User.daily_cost.is_not(None))).all()
-    return PersonnelCostList(
-        items=[personnel_cost_view(db, user) for user in page_items],
-        total=total,
-        page=page,
-        page_size=page_size,
-        page_count=page_count,
-        department_options=department_options,
-        configured_user_ids=[int(user_id) for user_id in configured_user_ids],
-        summary={"configured_count": len(configured_costs), "unset_count": total - len(configured_costs), "total_daily_cost": round(sum(configured_costs), 2), "average_daily_cost": round(sum(configured_costs) / len(configured_costs), 2) if configured_costs else 0},
-    )
-
-
-@app.patch("/api/v1/admin/personnel-costs/{user_id}", response_model=PersonnelCostView)
-def update_personnel_cost(user_id: int, payload: PersonnelCostUpdate, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> PersonnelCostView:
-    """管理员维护组织用户单天成本；组织同步不会覆盖该字段。"""
-    require_admin_permission(db, "personnel_costs", x_demo_user_id)
-    require_access(db, "personnel_costs", "EDIT", x_demo_user_id)
-    user = db.get(User, user_id)
-    if not user or user.employment_status != "ACTIVE":
-        raise HTTPException(404, "USER_NOT_FOUND")
-    user.daily_cost = payload.daily_cost
-    audit(db, "user", user.id, "UPDATE_DAILY_COST", current_user(db, x_demo_user_id).id, None, None, str(payload.daily_cost) if payload.daily_cost is not None else "")
-    db.commit()
-    db.refresh(user)
-    return personnel_cost_view(db, user)
-
-
 @app.patch("/api/v1/admin/worklogs/{worklog_id}", response_model=AdminWorklogView)
 def update_admin_worklog(worklog_id: int, payload: WorklogUpdate, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> AdminWorklogView:
     """管理员修改工时内容，保留现有审批状态和审批任务。"""
@@ -7363,12 +7326,10 @@ def workload_report(
     all_rows = db.scalars(select(Worklog).where(Worklog.start_date >= start, Worklog.end_date <= end)).all()
     scoped_rows = [item for item in all_rows if item.unit == "DAY" and (not selected_department_ids or project_department_ids.get(item.project_id) in selected_department_ids)]
     approved_rows = [item for item in scoped_rows if item.status in {"APPROVED", "LOCKED"}]
-    users_by_id = {user.id: user for user in db.scalars(select(User)).all()}
     scoped_projects = [project for project in projects if project.status != "DELETED" and (not selected_department_ids or project.department_id in selected_department_ids)]
+    scoped_project_ids = {project.id for project in scoped_projects}
     project_actual_days: dict[int, float] = defaultdict(float)
-    project_actual_cost: dict[int, float] = defaultdict(float)
     department_actual_cost: dict[str, float] = defaultdict(float)
-    missing_cost_user_ids: set[int] = set()
     pending_count = sum(1 for item in scoped_rows if item.status == "PENDING_APPROVAL")
     status_counts: dict[str, int] = {}
     overdue_pending_count = 0
@@ -7397,13 +7358,6 @@ def workload_report(
         unit = "DAY"
         department = project_department.get(item.project_id, "未分配部门")
         project_actual_days[item.project_id] += quantity
-        person = users_by_id.get(item.user_id)
-        if person is None or person.daily_cost is None:
-            missing_cost_user_ids.add(item.user_id)
-        else:
-            cost = quantity * float(person.daily_cost)
-            project_actual_cost[item.project_id] += cost
-            department_actual_cost[department] += cost
         by_project[item.project_name_snapshot] = by_project.get(item.project_name_snapshot, 0) + quantity
         project_stage_key = (item.project_name_snapshot, item.stage)
         by_project_stage[project_stage_key] = by_project_stage.get(project_stage_key, 0) + quantity
@@ -7432,6 +7386,23 @@ def workload_report(
     def project_stage_unit_breakdown(values: dict[tuple[str, str, str], float]) -> list[dict[str, str | float]]:
         return [{"name": project, "stage": stage, "unit": unit, "quantity": round(quantity, 2)} for (project, stage, unit), quantity in sorted(values.items(), key=lambda pair: pair[1], reverse=True)]
 
+    # 人工成本一律以「人工成本结转单」为准，不再按日成本折算工时；
+    # 取数与项目明细保持一致，只统计期间内发生结转金额。
+    labor_cost_rows = db.scalars(
+        select(ProjectLedgerEntry).where(
+            ProjectLedgerEntry.entry_type == "PERSONNEL_COST",
+            ProjectLedgerEntry.occurred_on.is_not(None),
+            ProjectLedgerEntry.occurred_on >= start,
+            ProjectLedgerEntry.occurred_on <= end,
+        )
+    ).all()
+    project_actual_cost: dict[int, float] = defaultdict(float)
+    for row in labor_cost_rows:
+        if row.project_id in scoped_project_ids:
+            project_actual_cost[row.project_id] += float(row.amount or 0)
+    for project_id, cost in project_actual_cost.items():
+        department_actual_cost[project_department.get(project_id, "未分配部门")] += cost
+
     project_ids = {item.project_id for item in approved_rows}
     user_ids = {item.user_id for item in approved_rows}
     budget_days = sum(float(project.budget_days or 0) for project in scoped_projects)
@@ -7447,7 +7418,7 @@ def workload_report(
     over_budget_cost_project_count = sum(1 for row in project_budget_actual if row["budget_cost"] > 0 and row["actual_cost"] > row["budget_cost"])
     return ReportView(
         scope={"period_start": str(start), "period_end": str(end), "department_name": department_index.path(selected_department_id) if selected_department_id else "全部部门", "department_options": department_options, "status": ["APPROVED", "LOCKED"]},
-        metrics={"total_quantity": round(sum(by_project.values()), 2), "total_days": round(by_unit.get("DAY", 0), 2), "budget_days": round(budget_days, 2), "actual_cost": round(sum(project_actual_cost.values()), 2), "budget_cost": round(budget_cost, 2), "budget_usage_rate": round(actual_days / budget_days * 100, 1) if budget_days else 0, "cost_usage_rate": round(sum(project_actual_cost.values()) / budget_cost * 100, 1) if budget_cost else 0, "missing_cost_user_count": len(missing_cost_user_ids), "over_budget_project_count": over_budget_project_count, "over_budget_cost_project_count": over_budget_cost_project_count, "user_count": len(user_ids), "project_count": len(project_ids), "execution_project_count": sum(1 for project_id in project_ids if projects_by_id.get(project_id) and projects_by_id[project_id].status == "ACTIVE"), "pending_count": pending_count, "approved_count": len(approved_rows), "submitted_count": len(scoped_rows), "rejected_count": status_counts.get("REJECTED", 0), "approval_rate": round((len(approved_rows) / (len(approved_rows) + status_counts.get("REJECTED", 0)) * 100), 1) if len(approved_rows) + status_counts.get("REJECTED", 0) else 0, "overdue_pending_count": overdue_pending_count},
+        metrics={"total_quantity": round(sum(by_project.values()), 2), "total_days": round(by_unit.get("DAY", 0), 2), "budget_days": round(budget_days, 2), "actual_cost": round(sum(project_actual_cost.values()), 2), "budget_cost": round(budget_cost, 2), "budget_usage_rate": round(actual_days / budget_days * 100, 1) if budget_days else 0, "cost_usage_rate": round(sum(project_actual_cost.values()) / budget_cost * 100, 1) if budget_cost else 0, "over_budget_project_count": over_budget_project_count, "over_budget_cost_project_count": over_budget_cost_project_count, "user_count": len(user_ids), "project_count": len(project_ids), "execution_project_count": sum(1 for project_id in project_ids if projects_by_id.get(project_id) and projects_by_id[project_id].status == "ACTIVE"), "pending_count": pending_count, "approved_count": len(approved_rows), "submitted_count": len(scoped_rows), "rejected_count": status_counts.get("REJECTED", 0), "approval_rate": round((len(approved_rows) / (len(approved_rows) + status_counts.get("REJECTED", 0)) * 100), 1) if len(approved_rows) + status_counts.get("REJECTED", 0) else 0, "overdue_pending_count": overdue_pending_count},
         breakdowns={"by_project": breakdown(by_project), "by_project_unit": unit_breakdown(by_project_unit), "by_project_budget_actual": project_budget_actual, "by_project_cost": project_cost_rows, "by_department_cost": department_cost_rows, "by_project_stage": [{"name": project, "stage": stage, "quantity": round(quantity, 2)} for (project, stage), quantity in sorted(by_project_stage.items(), key=lambda pair: pair[1], reverse=True)], "by_project_stage_unit": project_stage_unit_breakdown(by_project_stage_unit), "by_stage": breakdown(by_stage), "by_stage_unit": unit_breakdown(by_stage_unit), "by_user": breakdown(by_user), "by_user_unit": unit_breakdown(by_user_unit), "by_status": breakdown(by_status), "by_status_unit": unit_breakdown(by_status_unit), "approval_status": [{"name": name, "quantity": quantity} for name, quantity in sorted(status_counts.items(), key=lambda pair: pair[1], reverse=True)], "by_work_type": breakdown(by_work_type), "by_work_type_unit": unit_breakdown(by_work_type_unit), "by_department": breakdown(by_department), "by_department_unit": unit_breakdown(by_department_unit), "by_day_unit": unit_breakdown(by_day_unit), "by_unit": breakdown(by_unit)},
         generated_at=now_local(),
     )

@@ -31,7 +31,6 @@ class User(Base):
     department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True)
     manager_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     employment_status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
-    daily_cost: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     snapshot_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
@@ -44,7 +43,6 @@ class AdminPermission(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, nullable=False)
     can_manage_projects: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     can_manage_worklogs: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    can_manage_personnel_costs: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     can_manage_integrations: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     can_manage_admins: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     can_manage_configuration: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -313,8 +311,6 @@ class Worklog(Base):
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     approval_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     approval_version: Mapped[int] = mapped_column(Integer, default=0)
-    daily_cost_snapshot: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
-    cost_amount_snapshot: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)

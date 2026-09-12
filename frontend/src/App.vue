@@ -93,7 +93,6 @@ type Page =
   | "customers"
   | "integrations"
   | "adminWorklogs"
-  | "personnelCosts"
   | "adminPermissions"
   | "approvalPositions"
   | "approvalWorkflows"
@@ -110,7 +109,6 @@ type ManagementPermission =
   | "counterparties"
   | "cash_approval"
   | "worklogs"
-  | "personnel_costs"
   | "budget_templates"
   | "integrations"
   | "admins"
@@ -126,7 +124,6 @@ type AdminPermissionField =
   | "can_manage_counterparties"
   | "can_approve_cash"
   | "can_manage_worklogs"
-  | "can_manage_personnel_costs"
   | "can_manage_integrations"
   | "can_manage_admins"
   | "can_manage_configuration";
@@ -817,27 +814,6 @@ type AdminWorklogList = {
   summary: Record<string, number>;
   department_options: string[];
 };
-type PersonnelCost = {
-  id: number;
-  name: string;
-  department_name: string;
-  daily_cost: number | null;
-};
-type PersonnelCostList = {
-  items: PersonnelCost[];
-  total: number;
-  page: number;
-  page_size: number;
-  page_count: number;
-  department_options: string[];
-  configured_user_ids: number[];
-  summary: {
-    configured_count: number;
-    unset_count: number;
-    total_daily_cost: number;
-    average_daily_cost: number;
-  };
-};
 type AdminPermission = {
   id: number | null;
   user_id: number;
@@ -851,7 +827,6 @@ type AdminPermission = {
   can_manage_counterparties: boolean;
   can_approve_cash: boolean;
   can_manage_worklogs: boolean;
-  can_manage_personnel_costs: boolean;
   can_manage_integrations: boolean;
   can_manage_admins: boolean;
   can_manage_configuration: boolean;
@@ -1116,7 +1091,6 @@ const initialPage = (() => {
     "projectBoard",
     "suppliers",
     "customers",
-    "personnelCosts",
     "integrations",
     "adminPermissions",
     "approvalPositions",
@@ -1293,27 +1267,6 @@ const adminStatus = ref("");
 const adminPeriodStart = ref("");
 const adminPeriodEnd = ref("");
 const adminWorklogFormOpen = ref(false);
-const personnelCosts = ref<PersonnelCost[]>([]);
-const personnelCostTotal = ref(0);
-const personnelCostPage = ref(1);
-const personnelCostPageSize = ref(20);
-const personnelCostPageSizeMode = ref("20");
-const personnelCostPageCount = ref(1);
-const personnelCostDepartmentOptions = ref<string[]>([]);
-const personnelCostDepartment = ref("");
-const personnelCostUserId = ref(0);
-const personnelCostLoading = ref(false);
-const personnelCostSavingId = ref<number | null>(null);
-const personnelCostConfiguredCount = ref(0);
-const personnelCostUnsetCount = ref(0);
-const personnelCostAverage = ref(0);
-const personnelCostTotalDailyCost = ref(0);
-const personnelCostConfiguredUserIds = ref<number[]>([]);
-const personnelCostFormOpen = ref(false);
-const personnelCostForm = reactive({
-  user_id: 0,
-  daily_cost: null as number | null,
-});
 const adminPermissions = ref<AdminPermission[]>([]);
 const adminPermissionKeyword = ref("");
 const adminPermissionLoading = ref(false);
@@ -1357,7 +1310,6 @@ const adminPermissionForm = reactive({
   can_manage_counterparties: false,
   can_approve_cash: false,
   can_manage_worklogs: false,
-  can_manage_personnel_costs: false,
   can_manage_integrations: false,
   can_manage_admins: false,
   can_manage_configuration: false,
@@ -1395,11 +1347,6 @@ const permissionLabels: Array<{
   },
   { key: "cash_approval", field: "can_approve_cash", label: "出纳审批" },
   { key: "worklogs", field: "can_manage_worklogs", label: "工时管理" },
-  {
-    key: "personnel_costs",
-    field: "can_manage_personnel_costs",
-    label: "人员成本",
-  },
   {
     key: "integrations",
     field: "can_manage_integrations",
@@ -2363,7 +2310,6 @@ watch(
     projectFormOpen,
     adminWorklogFormOpen,
     adminPermissionFormOpen,
-    personnelCostFormOpen,
     configurationFormOpen,
     rbacRoleFormOpen,
     rbacUserRoleFormOpen,
@@ -2374,7 +2320,6 @@ watch(
     projectOpen,
     worklogOpen,
     permissionOpen,
-    personnelCostOpen,
     configurationOpen,
     rbacRoleOpen,
     rbacUserRoleOpen,
@@ -2385,7 +2330,6 @@ watch(
       projectOpen ||
       worklogOpen ||
       permissionOpen ||
-      personnelCostOpen ||
       configurationOpen ||
       rbacRoleOpen ||
       rbacUserRoleOpen ||
@@ -2517,8 +2461,6 @@ const refresh = async () => {
       form.project_id = fillableProjects.value[0].id;
     const managementRefreshes: Promise<unknown>[] = [];
     if (canManage("worklogs")) managementRefreshes.push(refreshAdminWorklogs());
-    if (canManage("personnel_costs"))
-      managementRefreshes.push(refreshPersonnelCosts());
     if (canManage("admins"))
       managementRefreshes.push(refreshAdminPermissions());
     if (canManage("configuration"))
@@ -2804,7 +2746,6 @@ const go = (target: Page) => {
     suppliers: "counterparties",
     customers: "counterparties",
     adminWorklogs: "worklogs",
-    personnelCosts: "personnel_costs",
     integrations: "integrations",
     adminPermissions: "admins",
     approvalPositions: "approval_positions",
@@ -2826,7 +2767,6 @@ const go = (target: Page) => {
   successMessage.value = "";
   if (["workbench", "worklogs"].includes(target)) void refreshWorklogStatus();
   if (target === "adminWorklogs") void refreshAdminWorklogs();
-  if (target === "personnelCosts") void refreshPersonnelCosts();
   if (target === "adminPermissions") void refreshAdminPermissions();
   if (target === "projects") void refreshProjectPage();
   if (target === "customers") void refreshCustomers();
@@ -4423,171 +4363,6 @@ const changeAdminCustomPageSize = async () => {
   adminPage.value = 1;
   await queryAdminWorklogs();
 };
-const personnelCostUrl = () => {
-  const params = new URLSearchParams();
-  params.set("page", String(personnelCostPage.value));
-  params.set("page_size", String(personnelCostPageSize.value));
-  if (personnelCostDepartment.value)
-    params.set("department_name", personnelCostDepartment.value);
-  if (personnelCostUserId.value)
-    params.set("user_id", String(personnelCostUserId.value));
-  params.set("configured_only", "true");
-  return `/api/v1/admin/personnel-costs?${params.toString()}`;
-};
-const refreshPersonnelCosts = async () => {
-  if (!canManage("personnel_costs")) return;
-  personnelCostLoading.value = true;
-  try {
-    const result = await api<PersonnelCostList>(personnelCostUrl());
-    personnelCosts.value = result.items;
-    personnelCostTotal.value = result.total;
-    personnelCostPage.value = result.page;
-    personnelCostPageSize.value = result.page_size;
-    personnelCostPageCount.value = result.page_count;
-    personnelCostDepartmentOptions.value = result.department_options;
-    personnelCostConfiguredUserIds.value = result.configured_user_ids;
-    personnelCostConfiguredCount.value = result.summary.configured_count;
-    personnelCostUnsetCount.value = result.summary.unset_count;
-    personnelCostAverage.value = result.summary.average_daily_cost;
-    personnelCostTotalDailyCost.value = result.summary.total_daily_cost;
-  } finally {
-    personnelCostLoading.value = false;
-  }
-};
-const personnelCostUserOptions = computed(() => {
-  if (!personnelCostDepartment.value) return demoUsers.value;
-  const selectedPath = personnelCostDepartment.value;
-  return demoUsers.value.filter((person) => {
-    const path = person.department_path || person.department_name;
-    return path === selectedPath || path.startsWith(`${selectedPath} / `);
-  });
-});
-const personnelCostAvailableUsers = computed(() =>
-  demoUsers.value.filter(
-    (person) => !personnelCostConfiguredUserIds.value.includes(person.id),
-  ),
-);
-watch(personnelCostDepartment, () => {
-  if (
-    personnelCostUserId.value &&
-    !personnelCostUserOptions.value.some(
-      (person) => person.id === personnelCostUserId.value,
-    )
-  )
-    personnelCostUserId.value = 0;
-});
-const queryPersonnelCosts = async () => {
-  personnelCostPage.value = 1;
-  try {
-    await refreshPersonnelCosts();
-    errorMessage.value = "";
-  } catch (error) {
-    errorMessage.value =
-      error instanceof Error ? error.message : "人员成本查询失败";
-  }
-};
-const changePersonnelCostPage = async (nextPage: number) => {
-  if (
-    nextPage < 1 ||
-    nextPage > personnelCostPageCount.value ||
-    nextPage === personnelCostPage.value
-  )
-    return;
-  personnelCostPage.value = nextPage;
-  try {
-    await refreshPersonnelCosts();
-  } catch (error) {
-    errorMessage.value =
-      error instanceof Error ? error.message : "人员成本查询失败";
-  }
-};
-const changePersonnelCostPageSizeMode = async () => {
-  if (personnelCostPageSizeMode.value !== "custom")
-    personnelCostPageSize.value = Number(personnelCostPageSizeMode.value);
-  personnelCostPageSize.value = Math.min(
-    200,
-    Math.max(1, Number(personnelCostPageSize.value) || 20),
-  );
-  personnelCostPage.value = 1;
-  await queryPersonnelCosts();
-};
-const changePersonnelCostCustomPageSize = async () => {
-  personnelCostPageSize.value = Math.min(
-    200,
-    Math.max(1, Number(personnelCostPageSize.value) || 20),
-  );
-  personnelCostPage.value = 1;
-  await queryPersonnelCosts();
-};
-const savePersonnelCost = async (person: PersonnelCost) => {
-  personnelCostSavingId.value = person.id;
-  try {
-    const result = await api<PersonnelCost>(
-      `/api/v1/admin/personnel-costs/${person.id}`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({
-          daily_cost:
-            person.daily_cost === null ||
-            person.daily_cost === undefined ||
-            Number.isNaN(Number(person.daily_cost))
-              ? null
-              : Number(person.daily_cost),
-        }),
-      },
-    );
-    Object.assign(person, result);
-    successMessage.value = `${person.name} 的单天成本已保存`;
-  } catch (error) {
-    errorMessage.value =
-      error instanceof Error ? error.message : "人员成本保存失败";
-  } finally {
-    personnelCostSavingId.value = null;
-  }
-};
-const resetPersonnelCostForm = () => {
-  personnelCostFormOpen.value = false;
-  personnelCostForm.user_id = personnelCostAvailableUsers.value[0]?.id || 0;
-  personnelCostForm.daily_cost = null;
-};
-const openPersonnelCostForm = () => {
-  if (!personnelCostAvailableUsers.value.length) {
-    errorMessage.value = "所有组织人员都已加入成本管理";
-    return;
-  }
-  personnelCostForm.user_id = personnelCostAvailableUsers.value[0].id;
-  personnelCostForm.daily_cost = null;
-  personnelCostFormOpen.value = true;
-};
-const saveNewPersonnelCost = async () => {
-  const person = personnelCostAvailableUsers.value.find(
-    (item) => item.id === personnelCostForm.user_id,
-  );
-  const dailyCost = Number(personnelCostForm.daily_cost);
-  if (!person) {
-    errorMessage.value = "请选择要加入成本管理的组织人员";
-    return;
-  }
-  if (!Number.isFinite(dailyCost) || dailyCost < 0) {
-    errorMessage.value = "请输入有效的单天成本";
-    return;
-  }
-  personnelCostSavingId.value = person.id;
-  try {
-    await api<PersonnelCost>(`/api/v1/admin/personnel-costs/${person.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ daily_cost: dailyCost }),
-    });
-    resetPersonnelCostForm();
-    await refreshPersonnelCosts();
-    successMessage.value = `${person.name} 已加入成本管理`;
-  } catch (error) {
-    errorMessage.value =
-      error instanceof Error ? error.message : "人员成本保存失败";
-  } finally {
-    personnelCostSavingId.value = null;
-  }
-};
 const adminPermissionUrl = () => {
   const params = new URLSearchParams();
   if (adminPermissionKeyword.value.trim())
@@ -4801,7 +4576,7 @@ const saveRbacUserRoles = async () => {
   }
   rbacUserRoleSaving.value = true;
   try {
-    const resources = ["projects", "contracts", "receipts", "payments", "project_board", "counterparties", "worklogs", "reports", "personnel_costs", "cash_approval"];
+    const resources = ["projects", "contracts", "receipts", "payments", "project_board", "counterparties", "worklogs", "reports", "cash_approval"];
     await api<RbacUserRole>(`/api/v1/admin/users/${rbacUserRoleForm.user_id}/roles`, {
       method: "PUT",
       body: JSON.stringify({
@@ -5139,7 +4914,6 @@ const resetAdminPermissionForm = () => {
     can_manage_counterparties: false,
     can_approve_cash: false,
     can_manage_worklogs: false,
-    can_manage_personnel_costs: false,
     can_manage_integrations: false,
     can_manage_admins: false,
     can_manage_configuration: false,
@@ -5214,7 +4988,6 @@ const saveAdminPermission = async (item: AdminPermission) => {
       can_manage_counterparties: item.can_manage_counterparties,
       can_approve_cash: item.can_approve_cash,
       can_manage_worklogs: item.can_manage_worklogs,
-      can_manage_personnel_costs: item.can_manage_personnel_costs,
       can_manage_integrations: item.can_manage_integrations,
       can_manage_admins: item.can_manage_admins,
       can_manage_configuration: item.can_manage_configuration,
@@ -5252,7 +5025,6 @@ const clearAdminPermission = async (item: AdminPermission) => {
     });
     item.can_manage_projects = false;
     item.can_manage_worklogs = false;
-    item.can_manage_personnel_costs = false;
     item.can_manage_integrations = false;
     item.can_manage_admins = false;
     item.is_active = false;
@@ -5662,7 +5434,6 @@ const managementHome = computed<Page>(() => {
   if (canManage("project_board")) return "projectBoard";
   if (canManage("counterparties")) return "customers";
   if (canManage("worklogs")) return "adminWorklogs";
-  if (canManage("personnel_costs")) return "personnelCosts";
   if (canManage("integrations")) return "integrations";
   if (canManage("configuration")) return "configuration";
   return "adminPermissions";
@@ -5680,7 +5451,6 @@ const mobileManagementItems = computed(() =>
     { page: "projectBoard", permission: "project_board" as ManagementPermission, label: "项目看板", icon: "board" },
     { page: "customers", permission: "counterparties" as ManagementPermission, label: "客户管理", icon: "customer" },
     { page: "suppliers", permission: "counterparties" as ManagementPermission, label: "供应商管理", icon: "supplier" },
-    { page: "personnelCosts", permission: "personnel_costs" as ManagementPermission, label: "人员成本", icon: "cost" },
     { page: "integrations", permission: "integrations" as ManagementPermission, label: "集成与通知", icon: "integration" },
     { page: "adminPermissions", permission: "admins" as ManagementPermission, label: "管理员管理", icon: "admin" },
     { page: "configuration", permission: "configuration" as ManagementPermission, label: "基础配置", icon: "config" },
@@ -5766,7 +5536,6 @@ const pageTitle = computed(
       projectBoard: "项目看板",
       suppliers: "供应商管理",
       customers: "客户管理",
-      personnelCosts: "人员成本",
       integrations: "集成与通知",
       adminPermissions: "管理员管理",
       approvalPositions: "审批岗位",
@@ -7358,14 +7127,6 @@ onMounted(() => {
           <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#customer"></use></svg></span><span>客户管理</span>
         </button>
         <div class="nav-label">系统管理</div>
-        <button
-          v-if="canManage('personnel_costs')"
-          class="nav-item"
-          :class="{ active: page === 'personnelCosts' }"
-          @click="go('personnelCosts')"
-        >
-          <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#cost"></use></svg></span><span>人员成本</span>
-        </button>
         <button
           v-if="canManage('integrations')"
           class="nav-item"
@@ -11222,273 +10983,6 @@ onMounted(() => {
             </section>
           </div>
         </section>
-        <section
-          v-else-if="page === 'personnelCosts'"
-          class="page-view personnel-cost-page"
-        >
-          <div class="page-head">
-            <div>
-              <div class="eyebrow">ADMIN / PERSONNEL COSTS</div>
-              <h1>人员成本</h1>
-              <p class="muted">
-                只维护已加入成本管理的人员，新增人员通过弹窗从飞书组织架构中选择。
-              </p>
-            </div>
-            <div class="actions">
-              <button class="secondary" @click="go('adminWorklogs')">
-                工时管理</button
-              ><button
-                class="primary"
-                :disabled="!personnelCostAvailableUsers.length"
-                @click="openPersonnelCostForm"
-              >
-                ＋ 添加人员成本
-              </button>
-            </div>
-          </div>
-          <section class="card personnel-cost-filter-card">
-            <div class="personnel-cost-filters">
-              <label
-                >部门<select v-model="personnelCostDepartment">
-                  <option value="">全部部门</option>
-                  <option
-                    v-for="name in personnelCostDepartmentOptions"
-                    :key="name"
-                    :value="name"
-                  >
-                    {{ name }}
-                  </option>
-                </select></label
-              ><label
-                >人员<select v-model.number="personnelCostUserId">
-                  <option :value="0">全部人员</option>
-                  <option
-                    v-for="person in personnelCostUserOptions"
-                    :key="person.id"
-                    :value="person.id"
-                  >
-                    {{ person.name }} · {{ person.department_name }}
-                  </option>
-                </select></label
-              ><label
-                >每页条数<select
-                  v-model="personnelCostPageSizeMode"
-                  @change="changePersonnelCostPageSizeMode"
-                >
-                  <option value="10">10 条</option>
-                  <option value="20">20 条</option>
-                  <option value="50">50 条</option>
-                  <option value="custom">自定义</option></select
-                ><input
-                  v-if="personnelCostPageSizeMode === 'custom'"
-                  v-model.number="personnelCostPageSize"
-                  type="number"
-                  min="1"
-                  max="200"
-                  placeholder="1-200"
-                  @change="changePersonnelCostCustomPageSize" /></label
-              ><button
-                class="primary personnel-cost-query"
-                @click="queryPersonnelCosts"
-              >
-                查询
-              </button>
-            </div>
-            <div class="personnel-cost-summary-line">
-              <span
-                >已加入成本管理
-                <strong>{{ personnelCostTotal }}</strong> 人</span
-              ><span
-                >可添加组织人员
-                <strong>{{ personnelCostAvailableUsers.length }}</strong>
-                人</span
-              >
-            </div>
-          </section>
-          <section class="card personnel-cost-list-card">
-            <div class="section-head">
-              <div>
-                <h2>已加入成本管理的人员</h2>
-                <p class="muted">
-                  部门筛选包含下级部门；修改成本后会立即影响后续人工成本估算。
-                </p>
-              </div>
-              <span class="tag teal"
-                >第 {{ personnelCostPage }} /
-                {{ personnelCostPageCount }} 页</span
-              >
-            </div>
-            <div v-if="personnelCostLoading" class="empty">
-              正在读取人员成本…
-            </div>
-            <div v-else-if="!personnelCosts.length" class="empty">
-              <h2>还没有加入成本管理的人员</h2>
-              <p>
-                点击“添加人员成本”，从飞书组织架构中选择人员并填写单天成本。
-              </p>
-              <button
-                class="primary"
-                :disabled="!personnelCostAvailableUsers.length"
-                @click="openPersonnelCostForm"
-              >
-                添加第一位人员
-              </button>
-            </div>
-            <div v-else class="table-wrap">
-              <table class="personnel-cost-table">
-                <thead>
-                  <tr>
-                    <th>人员</th>
-                    <th>所属部门</th>
-                    <th>单天成本</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="person in personnelCosts" :key="person.id">
-                    <td>
-                      <div class="personnel-person-cell">
-                        <span class="personnel-cost-avatar">{{
-                          person.name.slice(0, 1)
-                        }}</span
-                        ><span
-                          ><strong>{{ person.name }}</strong
-                          ><small>组织用户 #{{ person.id }}</small></span
-                        >
-                      </div>
-                    </td>
-                    <td>
-                      <div class="department-cell">
-                        <span class="department-tree-mark"></span
-                        ><span>{{ person.department_name }}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="personnel-cost-input">
-                        <span>¥</span
-                        ><input
-                          v-model.number="person.daily_cost"
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          placeholder="请输入单天成本"
-                          aria-label="单天成本"
-                        />
-                      </div>
-                      <small class="cost-input-help">按 1 天核算</small>
-                    </td>
-                    <td>
-                      <button
-                        class="secondary personnel-cost-save"
-                        :disabled="personnelCostSavingId === person.id"
-                        @click="savePersonnelCost(person)"
-                      >
-                        <span>{{
-                          personnelCostSavingId === person.id
-                            ? "保存中…"
-                            : "保存成本"
-                        }}</span>
-                      </button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="admin-pagination personnel-cost-pagination">
-              <span
-                >第 {{ personnelCostPage }} / {{ personnelCostPageCount }} 页 ·
-                共 {{ personnelCostTotal }} 人</span
-              >
-              <div class="admin-pagination-actions">
-                <button
-                  class="secondary"
-                  :disabled="personnelCostPage <= 1"
-                  @click="changePersonnelCostPage(personnelCostPage - 1)"
-                >
-                  上一页</button
-                ><button
-                  class="secondary"
-                  :disabled="personnelCostPage >= personnelCostPageCount"
-                  @click="changePersonnelCostPage(personnelCostPage + 1)"
-                >
-                  下一页
-                </button>
-              </div>
-            </div>
-          </section>
-          <div v-if="personnelCostFormOpen" class="modal-backdrop">
-            <section
-              class="modal-card personnel-cost-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="personnel-cost-modal-title"
-            >
-              <div class="modal-head">
-                <div>
-                  <div class="eyebrow">ADD PERSONNEL COST</div>
-                  <h2 id="personnel-cost-modal-title">添加人员成本</h2>
-                  <p class="muted">
-                    选择飞书组织人员并填写单天成本，保存后会加入成本管理列表。
-                  </p>
-                </div>
-                <button
-                  class="modal-close"
-                  aria-label="关闭弹窗"
-                  @click="resetPersonnelCostForm"
-                >
-                  ×
-                </button>
-              </div>
-              <div class="personnel-cost-form-grid">
-                <label
-                  >选择人员<select v-model.number="personnelCostForm.user_id">
-                    <option :value="0" disabled>请选择组织人员</option>
-                    <option
-                      v-for="person in personnelCostAvailableUsers"
-                      :key="person.id"
-                      :value="person.id"
-                    >
-                      {{ person.name }} · {{ person.department_name }}
-                    </option>
-                  </select></label
-                ><label
-                  >单天成本
-                  <div class="personnel-cost-input personnel-cost-modal-input">
-                    <span>¥</span
-                    ><input
-                      v-model.number="personnelCostForm.daily_cost"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="请输入单天成本"
-                      aria-label="新增人员单天成本"
-                    />
-                  </div>
-                  <small class="form-helper muted"
-                    >按员工 1 个工作日核算</small
-                  ></label
-                >
-              </div>
-              <div class="form-footer">
-                <button class="secondary" @click="resetPersonnelCostForm">
-                  取消</button
-                ><button
-                  class="primary"
-                  :disabled="
-                    personnelCostSavingId === personnelCostForm.user_id
-                  "
-                  @click="saveNewPersonnelCost"
-                >
-                  {{
-                    personnelCostSavingId === personnelCostForm.user_id
-                      ? "保存中…"
-                      : "保存并加入"
-                  }}
-                </button>
-              </div>
-            </section>
-          </div>
-        </section>
         <section v-else-if="page === 'integrations'" class="page-view integration-page">
           <div class="page-head integration-page-head">
             <div>
@@ -12527,7 +12021,6 @@ onMounted(() => {
             'projects',
             'integrations',
             'adminWorklogs',
-            'personnelCosts',
             'adminPermissions',
             'configuration',
           ].includes(page),

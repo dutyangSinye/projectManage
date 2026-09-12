@@ -1140,28 +1140,6 @@ class AdminWorklogList(BaseModel):
     summary: dict[str, float | int]
     department_options: list[str]
 
-class PersonnelCostView(BaseModel):
-    id: int
-    name: str
-    department_name: str
-    daily_cost: float | None
-
-
-class PersonnelCostList(BaseModel):
-    items: list[PersonnelCostView]
-    total: int
-    page: int
-    page_size: int
-    page_count: int
-    department_options: list[str]
-    configured_user_ids: list[int] = []
-    summary: dict[str, float | int] = {}
-
-
-class PersonnelCostUpdate(BaseModel):
-    daily_cost: float | None = Field(default=None, ge=0, le=100000000)
-
-
 class ConfigOptionView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
