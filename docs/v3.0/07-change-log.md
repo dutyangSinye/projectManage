@@ -1,11 +1,12 @@
 # v3.0 变更记录
 
-## v3.0.68（2026-09-11，待发布）
+## v3.0.68（2026-09-11，已发布）
 
 - 删除旧「人员成本」模块：菜单行与全部授权、两个 `admin/personnel-costs` 接口、PersonnelCost schemas、前端整页入口与管理员权限勾选项。
 - 日成本口径一并删除：`users.daily_cost`、`worklogs.daily_cost_snapshot / cost_amount_snapshot`、`can_manage_personnel_costs` 三张表的列随迁移 DROP，历史值同时清空。
 - 工时负荷看板不再按「日成本 × 天数」估算金额，改为统计期间内已复核通过的人工成本结转单，与项目明细口径一致；移除 `missing_cost_user_count` 指标。
 - 新增回归用例 5 项，后端全量测试 81 项通过，前端生产构建通过。
+- 手册同步：重编用户使用手册 `docs/01-user-manual-v3.0.68.md`（覆盖 v3.0.57 ~ v3.0.68），并修正 6 处停留在旧口径的界面提示文案（人工费用口径、付款复核流程、基础配置分类体系等），详见 `docs/v3.0/64-user-manual-refresh-v3.0.68.md`。
 
 ## v3.0.67（2026-09-11，已发布）
 

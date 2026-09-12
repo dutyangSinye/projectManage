@@ -1,7 +1,7 @@
 # v3.0.68 删除旧「人员成本」模块与日成本口径
 
 日期：2026-09-11
-状态：已实现，待发布
+状态：已发布至 `116.169.217.29:8088`（健康检查 `v3.0.68`，备份 `.backup-mcp-20260912-003321-20733fb6`，提交 `d770e6e`）
 版本：`API_VERSION = "3.0.68"`
 
 ## 一、诉求
@@ -72,3 +72,6 @@ DROP COLUMN 同时清空了历史日成本值，符合「一并清理」的要�
 `test_v3_rbac_retired_menus.py` 中引用 `personnel_costs` 的三处改用 `approval_workflows`（同为已下线菜单）。
 
 后端全量测试由 76 项增至 **81 项**，全部通过；前端 `npm run build`（含 vue-tsc）通过。
+
+发布后生产核对：`personnel_costs` 菜单行 0 条，失效授权与孤儿 `role_permissions` 均为 0，
+四列日成本字段全部 DROP，users 22 / departments 12 / projects 12 / project_budget_items 96 / roles 9 保全。

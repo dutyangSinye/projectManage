@@ -8936,7 +8936,7 @@ onMounted(() => {
               <div>
                 <div class="eyebrow">PROJECT BUDGET ITEMS</div>
                 <h2>{{ selectedBudgetProject.name }} · 预算项</h2>
-                <p class="muted">项目总预算 = 启用预算项金额合计；已发生金额来自审批通过的工时、合同付款和项目费用。</p>
+                <p class="muted">项目总预算 = 启用预算项金额合计；已发生金额来自已复核的人工成本结转单、合同付款和项目费用。</p>
               </div>
               <button class="modal-close" aria-label="关闭预算项" @click="closeProjectBudgetModal">×</button>
             </div>
@@ -9110,7 +9110,7 @@ onMounted(() => {
 
                 <div class="project-analysis-grid">
                   <section class="card project-analysis-card">
-                    <div class="section-head"><div><h2>成本组成与预算执行</h2><p class="muted">已审批工时、已确认合同付款和已审批项目费用计入实际成本</p></div><span class="muted">更新于 {{ projectAnalysis.as_of }}</span></div>
+                    <div class="section-head"><div><h2>成本组成与预算执行</h2><p class="muted">人工成本来自已复核的人工成本结转单，合同成本来自已复核的合同付款，项目费用来自已复核的费用单</p></div><span class="muted">更新于 {{ projectAnalysis.as_of }}</span></div>
                     <div class="project-analysis-body">
                       <div class="analysis-budget-overview">
                         <div class="analysis-budget-primary">
@@ -9228,7 +9228,7 @@ onMounted(() => {
               <div class="project-kpi-row project-budget-kpis">
                 <section><span>总预算</span><strong>{{ moneyText(projectAnalysis?.cost.budget_cost ?? selectedManagedProject.budget_cost) }}</strong><small>启用预算项合计</small></section>
                 <section><span>实际总成本</span><strong>{{ moneyText(projectAnalysis?.cost.total_cost ?? selectedManagedProject.actual_cost) }}</strong><small>人工 + 合同 + 费用</small></section>
-                <section><span>人工费用</span><strong>{{ moneyText(selectedManagedProject.personnel_cost) }}</strong><small>已审批工时成本</small></section>
+                <section><span>人工费用</span><strong>{{ moneyText(selectedManagedProject.personnel_cost) }}</strong><small>已复核的人工成本结转单</small></section>
                 <section><span>已发生合同成本</span><strong>{{ moneyText(selectedManagedProject.actual_contract_cost) }}</strong><small>已审批付款，扣除冲销</small></section>
                 <section><span>已发生项目费用</span><strong>{{ moneyText(selectedManagedProject.actual_expense_cost) }}</strong><small>费用审批通过后确认</small></section>
                 <section :class="{ 'budget-remaining': true, negative: selectedManagedProject.remaining_cost < 0 }"><span>预算剩余</span><strong>{{ moneyText(selectedManagedProject.remaining_cost) }}</strong><small>预算减去实际总成本</small></section>
@@ -9783,7 +9783,7 @@ onMounted(() => {
             <div>
               <div class="eyebrow">CONTRACT / RECEIPTS</div>
               <h1>合同收款</h1>
-              <p class="muted">合同收款单提交后由具备出纳审批权限的人员确认入账。</p>
+              <p class="muted">合同收款单提交后由收款复核岗位或具备收付款复核权限的人员确认入账。</p>
             </div>
             <div class="actions">
               <button class="primary" @click="openReceiptForm()">＋ 新增合同收款单</button>
@@ -10511,7 +10511,7 @@ onMounted(() => {
             </div>
             <div class="board-kpi-row board-cost-kpi-row">
               <article><span>已发生人天</span><strong>{{ formatProjectDays(boardTotals.actual_days) }} 天</strong><small>仅展示工时事实，不作为预算项</small></article>
-              <article><span>人员成本</span><strong>{{ moneyText(boardTotals.personnel_cost) }}</strong><small>已审批工时 × 单价快照</small></article>
+              <article><span>人工费用</span><strong>{{ moneyText(boardTotals.personnel_cost) }}</strong><small>已复核通过的人工成本结转单</small></article>
               <article><span>项目费用</span><strong>{{ moneyText(boardTotals.actual_expense_cost) }}</strong><small>费用单确认成本</small></article>
               <article><span>实际总成本</span><strong>{{ moneyText(boardTotals.actual_cost) }}</strong><small>总预算 {{ moneyText(boardTotals.budget_cost) }}</small></article>
               <article><span>总预算使用率</span><strong>{{ boardCostRate }}</strong><small>总成本 / 总预算</small></article>
@@ -11171,7 +11171,7 @@ onMounted(() => {
               <div>
                 <h2>分类体系</h2>
                 <p class="muted">
-                  项目分类与成本分类改为两级树维护：先建大类，再在大类下挂小类。项目表单和费用归集按此口径联动。
+                  项目分类按两级树维护：先建项目大类，再在大类下挂项目小类；项目表单按此口径联动。成本归集统一使用 8 项预算项，不再单独维护成本分类。
                 </p>
               </div>
               <div class="classification-tree-tabs">
