@@ -95,7 +95,6 @@ type Page =
   | "adminWorklogs"
   | "adminPermissions"
   | "approvalPositions"
-  | "approvalWorkflows"
   | "configuration";
 type ManagementPermission =
   | "projects"
@@ -113,7 +112,6 @@ type ManagementPermission =
   | "integrations"
   | "admins"
   | "approval_positions"
-  | "approval_workflows"
   | "configuration";
 type AdminPermissionField =
   | "can_manage_projects"
@@ -744,17 +742,6 @@ type ApprovalPosition = {
   member_names: string[];
   updated_at: string;
 };
-type ApprovalWorkflow = {
-  id: number;
-  code: string;
-  name: string;
-  document_types: string[];
-  status: string;
-  current_version_id: number | null;
-  current_version: number | null;
-  node_count: number;
-  nodes: WorkflowPathNode[];
-};
 type ImportResource = "customers" | "suppliers" | "contracts";
 type ImportIssue = {
   row: number;
@@ -1094,7 +1081,6 @@ const initialPage = (() => {
     "integrations",
     "adminPermissions",
     "approvalPositions",
-    "approvalWorkflows",
     "configuration",
     "adminWorklogs",
   ];
@@ -1185,7 +1171,6 @@ const expenseActionComment = ref("");
 const expensePaymentOpen = ref(false);
 const expensePaymentForm = reactive({ payment_date: applicationDate(), amount: 0, company_account: "", voucher_note: "", comment: "" });
 const approvalPositions = ref<ApprovalPosition[]>([]);
-const approvalWorkflows = ref<ApprovalWorkflow[]>([]);
 const positionFormOpen = ref(false);
 const editingPosition = ref<ApprovalPosition | null>(null);
 const positionMemberKeyword = ref("");
@@ -1352,7 +1337,7 @@ const permissionLabels: Array<{
     field: "can_manage_integrations",
     label: "集成与通知",
   },
-  { key: "admins", field: "can_manage_admins", label: "管理员管理" },
+  { key: "admins", field: "can_manage_admins", label: "权限管理" },
   {
     key: "configuration",
     field: "can_manage_configuration",
@@ -2749,7 +2734,6 @@ const go = (target: Page) => {
     integrations: "integrations",
     adminPermissions: "admins",
     approvalPositions: "approval_positions",
-    approvalWorkflows: "approval_workflows",
     configuration: "configuration",
   };
   const requiredPermission = permissionByPage[target];
@@ -2785,7 +2769,6 @@ const go = (target: Page) => {
   }
   if (target === "costReview") void refreshCostReview();
   if (target === "approvalPositions") void refreshApprovalPositions();
-  if (target === "approvalWorkflows") void refreshApprovalWorkflows();
   if (target === "projectBoard") void refreshProjectBoard();
   if (target === "projectDetail") void refreshProjectFinance();
 };
@@ -5452,7 +5435,7 @@ const mobileManagementItems = computed(() =>
     { page: "customers", permission: "counterparties" as ManagementPermission, label: "客户管理", icon: "customer" },
     { page: "suppliers", permission: "counterparties" as ManagementPermission, label: "供应商管理", icon: "supplier" },
     { page: "integrations", permission: "integrations" as ManagementPermission, label: "集成与通知", icon: "integration" },
-    { page: "adminPermissions", permission: "admins" as ManagementPermission, label: "管理员管理", icon: "admin" },
+    { page: "adminPermissions", permission: "admins" as ManagementPermission, label: "权限管理", icon: "admin" },
     { page: "configuration", permission: "configuration" as ManagementPermission, label: "基础配置", icon: "config" },
   ].filter((item) => canManage(item.permission)),
 );
@@ -5537,9 +5520,8 @@ const pageTitle = computed(
       suppliers: "供应商管理",
       customers: "客户管理",
       integrations: "集成与通知",
-      adminPermissions: "管理员管理",
+      adminPermissions: "权限管理",
       approvalPositions: "审批岗位",
-      approvalWorkflows: "审批流程",
       configuration: "基础配置",
     })[page.value],
 );
@@ -5894,21 +5876,15 @@ const integrationPolicyGroups = computed(() => {
       description: "预算接近上限或超支时提醒项目负责人。",
       items: [],
     },
-    {
-      key: "worklog",
-      label: "填报提醒",
-      description: "每个工作日按设定时刻提醒成员填报工时。",
-      items: [],
-    },
   ];
+  // 工时填报提醒有独立的配置卡片，不混在通用策略里，避免同一项两处可改。
   for (const policy of integrationPolicies.value) {
-    const group = policy.notification_type === WORKLOG_FILL_REMINDER
-      ? groups[3]
-      : policy.notification_type.startsWith("STAGE_")
-        ? groups[1]
-        : policy.notification_type.startsWith("COST_")
-          ? groups[2]
-          : groups[0];
+    if (policy.notification_type === WORKLOG_FILL_REMINDER) continue;
+    const group = policy.notification_type.startsWith("STAGE_")
+      ? groups[1]
+      : policy.notification_type.startsWith("COST_")
+        ? groups[2]
+        : groups[0];
     group.items.push(policy);
   }
   return groups.filter((group) => group.items.length);
@@ -5967,6 +5943,188 @@ const reminderScopeText = (policy: NotificationPolicy) => {
   if (policy.target_scope === "DEPARTMENT") return `指定部门 ${count} 个`;
   if (policy.target_scope === "USER") return `指定人员 ${count} 人`;
   return "全部在职人员";
+};
+const splitReminderTimes = (raw?: string | null) =>
+  (raw || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => /^([01]\d|2[0-3]):[0-5]\d$/.test(item))
+    .sort();
+const worklogReminderEditing = ref(false);
+const worklogReminderSaving = ref(false);
+const reminderTimeInput = ref("");
+const reminderUserKeyword = ref("");
+const worklogReminderDraft = reactive({
+  enabled: false,
+  send_channel: "app" as "app" | "webhook" | "mock",
+  times: [] as string[],
+  target_scope: "ALL" as "ALL" | "DEPARTMENT" | "USER",
+  target_id_list: [] as number[],
+  only_unfilled: true,
+});
+const worklogReminderPolicy = computed(
+  () => integrationPolicies.value.find((item) => item.notification_type === WORKLOG_FILL_REMINDER) || null,
+);
+const activeReminderTimes = computed(() =>
+  worklogReminderEditing.value
+    ? [...worklogReminderDraft.times].sort()
+    : splitReminderTimes(worklogReminderPolicy.value?.schedule_time),
+);
+const activeReminderScope = computed<"ALL" | "DEPARTMENT" | "USER">(() =>
+  worklogReminderEditing.value
+    ? worklogReminderDraft.target_scope
+    : ((worklogReminderPolicy.value?.target_scope || "ALL") as "ALL" | "DEPARTMENT" | "USER"),
+);
+const activeReminderIds = computed(() =>
+  worklogReminderEditing.value
+    ? worklogReminderDraft.target_id_list
+    : parseReminderTargets(worklogReminderPolicy.value?.target_ids),
+);
+const reminderTargetText = computed(() => {
+  const ids = activeReminderIds.value;
+  if (activeReminderScope.value === "ALL") return `全部在职人员（${demoUsers.length} 人）`;
+  if (activeReminderScope.value === "DEPARTMENT") {
+    const names = departments
+      .filter((item) => ids.includes(item.id))
+      .map((item) => item.name);
+    if (!names.length) return "未选择部门";
+    return names.length > 3 ? `${names.slice(0, 3).join("、")} 等 ${names.length} 个部门` : `${names.join("、")}（${names.length} 个部门）`;
+  }
+  const names = demoUsers
+    .filter((item) => ids.includes(item.id))
+    .map((item) => item.name);
+  if (!names.length) return "未选择人员";
+  return names.length > 4 ? `${names.slice(0, 4).join("、")} 等 ${names.length} 人` : `${names.join("、")}（${names.length} 人）`;
+});
+const nextReminderText = computed(() => {
+  const times = activeReminderTimes.value;
+  if (!times.length) return "尚未设置提醒时刻";
+  const now = new Date();
+  const weekdayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  for (let offset = 0; offset < 9; offset += 1) {
+    const day = new Date(now.getTime() + offset * 86400000);
+    const weekday = day.getDay();
+    if (weekday === 0 || weekday === 6) continue;
+    const slot = times[0];
+    const [hour, minute] = slot.split(":").map(Number);
+    if (offset === 0 && hour * 60 + minute <= now.getHours() * 60 + now.getMinutes()) continue;
+    return `${day.getMonth() + 1}月${day.getDate()}日 ${weekdayNames[weekday]} ${slot}`;
+  }
+  return `下一个工作日 ${times[0]}`;
+});
+const filteredReminderUsers = computed(() => {
+  const keyword = reminderUserKeyword.value.trim();
+  if (!keyword) return demoUsers;
+  return demoUsers.filter(
+    (item) => item.name.includes(keyword) || (item.department_name || "").includes(keyword),
+  );
+});
+const startWorklogReminderEdit = () => {
+  const policy = worklogReminderPolicy.value;
+  if (!policy) return;
+  worklogReminderDraft.enabled = policy.enabled;
+  worklogReminderDraft.send_channel = (policy.send_channel || "app") as "app" | "webhook" | "mock";
+  worklogReminderDraft.times = splitReminderTimes(policy.schedule_time);
+  worklogReminderDraft.target_scope = (policy.target_scope || "ALL") as "ALL" | "DEPARTMENT" | "USER";
+  worklogReminderDraft.target_id_list = parseReminderTargets(policy.target_ids);
+  worklogReminderDraft.only_unfilled = policy.only_unfilled !== false;
+  reminderTimeInput.value = "";
+  reminderUserKeyword.value = "";
+  worklogReminderEditing.value = true;
+};
+const cancelWorklogReminderEdit = () => {
+  if (worklogReminderSaving.value) return;
+  worklogReminderEditing.value = false;
+};
+const addReminderTime = (value?: string) => {
+  const slot = (value ?? reminderTimeInput.value).trim();
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(slot)) {
+    if (!value) errorMessage.value = "请填写 24 小时制时刻，例如 09:00";
+    return;
+  }
+  if (worklogReminderDraft.times.includes(slot)) {
+    if (!value) errorMessage.value = `已存在 ${slot} 这个时刻`;
+    return;
+  }
+  if (worklogReminderDraft.times.length >= 6) {
+    errorMessage.value = "最多设置 6 个提醒时刻";
+    return;
+  }
+  worklogReminderDraft.times = [...worklogReminderDraft.times, slot].sort();
+  reminderTimeInput.value = "";
+};
+const removeReminderTime = (index: number) => {
+  worklogReminderDraft.times = worklogReminderDraft.times.filter((_item, current) => current !== index);
+};
+const toggleReminderTarget = (id: number) => {
+  worklogReminderDraft.target_id_list = worklogReminderDraft.target_id_list.includes(id)
+    ? worklogReminderDraft.target_id_list.filter((item) => item !== id)
+    : [...worklogReminderDraft.target_id_list, id];
+};
+const applyReminderPolicy = (policy: NotificationPolicy, message: string) => {
+  integrationPolicies.value = integrationPolicies.value.map((item) =>
+    item.notification_type === WORKLOG_FILL_REMINDER ? policy : item,
+  );
+  if (integrationOverview.value) integrationOverview.value.policies = integrationPolicies.value;
+  successMessage.value = message;
+};
+const saveWorklogReminder = async () => {
+  if (worklogReminderSaving.value) return;
+  const policy = worklogReminderPolicy.value;
+  if (!policy) return;
+  if (!worklogReminderDraft.times.length) {
+    errorMessage.value = "请至少添加一个提醒时刻";
+    return;
+  }
+  if (worklogReminderDraft.target_scope !== "ALL" && !worklogReminderDraft.target_id_list.length) {
+    errorMessage.value = worklogReminderDraft.target_scope === "DEPARTMENT" ? "请选择至少一个部门" : "请选择至少一名人员";
+    return;
+  }
+  worklogReminderSaving.value = true;
+  try {
+    const updated = await api<NotificationPolicy>(`/api/v1/integrations/policies/${WORKLOG_FILL_REMINDER}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        enabled: worklogReminderDraft.enabled,
+        send_channel: worklogReminderDraft.send_channel,
+        remind_days_before: 0,
+        schedule_time: [...worklogReminderDraft.times].sort().join(","),
+        target_scope: worklogReminderDraft.target_scope,
+        target_ids: JSON.stringify(worklogReminderDraft.target_scope === "ALL" ? [] : worklogReminderDraft.target_id_list),
+        only_unfilled: worklogReminderDraft.only_unfilled,
+      }),
+    });
+    applyReminderPolicy(updated, "工时填报提醒已保存");
+    worklogReminderEditing.value = false;
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "工时填报提醒保存失败";
+  } finally {
+    worklogReminderSaving.value = false;
+  }
+};
+const toggleWorklogReminderEnabled = async () => {
+  const policy = worklogReminderPolicy.value;
+  if (!policy || worklogReminderSaving.value) return;
+  worklogReminderSaving.value = true;
+  try {
+    const updated = await api<NotificationPolicy>(`/api/v1/integrations/policies/${WORKLOG_FILL_REMINDER}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        enabled: !policy.enabled,
+        send_channel: policy.send_channel || "app",
+        remind_days_before: policy.remind_days_before || 0,
+        schedule_time: policy.schedule_time || "",
+        target_scope: policy.target_scope || "ALL",
+        target_ids: policy.target_ids || "[]",
+        only_unfilled: policy.only_unfilled !== false,
+      }),
+    });
+    applyReminderPolicy(updated, updated.enabled ? "工时填报提醒已启用" : "工时填报提醒已停用");
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "工时填报提醒状态更新失败";
+  } finally {
+    worklogReminderSaving.value = false;
+  }
 };
 const runWorklogFillReminder = async () => {
   if (worklogReminderRunning.value) return;
@@ -6840,10 +6998,6 @@ const saveApprovalPosition = async () => {
     successMessage.value = "审批岗位已更新，新配置只影响后续提交";
   } catch (error) { errorMessage.value = error instanceof Error ? error.message : "审批岗位保存失败"; }
 };
-const refreshApprovalWorkflows = async () => {
-  if (!canManage("approval_workflows")) return;
-  approvalWorkflows.value = await api<ApprovalWorkflow[]>("/api/v1/admin/workflows");
-};
 const syncOrgUsers = async () => {
   if (!canManage("integrations")) {
     errorMessage.value = "你没有集成与通知权限";
@@ -6901,7 +7055,6 @@ const loadRequestedPage = async () => {
     await refreshExpenseTasks();
   }
   if (page.value === "approvalPositions") await refreshApprovalPositions();
-  if (page.value === "approvalWorkflows") await refreshApprovalWorkflows();
   if (page.value === "projectBoard") {
     await refreshProjectBoard();
     await nextTick();
@@ -7141,7 +7294,7 @@ onMounted(() => {
           :class="{ active: page === 'adminPermissions' }"
           @click="go('adminPermissions')"
         >
-          <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#admin"></use></svg></span><span>管理员管理</span>
+          <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#admin"></use></svg></span><span>权限管理</span>
         </button>
         <button
           v-if="canManage('approval_positions')"
@@ -7150,14 +7303,6 @@ onMounted(() => {
           @click="go('approvalPositions')"
         >
           <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#approvals"></use></svg></span><span>审批岗位</span>
-        </button>
-        <button
-          v-if="canManage('approval_workflows')"
-          class="nav-item"
-          :class="{ active: page === 'approvalWorkflows' }"
-          @click="go('approvalWorkflows')"
-        >
-          <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#integration"></use></svg></span><span>审批流程</span>
         </button>
         <button
           v-if="canManage('configuration')"
@@ -10626,19 +10771,14 @@ onMounted(() => {
           <div v-if="positionFormOpen" class="modal-backdrop"><section class="modal-card position-modal"><div class="modal-head"><div><span class="eyebrow">POSITION MEMBERS</span><h2>配置{{ editingPosition?.name }}</h2><p class="muted">保存后仅影响后续提交的新单据</p></div><button class="modal-close" aria-label="关闭" @click="positionFormOpen=false">×</button></div><div class="position-basic-form"><label>岗位名称<input v-model.trim="positionForm.name" /></label><label>状态<select v-model="positionForm.status"><option value="ACTIVE">启用</option><option value="INACTIVE">停用</option></select></label><label class="span-2">岗位说明<textarea v-model.trim="positionForm.description" rows="2"></textarea></label></div><div class="member-picker"><div class="member-picker-head"><div><strong>岗位成员</strong><p class="muted">人员来自飞书组织架构；或签岗位任一成员处理后即完成该节点。</p></div><span>{{ positionForm.member_ids.length }} 人已选</span></div><label class="member-search"><span>筛选人员</span><input v-model.trim="positionMemberKeyword" placeholder="输入姓名或部门" /></label><div class="member-check-grid"><label v-for="person in filteredPositionUsers" :key="person.id" :class="{ selected: positionForm.member_ids.includes(person.id) }"><input v-model="positionForm.member_ids" type="checkbox" :value="person.id" /><i>{{ person.name.slice(0, 1) }}</i><span><strong>{{ person.name }}</strong><small>{{ person.department_path || person.department_name || '未同步部门' }}</small></span></label><div v-if="!filteredPositionUsers.length" class="empty compact-empty">没有匹配的组织人员</div></div></div><div class="form-footer"><button class="secondary" @click="positionFormOpen=false">取消</button><button class="primary" @click="saveApprovalPosition">保存岗位配置</button></div></section></div>
         </section>
 
-        <section v-else-if="page === 'approvalWorkflows'" class="page-view approval-config-page">
-          <div class="page-head"><div><div class="eyebrow">WORKFLOW VERSION</div><h1>审批流程</h1><p class="muted">已发布版本不可变，运行中的单据始终按提交时的人员与节点快照流转。</p></div><button class="secondary" @click="refreshApprovalWorkflows">刷新</button></div>
-          <section class="workflow-list"><article v-for="flow in approvalWorkflows" :key="flow.id" class="card workflow-card"><div class="section-head"><div><div class="workflow-title-line"><h2>{{ flow.name }}</h2><span class="tag success">V{{ flow.current_version }} · 已发布</span></div><p class="muted">适用：{{ flow.document_types.map(type => type.replace('PROJECT_EXPENSE_TRAVEL','差旅费用').replace('PROJECT_EXPENSE_INVOICE','无合同发票').replace('PROJECT_EXPENSE_OTHER','其他费用').replace('PAYMENT','合同付款')).join('、') }}</p></div><span>{{ flow.node_count }} 个节点</span></div><div class="workflow-rail"><template v-for="(node,index) in flow.nodes" :key="node.sequence"><div class="workflow-rail-node" :class="{payment: node.is_payment}"><i>{{ node.sequence }}</i><span><strong>{{ node.node_name }}</strong><small>{{ node.assignees[0]?.name || (node.node_code === 'PROJECT_APPROVER' ? '项目配置' : node.node_code === 'DIRECT_MANAGER' ? '飞书组织 / 项目上级' : '动态解析') }}{{ node.approval_mode === 'ANY' ? ' · 或签' : '' }}</small></span></div><b v-if="index < flow.nodes.length-1">→</b></template></div><footer><span>流程编码 {{ flow.code }}</span><span>新单据提交前会校验全部节点人员</span></footer></article></section>
-        </section>
-
         <section
           v-else-if="page === 'adminPermissions'"
           class="page-view rbac-admin-page"
         >
           <div class="page-head rbac-page-head">
             <div>
-              <div class="eyebrow">权限管理</div>
-              <h1>管理员管理</h1>
+              <div class="eyebrow">ADMIN / ACCESS CONTROL</div>
+              <h1>权限管理</h1>
               <p class="muted">用角色统一管理菜单、业务操作和数据访问范围。</p>
             </div>
             <div class="actions">
@@ -10722,7 +10862,7 @@ onMounted(() => {
           <div class="page-head">
             <div>
               <div class="eyebrow">ADMIN / ACCESS CONTROL</div>
-              <h1>管理员管理</h1>
+              <h1>权限管理</h1>
               <p class="muted">
                 只维护已加入管理的人员，并配置他们可以查看和操作的菜单。
               </p>
@@ -11060,6 +11200,86 @@ onMounted(() => {
               </section>
             </div>
           </div>
+            <section v-if="worklogReminderPolicy" class="card worklog-reminder-card">
+              <div class="section-head worklog-reminder-head">
+                <div>
+                  <span class="integration-section-label">WORKLOG FILL REMINDER</span>
+                  <h2>工时填报提醒</h2>
+                  <p class="muted">每个工作日按设定时刻提醒成员填报工时，已填报的人自动跳过。</p>
+                </div>
+                <div class="worklog-reminder-head-actions">
+                  <button
+                    type="button"
+                    class="reminder-switch"
+                    :class="{ on: worklogReminderPolicy.enabled }"
+                    :disabled="worklogReminderSaving || worklogReminderEditing"
+                    :aria-pressed="worklogReminderPolicy.enabled"
+                    @click="toggleWorklogReminderEnabled"
+                  ><i></i><span>{{ worklogReminderPolicy.enabled ? '已启用' : '已停用' }}</span></button>
+                  <button v-if="!worklogReminderEditing" class="primary" type="button" @click="startWorklogReminderEdit">配置提醒</button>
+                </div>
+              </div>
+              <div class="worklog-reminder-body">
+                <div class="reminder-block">
+                  <div class="reminder-block-head"><strong>提醒时刻</strong><span>周一至周五生效，节假日照常发送</span></div>
+                  <div class="reminder-time-chips">
+                    <span v-for="(slot, index) in activeReminderTimes" :key="slot" class="reminder-time-chip">{{ slot }}<button v-if="worklogReminderEditing" type="button" :aria-label="`删除 ${slot}`" @click="removeReminderTime(index)">×</button></span>
+                    <span v-if="!activeReminderTimes.length" class="reminder-placeholder">尚未设置提醒时刻</span>
+                  </div>
+                  <div v-if="worklogReminderEditing" class="reminder-time-editor">
+                    <input v-model="reminderTimeInput" type="time" aria-label="提醒时刻" />
+                    <button class="secondary" type="button" @click="addReminderTime(reminderTimeInput)">添加时刻</button>
+                    <span class="reminder-quick">常用时刻：<button v-for="slot in ['09:00', '12:00', '17:30']" :key="slot" type="button" class="reminder-quick-button" @click="addReminderTime(slot)">{{ slot }}</button></span>
+                  </div>
+                </div>
+                <div class="reminder-block">
+                  <div class="reminder-block-head"><strong>通知范围</strong><span>{{ reminderTargetText }}</span></div>
+                  <div class="reminder-scope">
+                    <button
+                      v-for="option in [{ value: 'ALL', label: '全部在职人员' }, { value: 'DEPARTMENT', label: '指定部门' }, { value: 'USER', label: '指定人员' }]"
+                      :key="option.value"
+                      type="button"
+                      class="reminder-scope-option"
+                      :class="{ active: activeReminderScope === option.value }"
+                      :disabled="!worklogReminderEditing"
+                      @click="worklogReminderDraft.target_scope = option.value as 'ALL' | 'DEPARTMENT' | 'USER'"
+                    >{{ option.label }}</button>
+                  </div>
+                  <template v-if="activeReminderScope === 'DEPARTMENT'">
+                    <div class="reminder-picker">
+                      <label v-for="item in departments" :key="item.id" class="reminder-pick" :class="{ selected: activeReminderIds.includes(item.id) }"><input type="checkbox" :checked="activeReminderIds.includes(item.id)" :disabled="!worklogReminderEditing" @change="toggleReminderTarget(item.id)" /><span>{{ item.name }}</span></label>
+                      <span v-if="!departments.length" class="reminder-placeholder">暂无部门数据，请先同步组织架构</span>
+                    </div>
+                  </template>
+                  <template v-else-if="activeReminderScope === 'USER'">
+                    <label v-if="worklogReminderEditing" class="reminder-search"><span>搜索人员</span><input v-model.trim="reminderUserKeyword" placeholder="输入姓名或部门" /></label>
+                    <div class="reminder-picker">
+                      <label v-for="item in (worklogReminderEditing ? filteredReminderUsers : demoUsers.filter((user) => activeReminderIds.includes(user.id)))" :key="item.id" class="reminder-pick" :class="{ selected: activeReminderIds.includes(item.id) }"><input type="checkbox" :checked="activeReminderIds.includes(item.id)" :disabled="!worklogReminderEditing" @change="toggleReminderTarget(item.id)" /><span>{{ item.name }}<small>{{ item.department_name || '未同步部门' }}</small></span></label>
+                      <span v-if="!filteredReminderUsers.length" class="reminder-placeholder">没有匹配的人员</span>
+                    </div>
+                  </template>
+                </div>
+                <div class="reminder-block">
+                  <div class="reminder-block-head"><strong>发送条件</strong></div>
+                  <label class="reminder-check"><input v-model="worklogReminderDraft.only_unfilled" type="checkbox" :disabled="!worklogReminderEditing" /><span>只提醒当天还没有填报的人</span></label>
+                  <label class="reminder-check"><span class="reminder-check-label">通知通道</span><select v-model="worklogReminderDraft.send_channel" :disabled="!worklogReminderEditing"><option value="app">飞书应用</option><option value="webhook">群机器人</option><option value="mock">仅记录不发送</option></select></label>
+                </div>
+              </div>
+              <footer class="worklog-reminder-foot">
+                <div class="reminder-foot-info">
+                  <span :class="{ 'reminder-warn': !activeReminderTimes.length }">{{ nextReminderText }}</span>
+                  <span class="reminder-foot-sep">·</span>
+                  <span>{{ reminderTargetText }}</span>
+                </div>
+                <div class="actions">
+                  <template v-if="worklogReminderEditing">
+                    <button class="secondary" type="button" :disabled="worklogReminderSaving" @click="cancelWorklogReminderEdit">取消</button>
+                    <button class="primary" type="button" :disabled="worklogReminderSaving" @click="saveWorklogReminder">{{ worklogReminderSaving ? '保存中…' : '保存设置' }}</button>
+                  </template>
+                  <button v-else class="secondary" type="button" :disabled="worklogReminderRunning || !worklogReminderPolicy.enabled" @click="runWorklogFillReminder">{{ worklogReminderRunning ? '发送中…' : '立即发送一次' }}</button>
+                </div>
+              </footer>
+            </section>
           </template>
           <template v-else>
           <section class="card integration-notification-card">

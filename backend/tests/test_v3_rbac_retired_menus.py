@@ -64,10 +64,44 @@ class RetiredMenuGrantTest(unittest.TestCase):
 
     def test_budget_templates_is_retired(self):
         self.assertIn("budget_templates", m.RETIRED_MENU_SEED)
-        self.assertIn("approval_workflows", m.RETIRED_MENU_SEED)
         menu = self.db.scalar(select(Menu).where(Menu.code == "budget_templates"))
         self.assertIsNotNone(menu)
         self.assertFalse(menu.is_active)
+
+    def test_approval_workflows_menu_is_purged(self):
+        """审批流程 v3.0.69 起删除：菜单行与其授权随启动清理，不再只是停用。"""
+        db = self.db
+        self.assertIn("approval_workflows", m.PURGED_MENU_SEED)
+        self.assertNotIn("approval_workflows", [item[0] for item in m.RBAC_MENU_SEED])
+        self.assertNotIn("approval_workflows", m.RETIRED_MENU_SEED)
+
+        m.seed_rbac(db)
+        m.purge_deleted_menus(db)
+        db.commit()
+
+        self.assertIsNone(db.scalar(select(Menu).where(Menu.code == "approval_workflows")))
+        self.assertEqual(
+            0,
+            len(db.scalars(select(RoleDataScope).where(RoleDataScope.resource == "approval_workflows")).all()),
+        )
+
+        # 还原共享临时库的状态：seed 会重新激活菜单，后面的用例依赖停用结果。
+        m.disable_retired_menus(db)
+        m.drop_retired_menu_grants(db)
+        db.commit()
+
+    def test_admins_menu_is_renamed(self):
+        """管理员管理改名为权限管理。"""
+        db = self.db
+        m.seed_rbac(db)
+        db.commit()
+        menu = db.scalar(select(Menu).where(Menu.code == "admins"))
+        self.assertIsNotNone(menu)
+        self.assertEqual("权限管理", menu.label)
+
+        m.disable_retired_menus(db)
+        m.drop_retired_menu_grants(db)
+        db.commit()
 
     def test_project_budget_is_retired_and_not_seeded(self):
         """项目预算项不再作为独立授权项：菜单停用，且内置角色不再被写入该授权。"""
@@ -100,7 +134,7 @@ class RetiredMenuGrantTest(unittest.TestCase):
         db = self.db
         role = db.scalar(select(Role).order_by(Role.id))
         self.assertIsNotNone(role)
-        retired = _grant_retired_menu(db, role, "approval_workflows")
+        retired = _grant_retired_menu(db, role, "budget_templates")
 
         m.drop_retired_menu_grants(db)
         db.commit()
@@ -118,7 +152,7 @@ class RetiredMenuGrantTest(unittest.TestCase):
         db = self.db
         role = db.scalar(select(Role).order_by(Role.id))
         self.assertIsNotNone(role)
-        retired = _grant_retired_menu(db, role, "approval_workflows")
+        retired = _grant_retired_menu(db, role, "budget_templates")
 
         view = m.role_permissions_view(db, role)
         self.assertNotIn(retired.code, [item.menu_code for item in view.permissions])
@@ -142,7 +176,7 @@ class RetiredMenuGrantTest(unittest.TestCase):
             self.assertIn(created.status_code, (200, 201), created.text)
             role_id = created.json()["id"]
 
-            retired_code = self.db.scalar(select(Menu.code).where(Menu.code == "approval_workflows"))
+            retired_code = self.db.scalar(select(Menu.code).where(Menu.code == "budget_templates"))
             payload = {
                 "permissions": [
                     {"menu_code": retired_code, "actions": ["VIEW"]},

@@ -143,7 +143,6 @@ from .schemas import (
     UserRoleUpdate,
     UserRoleView,
     UserView,
-    WorkflowDefinitionView,
     WorkflowPathNodeView,
     WorkflowTaskAction,
     WorkflowTaskList,
@@ -161,7 +160,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.68"
+API_VERSION = "3.0.69"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -191,20 +190,20 @@ RBAC_MENU_SEED = [
     ("cash_approval", None, "收付款复核", "projectReceipts", 40, ["VIEW", "APPROVE"]),
     ("budget_templates", None, "预算项模板", "budgetTemplates", 45, ["VIEW", "CREATE", "EDIT", "DELETE"]),
     ("integrations", None, "集成与通知", "integrations", 50, ["VIEW", "CONFIGURE", "SYNC", "EXPORT"]),
-    ("admins", None, "管理员管理", "adminPermissions", 51, ["VIEW", "CONFIGURE"]),
+    ("admins", None, "权限管理", "adminPermissions", 51, ["VIEW", "CONFIGURE"]),
     ("approval_positions", None, "复核岗位", "approvalPositions", 52, ["VIEW", "CONFIGURE"]),
     ("configuration", None, "基础配置", "configuration", 54, ["VIEW", "CREATE", "EDIT", "DELETE"]),
-    # 已退役菜单：仍保留在权限表里，历史授权才能继续解析，仅从导航下线。
-    ("approval_workflows", None, "审批流程", "approvalWorkflows", 92, ["VIEW", "CREATE", "EDIT", "PUBLISH", "DISABLE"]),
 ]
 # v3.0.59 起不再作为新单据入口的内置菜单：保留菜单行与授权，仅从导航下线。
 # 注意：这些 code 必须同时存在于 RBAC_MENU_SEED，否则历史授权行会因找不到菜单而解析失败。
 # project_budget（项目预算项）：预算项接口的鉴权实际走 projects，该菜单只在权限管理里多出一个
 # 勾选项，容易让人以为预算项需要单独授权，v3.0.66 起下线。
-RETIRED_MENU_SEED = ["approval_workflows", "budget_templates", "project_budget"]
+RETIRED_MENU_SEED = ["budget_templates", "project_budget"]
 # v3.0.68 起彻底删除的功能入口：菜单行与其全部授权一次性清理，不再出现在任何位置。
 # personnel_costs（人员成本）：日成本折算在 v3.0.61 已由人工成本结转单取代，功能整体删除。
-PURGED_MENU_SEED = ["personnel_costs"]
+# approval_workflows（审批流程）：v3.0.69 起删除。费用/付款的单据流转已由审批岗位与一级费用
+# 复核接管，页面只剩一个只读列表，没有可维护内容，继续挂着只会误导配置。
+PURGED_MENU_SEED = ["personnel_costs", "approval_workflows"]
 RBAC_ROLE_SEED = {
     "system_admin": ("系统管理员", "拥有全部菜单、操作和数据范围", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED}, "ALL"),
     "project_manager": ("项目经营管理员", "维护项目经营主数据、预算、成本和收付款", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED if code in {"projects", "project_budget", "contracts", "receipts", "payments", "project_expenses", "labor_costs", "cost_review", "project_board", "counterparties"}}, "ALL"),
@@ -1048,10 +1047,10 @@ def drop_retired_menu_grants(db: Session) -> None:
     db.query(UserRoleScope).filter(UserRoleScope.resource.in_(RETIRED_MENU_SEED)).delete(synchronize_session=False)
 
 
-def purge_personnel_cost_menu(db: Session) -> None:
-    """删除「人员成本」菜单行及其全部授权。
+def purge_deleted_menus(db: Session) -> None:
+    """删除已彻底下线功能的菜单行及其全部授权。
 
-    日成本折算在 v3.0.61 已由人工成本结转单取代，v3.0.68 起功能整体删除：
+    覆盖 PURGED_MENU_SEED 里的全部 code（人员成本、审批流程）：
     菜单行留着只会让权限管理多出一个无意义的勾选项。
     """
     menu_ids = [item.id for item in db.scalars(select(Menu).where(Menu.code.in_(PURGED_MENU_SEED))).all()]
@@ -1606,7 +1605,7 @@ def seed_data() -> None:
         seed_approval_workflows(db)
         disable_retired_menus(db)
         drop_retired_menu_grants(db)
-        purge_personnel_cost_menu(db)
+        purge_deleted_menus(db)
         grant_cost_review_permissions(db)
         normalize_project_categories(db)
         ensure_all_project_budget_items(db)
@@ -9969,24 +9968,6 @@ def update_approval_position(position_id: int, payload: ApprovalPositionUpdate, 
     db.commit()
     db.refresh(position)
     return approval_position_view(db, position)
-
-
-def workflow_definition_view(db: Session, definition: WorkflowDefinition) -> WorkflowDefinitionView:
-    version = db.get(WorkflowVersion, definition.current_version_id) if definition.current_version_id else None
-    nodes = list(db.scalars(select(WorkflowNode).where(WorkflowNode.workflow_version_id == version.id).order_by(WorkflowNode.sequence)).all()) if version else []
-    position_by_id = {item.id: item for item in db.scalars(select(ApprovalPosition)).all()}
-    views = [WorkflowPathNodeView(sequence=node.sequence, node_code=node.code, node_name=node.name, approval_mode=node.approval_mode, is_payment=node.is_payment, assignees=[{"id": node.position_id or 0, "name": position_by_id[node.position_id].name}] if node.position_id in position_by_id else [], status="PUBLISHED") for node in nodes]
-    try:
-        types = json.loads(definition.document_types or "[]")
-    except json.JSONDecodeError:
-        types = []
-    return WorkflowDefinitionView(id=definition.id, code=definition.code, name=definition.name, document_types=types, status=definition.status, current_version_id=definition.current_version_id, current_version=version.version if version else None, node_count=len(nodes), nodes=views)
-
-
-@app.get("/api/v1/admin/workflows", response_model=list[WorkflowDefinitionView])
-def list_workflows(x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> list[WorkflowDefinitionView]:
-    require_access(db, "approval_workflows", "VIEW", x_demo_user_id)
-    return [workflow_definition_view(db, item) for item in db.scalars(select(WorkflowDefinition).order_by(WorkflowDefinition.id)).all()]
 
 
 @app.get("/api/v1/timesheets/{timesheet_id}", response_model=TimesheetView)

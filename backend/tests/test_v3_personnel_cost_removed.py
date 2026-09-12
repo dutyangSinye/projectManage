@@ -23,7 +23,7 @@ class PersonnelCostRemovedTest(unittest.TestCase):
             m.seed_rbac(db)
             m.disable_retired_menus(db)
             m.drop_retired_menu_grants(db)
-            m.purge_personnel_cost_menu(db)
+            m.purge_deleted_menus(db)
             db.commit()
         finally:
             db.close()
@@ -51,7 +51,7 @@ class PersonnelCostRemovedTest(unittest.TestCase):
         db.add(UserRoleScope(user_id=user_id, role_id=role.id, resource="personnel_costs", scope_type="ALL", department_id=None))
         db.commit()
 
-        m.purge_personnel_cost_menu(db)
+        m.purge_deleted_menus(db)
         db.commit()
 
         self.assertEqual(

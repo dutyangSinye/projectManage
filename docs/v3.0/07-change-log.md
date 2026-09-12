@@ -1,5 +1,12 @@
 # v3.0 变更记录
 
+## v3.0.69（2026-09-12，待发布）
+
+- 「管理员管理」改名为「权限管理」：菜单、侧边导航、页面标题、管理权限勾选标签全部同步，资源码 `admins` 与接口路径不变，已配置授权不受影响；菜单 label 随启动回写，生产无需额外迁移。
+- 删除「审批流程」功能：前端页面、导航项、类型与刷新逻辑整体移除；后端删除 `GET /api/v1/admin/workflows`、`workflow_definition_view()` 与 `WorkflowDefinitionView` schema；`approval_workflows` 从菜单种子移入 `PURGED_MENU_SEED`，菜单行及全部授权随启动清理（`purge_personnel_cost_menu` 更名为 `purge_deleted_menus`）。workflow 六张表与项目费用提交实例的逻辑保留，历史审批轨迹不受影响。
+- 工时填报提醒改版：从通知策略统一弹窗里拆出独立配置卡，提醒时刻改为时刻标签（时间选择器 + 常用时刻快捷添加，自动排序去重，最多 6 个），通知范围改为分段按钮 + 勾选网格（人员支持搜索），底部给出「下次发送」预览（自动跳过周末）；顶部开关点击即保存，编辑态校验时刻与范围必填。
+- 后端测试 83 项通过（新增 2 项），`tsc -b` 与 `vite build` 通过。详见 `docs/v3.0/65-permission-rename-workflow-removal-reminder-redesign-v3.0.69.md`。
+
 ## v3.0.68（2026-09-11，已发布）
 
 - 删除旧「人员成本」模块：菜单行与全部授权、两个 `admin/personnel-costs` 接口、PersonnelCost schemas、前端整页入口与管理员权限勾选项。

@@ -1027,18 +1027,6 @@ class ApprovalPositionUpdate(BaseModel):
     member_ids: list[int] = []
 
 
-class WorkflowDefinitionView(BaseModel):
-    id: int
-    code: str
-    name: str
-    document_types: list[str] = []
-    status: str
-    current_version_id: int | None = None
-    current_version: int | None = None
-    node_count: int = 0
-    nodes: list[WorkflowPathNodeView] = []
-
-
 class WorkflowTaskView(BaseModel):
     id: int
     workflow_instance_id: int
