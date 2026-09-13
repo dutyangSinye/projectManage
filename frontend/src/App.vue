@@ -5922,7 +5922,7 @@ const notificationPolicyDescription = (type: string) =>
     WORKLOG_FILL_REMINDER: "每个工作日按设定时刻提醒成员填报工时，已填报的人员自动跳过。",
   } as Record<string, string>)[type] || "该业务事件的飞书通知策略。";
 const WORKLOG_FILL_REMINDER = "WORKLOG_FILL_REMINDER";
-const parseReminderTargets = (raw: string | null): number[] => {
+const parseReminderTargets = (raw?: string | null): number[] => {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -5982,15 +5982,15 @@ const activeReminderIds = computed(() =>
 );
 const reminderTargetText = computed(() => {
   const ids = activeReminderIds.value;
-  if (activeReminderScope.value === "ALL") return `全部在职人员（${demoUsers.length} 人）`;
+  if (activeReminderScope.value === "ALL") return `全部在职人员（${demoUsers.value.length} 人）`;
   if (activeReminderScope.value === "DEPARTMENT") {
-    const names = departments
+    const names = departments.value
       .filter((item) => ids.includes(item.id))
       .map((item) => item.name);
     if (!names.length) return "未选择部门";
     return names.length > 3 ? `${names.slice(0, 3).join("、")} 等 ${names.length} 个部门` : `${names.join("、")}（${names.length} 个部门）`;
   }
-  const names = demoUsers
+  const names = demoUsers.value
     .filter((item) => ids.includes(item.id))
     .map((item) => item.name);
   if (!names.length) return "未选择人员";
@@ -6014,8 +6014,8 @@ const nextReminderText = computed(() => {
 });
 const filteredReminderUsers = computed(() => {
   const keyword = reminderUserKeyword.value.trim();
-  if (!keyword) return demoUsers;
-  return demoUsers.filter(
+  if (!keyword) return demoUsers.value;
+  return demoUsers.value.filter(
     (item) => item.name.includes(keyword) || (item.department_name || "").includes(keyword),
   );
 });
@@ -7046,14 +7046,12 @@ const loadRequestedPage = async () => {
   }
   if (page.value === "projectExpenses") {
     await refreshProjectExpenses();
-    await refreshExpenseTasks();
   }
   if (page.value === "costReview") await refreshCostReview();
   if (page.value === "expenseDetail") {
     const expenseId = Number(new URLSearchParams(window.location.search).get("id") || 0);
-    if (expenseId) selectedExpense.value = await api<ProjectExpense>(`/api/v1/project-expenses/${expenseId}`);
-    await refreshExpenseTasks();
-  }
+  if (expenseId) selectedExpense.value = await api<ProjectExpense>(`/api/v1/project-expenses/${expenseId}`);
+}
   if (page.value === "approvalPositions") await refreshApprovalPositions();
   if (page.value === "projectBoard") {
     await refreshProjectBoard();

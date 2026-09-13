@@ -1,5 +1,11 @@
 # v3.0 变更记录
 
+## v3.0.70（2026-09-13，热修复）
+
+- 修复「集成与通知」页面白屏：v3.0.69 新增的工时填报提醒配置卡里，`reminderTargetText`、`filteredReminderUsers` 两个 computed 在脚本中直接对 `departments` / `demoUsers` 这两个 ref 调用 `.filter()` / 取 `.length`；脚本里没有模板的自动解包，渲染时抛 TypeError，整页渲染失败。当提醒范围配置为「指定部门 / 指定人员」时必现（生产库当时正是 DEPARTMENT）。已全部改为 `.value`，并把 `parseReminderTargets` 入参放宽为可空。
+- 顺带修复「项目费用」页面：`loadRequestedPage` 调用了一个从未定义的 `refreshExpenseTasks()`，进入项目费用列表或费用详情会抛 ReferenceError；该函数无对应状态，两处调用直接移除。
+- 无后端逻辑改动，仅版本号升至 3.0.70。`vue-tsc` 模板检查中提醒卡相关的 5 条错误与 refreshExpenseTasks 的 2 条错误已全部清零，仅剩 5 条与本次无关的历史告警。
+
 ## v3.0.69（2026-09-13，已发布生产）
 
 - 「管理员管理」改名为「权限管理」：菜单、侧边导航、页面标题、管理权限勾选标签全部同步，资源码 `admins` 与接口路径不变，已配置授权不受影响；菜单 label 随启动回写，生产无需额外迁移。
