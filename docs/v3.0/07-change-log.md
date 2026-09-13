@@ -1,6 +1,6 @@
 # v3.0 变更记录
 
-## v3.0.69（2026-09-12，待发布）
+## v3.0.69（2026-09-13，已发布生产）
 
 - 「管理员管理」改名为「权限管理」：菜单、侧边导航、页面标题、管理权限勾选标签全部同步，资源码 `admins` 与接口路径不变，已配置授权不受影响；菜单 label 随启动回写，生产无需额外迁移。
 - 删除「审批流程」功能：前端页面、导航项、类型与刷新逻辑整体移除；后端删除 `GET /api/v1/admin/workflows`、`workflow_definition_view()` 与 `WorkflowDefinitionView` schema；`approval_workflows` 从菜单种子移入 `PURGED_MENU_SEED`，菜单行及全部授权随启动清理（`purge_personnel_cost_menu` 更名为 `purge_deleted_menus`）。workflow 六张表与项目费用提交实例的逻辑保留，历史审批轨迹不受影响。
