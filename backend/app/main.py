@@ -160,7 +160,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.72"
+API_VERSION = "3.0.73"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -8989,8 +8989,6 @@ def submit_project_expense(expense_id: int, x_demo_user_id: int | None = Header(
     user = expense_access(db, expense, x_demo_user_id, action="EDIT")
     if expense.applicant_user_id != user.id or expense.status not in {"DRAFT", "REJECTED", "WITHDRAWN"}:
         raise HTTPException(409, "EXPENSE_NOT_SUBMITTABLE")
-    if not db.scalar(select(ProjectExpenseAttachment.id).where(ProjectExpenseAttachment.expense_id == expense.id).limit(1)):
-        raise HTTPException(400, "EXPENSE_ATTACHMENT_REQUIRED")
     validate_expense_invoice(db, expense)
     version, path = resolve_expense_workflow_path(db, expense)
     expense.version += 1
@@ -9640,8 +9638,6 @@ def submit_project_cost_entry(entry_id: int, x_demo_user_id: int | None = Header
         raise HTTPException(409, "PROJECT_COST_ENTRY_NOT_RESUBMITTABLE")
     if float(entry.amount or 0) <= 0:
         raise HTTPException(400, "PROJECT_COST_ENTRY_AMOUNT_REQUIRED")
-    if not cost_entry_attachment_views(db, entry.id):
-        raise HTTPException(400, "PROJECT_COST_ENTRY_ATTACHMENT_REQUIRED")
     old_status = entry.status
     entry.submitted_by = user.id
     entry.submitted_at = now_local()

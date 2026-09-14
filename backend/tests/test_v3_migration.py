@@ -18,7 +18,7 @@ from sqlalchemy import func, inspect, select
 from app.db.session import SessionLocal, engine
 from fastapi import HTTPException
 
-from app.db.models import AdminPermission, ApprovalPosition, ApprovalPositionMember, ApprovalTask, ConfigOption, Department, Notification, NotificationPolicy, Payment, Project, ProjectExpense, ProjectExpenseAttachment, ProjectExpensePayment, ProjectLedgerEntry, Role, RoleDataScope, RolePermission, SystemNotification, User, UserRole, UserRoleScope, WorkflowTask, Worklog
+from app.db.models import AdminPermission, ApprovalPosition, ApprovalPositionMember, ApprovalTask, ConfigOption, Department, Notification, NotificationPolicy, Payment, Project, ProjectBudgetItem, ProjectCostEntry, ProjectExpense, ProjectExpenseAttachment, ProjectExpensePayment, ProjectLedgerEntry, Role, RoleDataScope, RolePermission, SystemNotification, User, UserRole, UserRoleScope, WorkflowTask, Worklog
 from app.main import (
     activate_contract,
     approve_payment,
@@ -31,6 +31,7 @@ from app.main import (
     create_worklog,
     create_project,
     create_project_expense,
+    create_project_cost_entry,
     delete_project,
     demo_seed_enabled,
     get_role_permissions,
@@ -47,6 +48,7 @@ from app.main import (
     list_workflow_tasks,
     submit_worklog,
     submit_project_expense,
+    submit_project_cost_entry,
     submit_payment,
     run_stage_reminder_scan_once,
     send_cash_approval_notifications,
@@ -67,7 +69,7 @@ from app.main import (
     upgrade_schema,
     workbench_overview,
 )
-from app.schemas import CashRejectAction, ContractCreate, ContractStageCreate, DataScopeInput, NotificationPolicyBatchItem, NotificationPolicyBatchUpdate, PaymentCreate, PaymentUpdate, ProjectCreate, ProjectExpenseCreate, ProjectExpensePaymentAction, ProjectUpdate, ReceiptCreate, RoleCreate, RolePermissionInput, RolePermissionsUpdate, SupplierCreate, UserRoleUpdate, WorkflowTaskAction, WorklogCreate
+from app.schemas import CashRejectAction, ContractCreate, ContractStageCreate, DataScopeInput, NotificationPolicyBatchItem, NotificationPolicyBatchUpdate, PaymentCreate, PaymentUpdate, ProjectCreate, ProjectCostEntryCreate, ProjectExpenseCreate, ProjectExpensePaymentAction, ProjectUpdate, ReceiptCreate, RoleCreate, RolePermissionInput, RolePermissionsUpdate, SupplierCreate, UserRoleUpdate, WorkflowTaskAction, WorklogCreate
 
 
 class V3MigrationIntegrationTest(unittest.TestCase):
@@ -203,6 +205,67 @@ class V3MigrationIntegrationTest(unittest.TestCase):
         db.add(ApprovalPositionMember(position_id=position.id, user_id=user_id))
         db.commit()
         return position
+
+    def test_project_cost_entry_can_submit_without_attachment(self):
+        db = SessionLocal()
+        try:
+            suffix = uuid.uuid4().hex[:8]
+            department = db.scalar(select(Department).order_by(Department.id))
+            self.assertIsNotNone(department)
+            project = create_project(
+                ProjectCreate(
+                    code=f"PRJ-NOATT-{suffix}",
+                    name=f"无附件项目费用测试-{suffix}",
+                    project_type="BUSINESS_PROJECT",
+                    owner_user_id=1,
+                    department_id=department.id,
+                    approver_user_id=1,
+                    leader_user_id=1,
+                    start_date="2026-09-01",
+                    planned_end_date="2026-12-31",
+                    description="验证项目费用新增时附件可选。",
+                    budget_days=10,
+                    budget_cost=100000,
+                    status="ACTIVE",
+                    allow_worklog=True,
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            budget_item = db.scalar(
+                select(ProjectBudgetItem).where(
+                    ProjectBudgetItem.project_id == project.id,
+                    ProjectBudgetItem.code != "LABOR_COST",
+                    ProjectBudgetItem.is_active == True,
+                ).order_by(ProjectBudgetItem.sort_order, ProjectBudgetItem.id)
+            )
+            self.assertIsNotNone(budget_item)
+            self.grant_cost_review_position(db, 2)
+            entry = create_project_cost_entry(
+                ProjectCostEntryCreate(
+                    entry_kind="PROJECT_EXPENSE",
+                    project_id=project.id,
+                    budget_item_id=budget_item.id,
+                    amount=1280,
+                    occurred_on=date.today(),
+                    description="无附件提交复核测试",
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            self.assertEqual(entry.attachments, [])
+            notify_result = SimpleNamespace(status="SENT", message_id="msg-cost-no-attachment", error_message=None)
+            with patch("app.main.feishu.notify_cash_approval_submitted", return_value=notify_result):
+                submitted = submit_project_cost_entry(entry.id, x_demo_user_id=1, db=db)
+            self.assertEqual(submitted.status, "PENDING_REVIEW")
+            self.assertEqual(db.get(ProjectCostEntry, entry.id).status, "PENDING_REVIEW")
+            task = db.scalar(select(SystemNotification).where(
+                SystemNotification.source_type == "project_cost_project_expense",
+                SystemNotification.source_id == entry.id,
+            ))
+            self.assertIsNotNone(task)
+        finally:
+            db.close()
 
     def test_upgrade_is_idempotent_and_adds_v3_columns(self):
         project_columns = {column["name"] for column in inspect(engine).get_columns("projects")}
