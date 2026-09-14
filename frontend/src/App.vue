@@ -5560,15 +5560,18 @@ const statusLabel = (status: string) =>
     APPROVING: "审批中",
     APPROVED: "已通过",
     REJECTED: "已驳回",
+    WITHDRAWN: "已撤回",
     LOCKED: "已锁定",
   })[status] || status;
 const statusClass = (status: string) =>
   ({
     DRAFT: "neutral",
+    PENDING: "warning",
     PENDING_APPROVAL: "warning",
     APPROVING: "warning",
     APPROVED: "success",
     REJECTED: "danger",
+    WITHDRAWN: "neutral",
     LOCKED: "success",
   })[status] || "neutral";
 const userName = (id: number | null) =>
@@ -6454,6 +6457,23 @@ const openWorklog = async (item: Worklog) => {
   }
 };
 const openDetail = openWorklog;
+const withdrawWorklog = async (item: Worklog | null = null) => {
+  const target = item || selectedTask.value?.worklog || null;
+  if (!target) return;
+  if (!window.confirm("确定撤回这条工时审批，并恢复为草稿吗？")) return;
+  try {
+    await api<Worklog>(`/api/v1/worklogs/${target.id}/withdraw`, {
+      method: "POST",
+    });
+    selectedTask.value = null;
+    successMessage.value = "工时已撤回，已恢复为草稿";
+    await refreshWorklogStatus();
+    go("worklogs");
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "工时撤回失败";
+  }
+};
 const processTask = async (action: "approve" | "reject") => {
   if (!selectedTask.value) return;
   if (action === "reject" && rejectionReason.value.trim().length < 2) {
@@ -7718,6 +7738,13 @@ onMounted(() => {
                           @click="openDetail(item)"
                         >
                           查看详情
+                        </button
+                        ><button
+                          v-if="item.status === 'PENDING_APPROVAL'"
+                          class="text-button danger-button"
+                          @click="withdrawWorklog(item)"
+                        >
+                          撤回
                         </button>
                       </div>
                     </td>
@@ -8087,7 +8114,9 @@ onMounted(() => {
                       ? "等待处理"
                       : selectedTask.status === "APPROVED"
                         ? "审批通过"
-                        : "已驳回"
+                        : selectedTask.status === "WITHDRAWN"
+                          ? "已撤回"
+                          : "已驳回"
                   }}</b
                   ><small>{{
                     formatDateTime(selectedTask.processed_at) || "待审批人处理"
@@ -8097,6 +8126,13 @@ onMounted(() => {
                   >
                 </div>
               </div>
+              <button
+                v-if="selectedTask.worklog.status === 'PENDING_APPROVAL'"
+                class="secondary danger-button detail-back-button"
+                @click="withdrawWorklog()"
+              >
+                撤回审批
+              </button>
               <button
                 class="secondary detail-back-button"
                 @click="go('worklogs')"

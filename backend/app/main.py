@@ -160,7 +160,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.73"
+API_VERSION = "3.0.74"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -4093,6 +4093,39 @@ def submit_item(db: Session, item: Worklog, user: User) -> ApprovalTaskView:
     return task_view(db, task)
 
 
+def withdraw_worklog_item(db: Session, item: Worklog, user: User) -> WorklogView:
+    """提交人撤回未审批工时：关闭当前待办任务，并把工时恢复为草稿。"""
+    if item.user_id != user.id:
+        raise HTTPException(404, "WORKLOG_NOT_FOUND")
+    if item.status != "PENDING_APPROVAL":
+        raise HTTPException(409, "WORKLOG_NOT_WITHDRAWABLE")
+    task = db.scalar(
+        select(ApprovalTask)
+        .where(ApprovalTask.worklog_id == item.id, ApprovalTask.status == "PENDING")
+        .order_by(ApprovalTask.version.desc(), ApprovalTask.id.desc())
+    )
+    if not task:
+        raise HTTPException(409, "WORKLOG_NOT_WITHDRAWABLE")
+    processed_at = now_local()
+    task.status = "WITHDRAWN"
+    task.comment = "提交人撤回"
+    task.processed_at = processed_at
+    task.processed_by = user.id
+    old_status = item.status
+    item.status = "DRAFT"
+    item.approver_user_id = None
+    item.approver_name_snapshot = None
+    item.submitted_at = None
+    item.approved_at = None
+    item.rejection_reason = None
+    item.approval_comment = None
+    item.last_notified_at = None
+    audit(db, "approval_task", task.id, "WITHDRAW", user.id, old_status, "DRAFT", "提交人撤回，工时恢复草稿")
+    db.commit()
+    db.refresh(item)
+    return worklog_view(item)
+
+
 def oauth_secret() -> str:
     return session_secret()
 
@@ -7257,6 +7290,16 @@ def submit_worklog(worklog_id: int, x_demo_user_id: int | None = Header(default=
     if not item:
         raise HTTPException(404, "WORKLOG_NOT_FOUND")
     return submit_item(db, item, user)
+
+
+@app.post("/api/v1/worklogs/{worklog_id}/withdraw", response_model=WorklogView)
+def withdraw_worklog(worklog_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> WorklogView:
+    """提交人撤回审批中工时，恢复为草稿后可重新编辑提交。"""
+    user = current_user(db, x_demo_user_id)
+    item = db.get(Worklog, worklog_id)
+    if not item:
+        raise HTTPException(404, "WORKLOG_NOT_FOUND")
+    return withdraw_worklog_item(db, item, user)
 
 
 @app.get("/api/v1/approvals/pending", response_model=list[ApprovalTaskView])

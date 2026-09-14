@@ -66,6 +66,7 @@ from app.main import (
     update_notification_policies,
     update_project,
     update_payment,
+    withdraw_worklog,
     upgrade_schema,
     workbench_overview,
 )
@@ -613,6 +614,71 @@ class V3MigrationIntegrationTest(unittest.TestCase):
                 notify_mock.call_args.args[8],
                 f"http://example.test:8088/?page=approvalDetail&id={task.id}",
             )
+        finally:
+            if worklog_id:
+                task_ids = [item.id for item in db.scalars(select(ApprovalTask).where(ApprovalTask.worklog_id == worklog_id)).all()]
+                if task_ids:
+                    db.query(Notification).filter(Notification.approval_task_id.in_(task_ids)).delete(synchronize_session=False)
+                    db.query(ApprovalTask).filter(ApprovalTask.id.in_(task_ids)).delete(synchronize_session=False)
+                db.query(Worklog).filter(Worklog.id == worklog_id).delete(synchronize_session=False)
+                db.commit()
+            db.close()
+
+    def test_pending_worklog_can_be_withdrawn_to_draft(self):
+        db = SessionLocal()
+        worklog_id = None
+        try:
+            project = db.scalar(
+                select(Project).where(Project.status == "ACTIVE", Project.allow_worklog == True).order_by(Project.id)
+            )
+            approver = db.scalar(select(User).where(User.id != 1, User.employment_status == "ACTIVE").order_by(User.id))
+            self.assertIsNotNone(project)
+            self.assertIsNotNone(approver)
+            project.approver_user_id = approver.id
+            db.commit()
+
+            start = date(date.today().year + 5, 2, 3)
+            while start.weekday() >= 5:
+                start += timedelta(days=1)
+            worklog = create_worklog(
+                WorklogCreate(
+                    project_id=project.id,
+                    stage="开发",
+                    work_type="PROJECT",
+                    work_status="LOCAL",
+                    start_date=start,
+                    end_date=start,
+                    quantity=1,
+                    unit="DAY",
+                    description="工时撤回回归测试",
+                    submit=False,
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            worklog_id = worklog.id
+            with patch("app.main.feishu.notify_approval_submitted", return_value=SimpleNamespace(status="SENT", message_id="msg-worklog-withdraw", error_message=None)):
+                submitted = submit_worklog(worklog.id, x_demo_user_id=1, db=db)
+            self.assertEqual(submitted.status, "PENDING")
+            self.assertEqual(db.get(Worklog, worklog.id).status, "PENDING_APPROVAL")
+
+            withdrawn = withdraw_worklog(worklog.id, x_demo_user_id=1, db=db)
+            self.assertEqual(withdrawn.status, "DRAFT")
+            row = db.get(Worklog, worklog.id)
+            self.assertIsNone(row.submitted_at)
+            self.assertIsNone(row.approver_user_id)
+            task = db.scalar(select(ApprovalTask).where(ApprovalTask.worklog_id == worklog.id).order_by(ApprovalTask.id.desc()))
+            self.assertEqual(task.status, "WITHDRAWN")
+            self.assertEqual(task.processed_by, 1)
+            pending_count = int(db.scalar(select(func.count()).select_from(ApprovalTask).where(
+                ApprovalTask.approver_user_id == approver.id,
+                ApprovalTask.worklog_id == worklog.id,
+                ApprovalTask.status == "PENDING",
+            )) or 0)
+            self.assertEqual(pending_count, 0)
+            with self.assertRaises(HTTPException) as duplicate:
+                withdraw_worklog(worklog.id, x_demo_user_id=1, db=db)
+            self.assertEqual(duplicate.exception.status_code, 409)
         finally:
             if worklog_id:
                 task_ids = [item.id for item in db.scalars(select(ApprovalTask).where(ApprovalTask.worklog_id == worklog_id)).all()]
