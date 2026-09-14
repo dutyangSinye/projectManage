@@ -160,7 +160,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.70"
+API_VERSION = "3.0.71"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -1271,6 +1271,79 @@ def grant_cost_review_permissions(db: Session) -> None:
     db.flush()
 
 
+QUERY_INDEX_SPECS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("ix_users_department_status", "users", ("department_id", "employment_status")),
+    ("ix_projects_status_updated", "projects", ("status", "updated_at", "id")),
+    ("ix_projects_owner_status", "projects", ("owner_user_id", "status")),
+    ("ix_projects_department_status", "projects", ("department_id", "status")),
+    ("ix_projects_type_status", "projects", ("project_type", "status")),
+    ("ix_config_options_category_active_sort", "config_options", ("category", "is_active", "sort_order", "id")),
+    ("ix_config_options_parent_sort", "config_options", ("parent_id", "sort_order", "id")),
+    ("ix_budget_templates_category_active_sort", "budget_item_templates", ("project_category", "is_active", "sort_order", "id")),
+    ("ix_project_budget_items_project_sort", "project_budget_items", ("project_id", "is_active", "sort_order", "id")),
+    ("ix_worklogs_user_date", "worklogs", ("user_id", "start_date", "id")),
+    ("ix_worklogs_project_status_date", "worklogs", ("project_id", "status", "start_date", "id")),
+    ("ix_worklogs_status_date", "worklogs", ("status", "start_date", "id")),
+    ("ix_worklogs_approver_status_submitted", "worklogs", ("approver_user_id", "status", "submitted_at")),
+    ("ix_approval_tasks_approver_status", "approval_tasks", ("approver_user_id", "status", "submitted_at", "id")),
+    ("ix_approval_tasks_worklog_version", "approval_tasks", ("worklog_id", "version", "id")),
+    ("ix_notifications_status_created", "notifications", ("status", "created_at", "id")),
+    ("ix_notifications_recipient_status", "notifications", ("recipient_user_id", "status", "created_at")),
+    ("ix_audit_logs_object_created", "audit_logs", ("object_type", "object_id", "created_at", "id")),
+    ("ix_contracts_project_type_status", "contracts", ("project_id", "contract_type", "status", "id")),
+    ("ix_contracts_counterparty", "contracts", ("counterparty_type", "counterparty_id", "status")),
+    ("ix_contracts_budget_item", "contracts", ("budget_item_id", "status")),
+    ("ix_contract_stages_contract_sort", "contract_stages", ("contract_id", "status", "planned_date", "sort_order", "id")),
+    ("ix_contract_stages_due", "contract_stages", ("planned_date", "status", "reminder_paused")),
+    ("ix_receipts_project_status_date", "receipts", ("project_id", "status", "receipt_date", "id")),
+    ("ix_receipts_contract_status", "receipts", ("contract_id", "status", "id")),
+    ("ix_receipts_stage_status", "receipts", ("stage_id", "status", "id")),
+    ("ix_payments_project_status_date", "payments", ("project_id", "status", "payment_date", "id")),
+    ("ix_payments_contract_status", "payments", ("contract_id", "status", "id")),
+    ("ix_payments_stage_status", "payments", ("stage_id", "status", "id")),
+    ("ix_payments_budget_item_status", "payments", ("budget_item_id", "status")),
+    ("ix_project_ledger_project_type", "project_ledger_entries", ("project_id", "entry_type", "created_at", "id")),
+    ("ix_project_ledger_source", "project_ledger_entries", ("source_type", "source_id", "entry_type")),
+    ("ix_project_ledger_budget_item", "project_ledger_entries", ("budget_item_id", "entry_type")),
+    ("ix_system_notifications_status_created", "system_notifications", ("status", "created_at", "id")),
+    ("ix_system_notifications_recipient_status", "system_notifications", ("recipient_user_id", "status", "created_at")),
+    ("ix_system_notifications_source", "system_notifications", ("source_type", "source_id", "notification_type")),
+    ("ix_workflow_instances_document", "workflow_instances", ("document_type", "document_id", "status")),
+    ("ix_workflow_instances_applicant_status", "workflow_instances", ("applicant_user_id", "status", "submitted_at")),
+    ("ix_workflow_tasks_assignee_status", "workflow_tasks", ("assignee_user_id", "status", "created_at", "id")),
+    ("ix_workflow_tasks_instance_status", "workflow_tasks", ("workflow_instance_id", "status", "node_sequence", "id")),
+    ("ix_workflow_actions_instance_created", "workflow_action_logs", ("workflow_instance_id", "created_at", "id")),
+    ("ix_project_expenses_project_status", "project_expenses", ("project_id", "status", "updated_at", "id")),
+    ("ix_project_expenses_applicant_status", "project_expenses", ("applicant_user_id", "status", "occurred_on", "id")),
+    ("ix_project_expenses_type_status", "project_expenses", ("expense_type", "status", "occurred_on", "id")),
+    ("ix_project_expenses_budget_item_status", "project_expenses", ("budget_item_id", "status")),
+    ("ix_project_expense_attachments_expense", "project_expense_attachments", ("expense_id", "id")),
+    ("ix_project_expense_payments_expense_status", "project_expense_payments", ("expense_id", "status", "payment_date")),
+    ("ix_project_cost_entries_project_kind_status", "project_cost_entries", ("project_id", "entry_kind", "status", "id")),
+    ("ix_project_cost_entries_applicant_status", "project_cost_entries", ("applicant_user_id", "status", "created_at", "id")),
+    ("ix_project_cost_entries_month_kind", "project_cost_entries", ("accounting_month", "entry_kind", "status")),
+    ("ix_project_cost_entries_budget_item_status", "project_cost_entries", ("budget_item_id", "status")),
+)
+
+
+def ensure_query_indexes(connection) -> None:
+    """Create read-path indexes for existing SQLite databases without changing business data."""
+    inspector = inspect(engine)
+    existing_columns_by_table: dict[str, set[str]] = {}
+    for _, table, _ in QUERY_INDEX_SPECS:
+        if table not in existing_columns_by_table:
+            if not inspector.has_table(table):
+                existing_columns_by_table[table] = set()
+            else:
+                existing_columns_by_table[table] = {column["name"] for column in inspector.get_columns(table)}
+    for index_name, table, columns in QUERY_INDEX_SPECS:
+        existing_columns = existing_columns_by_table.get(table, set())
+        if not existing_columns or not set(columns).issubset(existing_columns):
+            continue
+        column_sql = ", ".join(f'"{column}"' for column in columns)
+        connection.execute(text(f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "{table}" ({column_sql})'))
+
+
 def upgrade_schema() -> None:
     """为现有 SQLite 数据库增量补齐字段，所有操作均可重复执行。"""
     Base.metadata.create_all(bind=engine)
@@ -1518,6 +1591,7 @@ def upgrade_schema() -> None:
         connection.execute(text("DELETE FROM config_options WHERE category = 'project_type' AND (value IN ('研发项目', '客户项目', '内部项目', 'CUSTOMER_PROJECT', 'INTERNAL_PROJECT') OR label IN ('研发项目', '客户项目', '内部项目'))"))
         # v3.0.59 起项目分类改用 project_category / project_sub_category 两级树，扁平的 project_type 分类整体下线。
         connection.execute(text("DELETE FROM config_options WHERE category = 'project_type'"))
+        ensure_query_indexes(connection)
 
 
 def ensure_user(db: Session, feishu_id: str, open_id: str, name: str, department_id: int, manager_name: str | None = None) -> User:

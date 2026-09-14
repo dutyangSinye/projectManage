@@ -82,6 +82,22 @@ class V3MigrationIntegrationTest(unittest.TestCase):
         engine.dispose()
         _temp_dir.cleanup()
 
+    def test_query_indexes_are_created_by_schema_upgrade(self):
+        inspector = inspect(engine)
+        expected = {
+            "worklogs": {"ix_worklogs_user_date", "ix_worklogs_project_status_date"},
+            "approval_tasks": {"ix_approval_tasks_approver_status"},
+            "contracts": {"ix_contracts_project_type_status"},
+            "receipts": {"ix_receipts_project_status_date"},
+            "payments": {"ix_payments_project_status_date"},
+            "project_expenses": {"ix_project_expenses_project_status"},
+            "workflow_tasks": {"ix_workflow_tasks_assignee_status"},
+            "project_cost_entries": {"ix_project_cost_entries_project_kind_status"},
+        }
+        for table, index_names in expected.items():
+            existing = {item["name"] for item in inspector.get_indexes(table)}
+            self.assertTrue(index_names.issubset(existing), f"{table} missing {index_names - existing}")
+
     def create_payment_fixture(self, db, suffix: str, *, stage_amount: float = 1000, payment_amount: float = 600):
         supplier = create_supplier(
             SupplierCreate(code=f"SUP-PAY-{suffix}", name=f"付款流程供应商-{suffix}", status="ACTIVE"),
