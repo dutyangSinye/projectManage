@@ -769,6 +769,7 @@ type Worklog = {
   stage: string;
   work_type: string;
   work_status: string;
+  fill_date: string;
   start_date: string;
   end_date: string;
   quantity: number;
@@ -1309,6 +1310,7 @@ const adminForm = reactive({
   stage: "开发",
   work_type: "PROJECT",
   work_status: "LOCAL",
+  fill_date: "",
   start_date: "",
   end_date: "",
   quantity: 1,
@@ -1604,6 +1606,7 @@ const form = reactive({
   stage: "开发",
   work_type: "PROJECT",
   work_status: "LOCAL",
+  fill_date: applicationDate(),
   start_date: applicationDate(),
   end_date: applicationDate(),
   quantity: 1,
@@ -5055,6 +5058,7 @@ const resetAdminWorklogForm = () => {
     stage: activeConfigOptions("project_stage")[0]?.value || "开发",
     work_type: activeConfigOptions("work_type")[0]?.value || "PROJECT",
     work_status: activeConfigOptions("work_status")[0]?.value || "LOCAL",
+    fill_date: "",
     start_date: "",
     end_date: "",
     quantity: 1,
@@ -5074,6 +5078,7 @@ const openAdminWorklogEditor = (item: AdminWorklog) => {
     stage: item.stage,
     work_type: item.work_type,
     work_status: item.work_status,
+    fill_date: item.fill_date || item.start_date,
     start_date: item.start_date,
     end_date: item.end_date,
     quantity: Number(item.quantity),
@@ -5093,9 +5098,10 @@ const saveAdminWorklog = async () => {
     return;
   }
   try {
+    const payload = { ...adminForm, fill_date: adminForm.fill_date || adminForm.start_date };
     await api<AdminWorklog>(`/api/v1/admin/worklogs/${adminEditingId.value}`, {
       method: "PATCH",
-      body: JSON.stringify(adminForm),
+      body: JSON.stringify(payload),
     });
     resetAdminWorklogForm();
     await refreshAdminWorklogs();
@@ -6339,6 +6345,7 @@ const openEditor = (item?: Worklog) => {
       stage: item.stage,
       work_type: item.work_type,
       work_status: item.work_status,
+      fill_date: item.fill_date || item.start_date,
       start_date: item.start_date,
       end_date: item.end_date,
       quantity: Number(item.quantity),
@@ -6352,6 +6359,7 @@ const openEditor = (item?: Worklog) => {
       stage: activeConfigOptions("project_stage")[0]?.value || "开发",
       work_type: activeConfigOptions("work_type")[0]?.value || "PROJECT",
       work_status: activeConfigOptions("work_status")[0]?.value || "LOCAL",
+      fill_date: applicationDate(),
       start_date: applicationDate(),
       end_date: applicationDate(),
       quantity: 1,
@@ -6379,16 +6387,17 @@ const saveWorklog = async (submit: boolean) => {
     return;
   }
   try {
+    const payload = { ...form, fill_date: form.fill_date || form.start_date };
     let item: Worklog;
     if (editingId.value)
       item = await api<Worklog>(`/api/v1/worklogs/${editingId.value}`, {
         method: "PATCH",
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
     else
       item = await api<Worklog>("/api/v1/worklogs", {
         method: "POST",
-        body: JSON.stringify({ ...form, submit }),
+        body: JSON.stringify({ ...payload, submit }),
       });
     if (submit && editingId.value) {
       const task = await api<ApprovalTask>(
@@ -7860,6 +7869,8 @@ onMounted(() => {
                   </option>
                 </select></label
               ><label
+                >填报日期<input v-model="form.fill_date" type="date" /></label
+              ><label
                 >开始日期<input v-model="form.start_date" type="date" /></label
               ><label
                 >结束日期<input v-model="form.end_date" type="date" /></label
@@ -7956,6 +7967,10 @@ onMounted(() => {
                     ><strong>{{
                       workStatusLabel(selectedTask.worklog.work_status)
                     }}</strong>
+                  </div>
+                  <div>
+                    <small>填报日期</small
+                    ><strong>{{ selectedTask.worklog.fill_date || selectedTask.worklog.start_date }}</strong>
                   </div>
                   <div>
                     <small>日期范围</small
@@ -8147,7 +8162,7 @@ onMounted(() => {
                   ><strong>{{ task.worklog.project_name_snapshot }}</strong
                   ><small
                     >{{ userName(task.submitter_user_id) }} ·
-                    {{ task.worklog.start_date }} ·
+                    填报 {{ task.worklog.fill_date || task.worklog.start_date }} ·
                     {{ task.worklog.quantity }} 天</small
                   ><small>{{ task.worklog.description }}</small></span
                 ><span
@@ -8240,6 +8255,10 @@ onMounted(() => {
                   ><strong>{{
                     workStatusLabel(selectedTask.worklog.work_status)
                   }}</strong>
+                </div>
+                <div>
+                  <small>填报日期</small
+                  ><strong>{{ selectedTask.worklog.fill_date || selectedTask.worklog.start_date }}</strong>
                 </div>
                 <div>
                   <small>日期范围</small
@@ -11698,10 +11717,10 @@ onMounted(() => {
           <section class="card admin-worklog-filter-card">
             <div class="admin-worklog-filters">
               <label
-                >开始日期<input v-model="adminPeriodStart" type="date"
+                >填报开始日期<input v-model="adminPeriodStart" type="date"
               /></label>
               <label
-                >结束日期<input v-model="adminPeriodEnd" type="date"
+                >填报结束日期<input v-model="adminPeriodEnd" type="date"
               /></label>
               <label
                 >部门<select v-model="adminDepartment">
@@ -11779,7 +11798,7 @@ onMounted(() => {
             <div class="section-head">
               <div>
                 <h2>全部工时明细</h2>
-                <p class="muted">按工时开始日期倒序排列，操作仅管理员可见。</p>
+                <p class="muted">按填报日期倒序排列，操作仅管理员可见。</p>
               </div>
               <span class="tag teal"
                 >总计 {{ adminSummary.quantity || 0 }} 天</span
@@ -11794,7 +11813,7 @@ onMounted(() => {
               <table class="admin-worklog-table">
                 <thead>
                   <tr>
-                    <th>日期</th>
+                    <th>填报 / 工时日期</th>
                     <th>人员 / 部门</th>
                     <th>项目与工作内容</th>
                     <th>阶段</th>
@@ -11807,10 +11826,11 @@ onMounted(() => {
                 <tbody>
                   <tr v-for="item in adminWorklogs" :key="item.id">
                     <td class="admin-worklog-date">
-                      {{ item.start_date
+                      <strong>{{ item.fill_date || item.start_date }}</strong>
+                      <small>{{ item.start_date
                       }}<small v-if="item.end_date !== item.start_date"
-                        >至 {{ item.end_date }}</small
-                      >
+                        > 至 {{ item.end_date }}</small
+                      ></small>
                     </td>
                     <td>
                       <strong>{{ item.user_name_snapshot }}</strong
@@ -11955,6 +11975,10 @@ onMounted(() => {
                       {{ option.label }}
                     </option>
                   </select></label
+                ><label
+                  >填报日期<input
+                    v-model="adminForm.fill_date"
+                    type="date" /></label
                 ><label
                   >开始日期<input
                     v-model="adminForm.start_date"

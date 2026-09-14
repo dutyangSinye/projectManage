@@ -160,7 +160,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.71"
+API_VERSION = "3.0.72"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -1282,6 +1282,7 @@ QUERY_INDEX_SPECS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("ix_budget_templates_category_active_sort", "budget_item_templates", ("project_category", "is_active", "sort_order", "id")),
     ("ix_project_budget_items_project_sort", "project_budget_items", ("project_id", "is_active", "sort_order", "id")),
     ("ix_worklogs_user_date", "worklogs", ("user_id", "start_date", "id")),
+    ("ix_worklogs_user_fill_date", "worklogs", ("user_id", "fill_date", "id")),
     ("ix_worklogs_project_status_date", "worklogs", ("project_id", "status", "start_date", "id")),
     ("ix_worklogs_status_date", "worklogs", ("status", "start_date", "id")),
     ("ix_worklogs_approver_status_submitted", "worklogs", ("approver_user_id", "status", "submitted_at")),
@@ -1471,6 +1472,7 @@ def upgrade_schema() -> None:
             ("sort_order", "INTEGER NOT NULL DEFAULT 0"),
         ],
         "worklogs": [
+            ("fill_date", "DATE"),
             ("approver_user_id", "INTEGER"),
             ("approver_name_snapshot", "VARCHAR(100)"),
             ("submitted_at", "DATETIME"),
@@ -1574,6 +1576,7 @@ def upgrade_schema() -> None:
                 f"PRAGMA user_version = {TIMEZONE_DATA_MIGRATION_VERSION}"
             )
         connection.execute(text("UPDATE worklogs SET approval_version = 0 WHERE approval_version IS NULL"))
+        connection.execute(text("UPDATE worklogs SET fill_date = start_date WHERE fill_date IS NULL"))
         # v3.0.61 起人工成本改由财务在本系统内按项目 + 核算月份录入（project_cost_entries），
         # 工时只统计人天、不再按单天成本折算，因此这里不再回填工时成本快照，也不再补写
         # source_type='WORKLOG' 的 PERSONNEL_COST 流水。历史已生成的流水保留原样以便追溯。
@@ -1762,7 +1765,7 @@ def seed_data() -> None:
                 (projects[2], 0.5, "管理", "组织项目例会并更新风险清单。", "DRAFT"),
             ]
             for project, quantity, stage, description, status in demo:
-                item = Worklog(user_id=user.id, user_name_snapshot=user.name, project_id=project.id, project_name_snapshot=project.name, stage=stage, work_type="PROJECT", work_status="LOCAL", start_date=today - timedelta(days=2), end_date=today - timedelta(days=2), quantity=quantity, unit="DAY", description=description, status=status, approved_at=now_local() if status == "APPROVED" else None)
+                item = Worklog(user_id=user.id, user_name_snapshot=user.name, project_id=project.id, project_name_snapshot=project.name, stage=stage, work_type="PROJECT", work_status="LOCAL", fill_date=today, start_date=today - timedelta(days=2), end_date=today - timedelta(days=2), quantity=quantity, unit="DAY", description=description, status=status, approved_at=now_local() if status == "APPROVED" else None)
                 db.add(item)
             db.flush()
 
@@ -6941,11 +6944,11 @@ def admin_worklog_dataset(
         user.id: (department_index.path(user.department_id) if user.department_id else "未分配部门")
         for user in db.scalars(select(User)).all()
     }
-    query = select(Worklog).order_by(Worklog.start_date.desc(), Worklog.id.desc())
+    query = select(Worklog).order_by(Worklog.fill_date.desc(), Worklog.start_date.desc(), Worklog.id.desc())
     if period_start:
-        query = query.where(Worklog.start_date >= period_start)
+        query = query.where(Worklog.fill_date >= period_start)
     if period_end:
-        query = query.where(Worklog.end_date <= period_end)
+        query = query.where(Worklog.fill_date <= period_end)
     if user_id:
         query = query.where(Worklog.user_id == user_id)
     if project_id:
@@ -7060,7 +7063,7 @@ def export_admin_worklogs(
     work_status_names = {"LOCAL": "本地", "BUSINESS_TRIP": "出差", "REMOTE": "异地办公", "LEAVE": "休假"}
     output = io.StringIO(newline="")
     writer = csv.writer(output)
-    writer.writerow(["工时单号", "填报人", "填报人部门", "项目部门", "项目", "项目阶段", "工时类型", "工作状态", "开始日期", "结束日期", "工时天数", "审批人", "审批状态", "工作描述", "提交时间", "处理时间", "审批意见"])
+    writer.writerow(["工时单号", "填报人", "填报人部门", "项目部门", "项目", "项目阶段", "工时类型", "工作状态", "填报日期", "开始日期", "结束日期", "工时天数", "审批人", "审批状态", "工作描述", "提交时间", "处理时间", "审批意见"])
     for item in items:
         task = latest_tasks.get(item.id)
         processed_at = task.processed_at if task and task.processed_at else item.approved_at or ""
@@ -7073,6 +7076,7 @@ def export_admin_worklogs(
             item.stage,
             work_type_names.get(item.work_type, item.work_type),
             work_status_names.get(item.work_status, item.work_status),
+            item.fill_date,
             item.start_date,
             item.end_date,
             f"{float(item.quantity):g}",
@@ -7103,18 +7107,19 @@ def update_admin_worklog(worklog_id: int, payload: WorklogUpdate, x_demo_user_id
     validate_worklog_dates(db, item.user_id, payload.start_date, payload.end_date, item.id)
     validate_worklog_quantity(payload.start_date, payload.end_date, payload.quantity)
     validate_worklog_options(db, payload.stage, payload.work_type, payload.work_status)
-    old_value = f"{item.project_name_snapshot}|{item.stage}|{item.start_date}|{item.end_date}|{item.quantity}|{item.description}"
+    old_value = f"{item.project_name_snapshot}|{item.stage}|{item.fill_date}|{item.start_date}|{item.end_date}|{item.quantity}|{item.description}"
     item.project_id = project.id
     item.project_name_snapshot = project.name
     item.stage = payload.stage
     item.work_type = payload.work_type
     item.work_status = payload.work_status
+    item.fill_date = payload.fill_date or payload.start_date
     item.start_date = payload.start_date
     item.end_date = payload.end_date
     item.quantity = payload.quantity
     item.unit = "DAY"
     item.description = payload.description
-    new_value = f"{item.project_name_snapshot}|{item.stage}|{item.start_date}|{item.end_date}|{item.quantity}|{item.description}"
+    new_value = f"{item.project_name_snapshot}|{item.stage}|{item.fill_date}|{item.start_date}|{item.end_date}|{item.quantity}|{item.description}"
     audit(db, "worklog", item.id, "ADMIN_UPDATE", admin.id, item.status, item.status, f"{old_value} -> {new_value}")
     db.commit()
     db.refresh(item)
@@ -7198,7 +7203,7 @@ def create_worklog(payload: WorklogCreate, x_demo_user_id: int | None = Header(d
     project = db.get(Project, payload.project_id)
     if not project or not project.allow_worklog or project.status != "ACTIVE":
         raise HTTPException(400, "PROJECT_NOT_FILLABLE")
-    item = Worklog(user_id=user.id, user_name_snapshot=user.name, project_id=project.id, project_name_snapshot=project.name, stage=payload.stage, work_type=payload.work_type, work_status=payload.work_status, start_date=payload.start_date, end_date=payload.end_date, quantity=payload.quantity, unit=payload.unit, description=payload.description, status="DRAFT")
+    item = Worklog(user_id=user.id, user_name_snapshot=user.name, project_id=project.id, project_name_snapshot=project.name, stage=payload.stage, work_type=payload.work_type, work_status=payload.work_status, fill_date=payload.fill_date or payload.start_date, start_date=payload.start_date, end_date=payload.end_date, quantity=payload.quantity, unit=payload.unit, description=payload.description, status="DRAFT")
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -7222,8 +7227,9 @@ def update_worklog(worklog_id: int, payload: WorklogUpdate, x_demo_user_id: int 
     project = db.get(Project, payload.project_id)
     if not project or not project.allow_worklog or project.status != "ACTIVE":
         raise HTTPException(400, "PROJECT_NOT_FILLABLE")
-    for key, value in payload.model_dump().items():
+    for key, value in payload.model_dump(exclude={"fill_date"}).items():
         setattr(item, key, value)
+    item.fill_date = payload.fill_date or payload.start_date
     item.project_id = project.id
     item.project_name_snapshot = project.name
     db.commit()

@@ -85,7 +85,7 @@ class V3MigrationIntegrationTest(unittest.TestCase):
     def test_query_indexes_are_created_by_schema_upgrade(self):
         inspector = inspect(engine)
         expected = {
-            "worklogs": {"ix_worklogs_user_date", "ix_worklogs_project_status_date"},
+            "worklogs": {"ix_worklogs_user_date", "ix_worklogs_project_status_date", "ix_worklogs_user_fill_date"},
             "approval_tasks": {"ix_approval_tasks_approver_status"},
             "contracts": {"ix_contracts_project_type_status"},
             "receipts": {"ix_receipts_project_status_date"},
@@ -97,6 +97,61 @@ class V3MigrationIntegrationTest(unittest.TestCase):
         for table, index_names in expected.items():
             existing = {item["name"] for item in inspector.get_indexes(table)}
             self.assertTrue(index_names.issubset(existing), f"{table} missing {index_names - existing}")
+
+    def test_worklog_fill_date_is_saved_and_defaults_to_start_date(self):
+        db = SessionLocal()
+        created_ids: list[int] = []
+        try:
+            project = db.scalar(select(Project).where(Project.status == "ACTIVE", Project.allow_worklog == True).order_by(Project.id))
+            self.assertIsNotNone(project)
+            start = date(date.today().year + 5, 1, 6)
+            while start.weekday() >= 5:
+                start += timedelta(days=1)
+            explicit_fill_date = start - timedelta(days=2)
+            created = create_worklog(
+                WorklogCreate(
+                    project_id=project.id,
+                    stage="开发",
+                    work_type="PROJECT",
+                    work_status="LOCAL",
+                    fill_date=explicit_fill_date,
+                    start_date=start,
+                    end_date=start,
+                    quantity=1,
+                    unit="DAY",
+                    description="填报日期显式保存回归测试",
+                    submit=False,
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            created_ids.append(created.id)
+            self.assertEqual(created.fill_date, explicit_fill_date)
+
+            default_start = start + timedelta(days=7)
+            created_default = create_worklog(
+                WorklogCreate(
+                    project_id=project.id,
+                    stage="开发",
+                    work_type="PROJECT",
+                    work_status="LOCAL",
+                    start_date=default_start,
+                    end_date=default_start,
+                    quantity=1,
+                    unit="DAY",
+                    description="填报日期默认开始日期回归测试",
+                    submit=False,
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            created_ids.append(created_default.id)
+            self.assertEqual(created_default.fill_date, default_start)
+        finally:
+            if created_ids:
+                db.query(Worklog).filter(Worklog.id.in_(created_ids)).delete(synchronize_session=False)
+                db.commit()
+            db.close()
 
     def create_payment_fixture(self, db, suffix: str, *, stage_amount: float = 1000, payment_amount: float = 600):
         supplier = create_supplier(

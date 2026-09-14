@@ -1057,6 +1057,7 @@ class WorklogCreate(BaseModel):
     stage: str = Field(min_length=1, max_length=40)
     work_type: str = "PROJECT"
     work_status: str = "LOCAL"
+    fill_date: date | None = None
     start_date: date
     end_date: date
     quantity: int = Field(gt=0, le=31)
@@ -1070,6 +1071,7 @@ class WorklogUpdate(BaseModel):
     stage: str = Field(min_length=1, max_length=40)
     work_type: str = "PROJECT"
     work_status: str = "LOCAL"
+    fill_date: date | None = None
     start_date: date
     end_date: date
     quantity: int = Field(gt=0, le=31)
@@ -1085,6 +1087,7 @@ class WorklogView(BaseModel):
     stage: str
     work_type: str
     work_status: str
+    fill_date: date
     start_date: date
     end_date: date
     quantity: float

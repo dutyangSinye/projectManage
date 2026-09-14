@@ -297,6 +297,7 @@ class Worklog(Base):
     stage: Mapped[str] = mapped_column(String(40))
     work_type: Mapped[str] = mapped_column(String(40))
     work_status: Mapped[str] = mapped_column(String(40))
+    fill_date: Mapped[date] = mapped_column(Date, nullable=False)
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date] = mapped_column(Date)
     quantity: Mapped[float] = mapped_column(Numeric(10, 2))
