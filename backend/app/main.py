@@ -160,7 +160,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.74"
+API_VERSION = "3.0.81"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -327,6 +327,8 @@ DEFAULT_NOTIFICATION_POLICIES = [
     ("COST_REVIEW_RESULT", "费用复核结果", True, 0),
     # v3.0.64：定时填报提醒默认停用，管理员配置提醒时间和通知范围后启用。
     ("WORKLOG_FILL_REMINDER", "工时填报提醒", False, 0),
+    # v3.0.81：T-1 补漏提醒默认停用，范围默认继承定时填报提醒，避免默认全量误发。
+    ("WORKLOG_FILL_REMINDER_T1", "工时补填提醒（T-1）", False, 0),
 ]
 # 工时填报提醒：默认每个工作日 09:00 提醒一次，未配置时回落到该默认值。
 WORKLOG_FILL_REMINDER_TYPE = "WORKLOG_FILL_REMINDER"
@@ -335,6 +337,9 @@ WORKLOG_FILL_REMINDER_DEFAULT_TIME = "09:00"
 WORKLOG_FILL_REMINDER_MATCH_WINDOW_MINUTES = 10
 # 工时只统计周一至周五，定时提醒同样跳过周末。
 WORKDAY_WEEKDAYS = (0, 1, 2, 3, 4)
+# v3.0.81：T-1 补漏提醒——每个工作日按设定时刻提醒补填上一个工作日漏填的工时。
+WORKLOG_FILL_REMINDER_T1_TYPE = "WORKLOG_FILL_REMINDER_T1"
+WORKLOG_FILL_REMINDER_T1_DEFAULT_TIME = "09:30"
 # v3.0.59 多级审批与出纳确认口径作废，对应通知策略随之下线（保留记录不再触发）。
 RETIRED_NOTIFICATION_TYPES = [
     "PENDING_PAYMENT",
@@ -1013,6 +1018,15 @@ def seed_notification_policies(db: Session) -> None:
             policy = NotificationPolicy(notification_type=notification_type, label=label, enabled=enabled, send_channel="app", remind_days_before=remind_days_before)
             if notification_type == WORKLOG_FILL_REMINDER_TYPE:
                 policy.schedule_time = WORKLOG_FILL_REMINDER_DEFAULT_TIME
+            if notification_type == WORKLOG_FILL_REMINDER_T1_TYPE:
+                policy.schedule_time = WORKLOG_FILL_REMINDER_T1_DEFAULT_TIME
+                # 补漏提醒与定时填报提醒面向同一批人，首次出现时直接继承范围配置。
+                source = db.scalar(select(NotificationPolicy).where(NotificationPolicy.notification_type == WORKLOG_FILL_REMINDER_TYPE))
+                if source:
+                    policy.target_scope = source.target_scope
+                    policy.target_ids = source.target_ids
+                    policy.only_unfilled = source.only_unfilled
+                    policy.send_channel = source.send_channel
             db.add(policy)
         elif policy.label != label:
             policy.label = label
@@ -1022,6 +1036,9 @@ def seed_notification_policies(db: Session) -> None:
     fill_policy = db.scalar(select(NotificationPolicy).where(NotificationPolicy.notification_type == WORKLOG_FILL_REMINDER_TYPE))
     if fill_policy and not (fill_policy.schedule_time or "").strip():
         fill_policy.schedule_time = WORKLOG_FILL_REMINDER_DEFAULT_TIME
+    t1_policy = db.scalar(select(NotificationPolicy).where(NotificationPolicy.notification_type == WORKLOG_FILL_REMINDER_T1_TYPE))
+    if t1_policy and not (t1_policy.schedule_time or "").strip():
+        t1_policy.schedule_time = WORKLOG_FILL_REMINDER_T1_DEFAULT_TIME
     # v3.0.59：多级审批相关的旧策略不再触发，改为停用而非删除，便于追溯历史通知。
     for policy in db.scalars(select(NotificationPolicy).where(NotificationPolicy.notification_type.in_(RETIRED_NOTIFICATION_TYPES))).all():
         policy.enabled = False
@@ -1441,12 +1458,23 @@ def upgrade_schema() -> None:
         "contract_stages": [
             ("remind_days_before", "INTEGER NOT NULL DEFAULT 7"),
             ("reminder_paused", "BOOLEAN NOT NULL DEFAULT 0"),
+            ("amount_without_tax", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
+            ("tax_rate", "NUMERIC(8, 6) NOT NULL DEFAULT 0"),
+            ("tax_amount", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
         ],
         "contracts": [
             ("budget_item_id", "INTEGER"),
             ("budget_item_name_snapshot", "VARCHAR(120)"),
             ("cost_major_snapshot", "VARCHAR(120)"),
             ("cost_minor_snapshot", "VARCHAR(120)"),
+            ("amount_without_tax", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
+            ("tax_rate", "NUMERIC(8, 6) NOT NULL DEFAULT 0"),
+            ("tax_amount", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
+        ],
+        "receipts": [
+            ("amount_without_tax", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
+            ("tax_rate", "NUMERIC(8, 6) NOT NULL DEFAULT 0"),
+            ("tax_amount", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
         ],
         "payments": [
             ("current_workflow_instance_id", "INTEGER"),
@@ -1455,12 +1483,23 @@ def upgrade_schema() -> None:
             ("budget_item_name_snapshot", "VARCHAR(120)"),
             ("cost_major_snapshot", "VARCHAR(120)"),
             ("cost_minor_snapshot", "VARCHAR(120)"),
+            ("amount_without_tax", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
+            ("tax_rate", "NUMERIC(8, 6) NOT NULL DEFAULT 0"),
+            ("tax_amount", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
         ],
         "project_expenses": [
             ("budget_item_id", "INTEGER"),
             ("budget_item_name_snapshot", "VARCHAR(120)"),
             ("cost_major_snapshot", "VARCHAR(120)"),
             ("cost_minor_snapshot", "VARCHAR(120)"),
+            ("amount_without_tax", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
+            ("tax_rate", "NUMERIC(8, 6) NOT NULL DEFAULT 0"),
+            ("tax_amount", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
+        ],
+        "project_cost_entries": [
+            ("amount_without_tax", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
+            ("tax_rate", "NUMERIC(8, 6) NOT NULL DEFAULT 0"),
+            ("tax_amount", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
         ],
         "project_ledger_entries": [
             ("budget_item_id", "INTEGER"),
@@ -1538,6 +1577,21 @@ def upgrade_schema() -> None:
             for name, definition in columns:
                 if name not in existing:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+        for table in ("contracts", "contract_stages", "receipts", "payments", "project_expenses", "project_cost_entries"):
+            if not inspect(engine).has_table(table):
+                continue
+            existing = {column["name"] for column in inspect(engine).get_columns(table)}
+            if {"amount", "amount_without_tax", "tax_rate", "tax_amount"}.issubset(existing):
+                connection.execute(text(f"""
+                    UPDATE {table}
+                    SET amount_without_tax = amount,
+                        tax_rate = 0,
+                        tax_amount = 0
+                    WHERE COALESCE(amount, 0) > 0
+                      AND COALESCE(amount_without_tax, 0) = 0
+                      AND COALESCE(tax_rate, 0) = 0
+                      AND COALESCE(tax_amount, 0) = 0
+                """))
         for table, columns in retired_cost_classification_columns.items():
             if not inspect(engine).has_table(table):
                 continue
@@ -2076,6 +2130,30 @@ def project_scope_ids(db: Session, user: User, resource: str = "projects") -> se
     return set()
 
 
+def tax_amount_fields(amount: float | int | None, tax_rate: float | int | None = 0, amount_without_tax: float | int | None = None) -> dict[str, float]:
+    """根据含税金额、税率和可选未税金额，统一计算未税金额与税额。
+
+    现有 amount 字段在 v3.0.78 后统一解释为含税金额；旧请求不传未税金额时，
+    后端按含税金额和税率自动补齐，保证旧接口兼容。
+    """
+    gross = round(float(amount or 0), 2)
+    rate = max(float(tax_rate or 0), 0)
+    if amount_without_tax is None:
+        net = round(gross / (1 + rate), 2) if rate > 0 else gross
+    else:
+        net = round(float(amount_without_tax or 0), 2)
+    tax = round(max(gross - net, 0), 2)
+    return {"amount_without_tax": net, "tax_rate": round(rate, 6), "tax_amount": tax}
+
+
+def apply_tax_amount_fields(target: object, amount: float | int | None, tax_rate: float | int | None = 0, amount_without_tax: float | int | None = None) -> None:
+    """把统一税额计算结果写回 ORM 对象。"""
+    fields = tax_amount_fields(amount, tax_rate, amount_without_tax)
+    setattr(target, "amount_without_tax", fields["amount_without_tax"])
+    setattr(target, "tax_rate", fields["tax_rate"])
+    setattr(target, "tax_amount", fields["tax_amount"])
+
+
 def contract_view(db: Session, contract: Contract) -> ContractView:
     project = db.get(Project, contract.project_id)
     stages = db.scalars(
@@ -2114,6 +2192,9 @@ def contract_view(db: Session, contract: Contract) -> ContractView:
         counterparty_id=contract.counterparty_id,
         counterparty_name=counterparty_name,
         amount=contract_amount,
+        amount_without_tax=float(contract.amount_without_tax or 0),
+        tax_rate=float(contract.tax_rate or 0),
+        tax_amount=float(contract.tax_amount or 0),
         budget_item_id=contract.budget_item_id,
         budget_item_name=contract.budget_item_name_snapshot,
         sign_date=contract.sign_date,
@@ -2332,7 +2413,7 @@ IMPORT_MAX_ROWS = 5000
 IMPORT_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "customers": ("客户名称",),
     "suppliers": ("供应商名称",),
-    "contracts": ("合同编号", "合同名称", "项目名称", "合同类型", "往来单位名称", "合同金额"),
+    "contracts": ("合同编号", "合同名称", "项目名称", "合同类型", "往来单位名称", "合同含税金额"),
 }
 
 
@@ -2426,10 +2507,13 @@ def _import_records(resource: str, rows: list[tuple[int, list[str]]]) -> tuple[l
     for index, header in enumerate(headers):
         if header and header not in positions:
             positions[header] = index
+    physical_position_count = len(positions)
+    if resource == "contracts" and "合同含税金额" not in positions and "合同金额" in positions:
+        positions["合同含税金额"] = positions["合同金额"]
     for field in required_fields:
         if field not in positions:
             errors.append({"row": rows[0][0], "field": field, "message": "缺少此列"})
-    if len(positions) != len([header for header in headers if header]):
+    if physical_position_count != len([header for header in headers if header]):
         errors.append({"row": rows[0][0], "field": "表头", "message": "表头存在重复列，请保留每个字段一列"})
     records: list[dict[str, object]] = []
     for row_number, values in rows[1:]:
@@ -2550,12 +2634,12 @@ def _validate_contract_import(db: Session, user: User, records: list[dict[str, o
                 errors.append({"row": row, "field": "往来单位名称", "message": f"未找到名称为“{values['往来单位名称']}”的启用{expected}"})
                 row_has_error = True
         try:
-            amount = float(values["合同金额"])
+            amount = float(values["合同含税金额"])
             if not math.isfinite(amount) or amount < 0:
                 raise ValueError
         except ValueError:
-            if values["合同金额"]:
-                errors.append({"row": row, "field": "合同金额", "message": "必须是大于等于 0 的数字"})
+            if values["合同含税金额"]:
+                errors.append({"row": row, "field": "合同含税金额", "message": "必须是大于等于 0 的数字"})
             row_has_error = True
             amount = 0
         if not row_has_error:
@@ -2747,6 +2831,9 @@ def contract_stage_view(db: Session, stage: ContractStage) -> ContractStageView:
     stage_amount = float(stage.amount or 0)
     payload = ContractStageView.model_validate(stage).model_dump()
     payload.update(
+        amount_without_tax=float(stage.amount_without_tax or 0),
+        tax_rate=float(stage.tax_rate or 0),
+        tax_amount=float(stage.tax_amount or 0),
         settled_amount=round(settled, 2),
         remaining_amount=round(max(stage_amount - settled, 0), 2),
         settlement_rate=round(settled / stage_amount * 100, 1) if stage_amount > 0 else None,
@@ -2784,7 +2871,7 @@ def approval_timeline(db: Session, object_type: str, object_id: int) -> list[App
     ]
 
 
-def receipt_view(db: Session, receipt: Receipt) -> ReceiptView:
+def receipt_view(db: Session, receipt: Receipt, viewer_id: int | None = None) -> ReceiptView:
     project = db.get(Project, receipt.project_id)
     contract = db.get(Contract, receipt.contract_id)
     stage = db.get(ContractStage, receipt.stage_id) if receipt.stage_id else None
@@ -2805,6 +2892,9 @@ def receipt_view(db: Session, receipt: Receipt) -> ReceiptView:
         stage_id=receipt.stage_id,
         stage_name=stage.name if stage else None,
         amount=float(receipt.amount or 0),
+        amount_without_tax=float(receipt.amount_without_tax or 0),
+        tax_rate=float(receipt.tax_rate or 0),
+        tax_amount=float(receipt.tax_amount or 0),
         receipt_date=receipt.receipt_date,
         payer_name=receipt.payer_name,
         payer_bank_name=receipt.payer_bank_name,
@@ -2822,6 +2912,7 @@ def receipt_view(db: Session, receipt: Receipt) -> ReceiptView:
         stage_remaining_amount=round(max(stage_amount - stage_settled, 0), 2) if stage_amount is not None and stage_settled is not None else None,
         stage_settlement_rate=round(stage_settled / stage_amount * 100, 1) if stage_amount and stage_settled is not None else None,
         approval_timeline=approval_timeline(db, "receipt", receipt.id),
+        can_withdraw=bool(viewer_id and receipt.status == "PENDING" and receipt.submitted_by == viewer_id),
     )
 
 
@@ -2849,6 +2940,9 @@ def payment_view(db: Session, payment: Payment, viewer_id: int | None = None) ->
         stage_id=payment.stage_id,
         stage_name=stage.name if stage else None,
         amount=float(payment.amount or 0),
+        amount_without_tax=float(payment.amount_without_tax or 0),
+        tax_rate=float(payment.tax_rate or 0),
+        tax_amount=float(payment.tax_amount or 0),
         payment_date=payment.payment_date,
         payee_name=payment.payee_name,
         payee_bank_name=payment.payee_bank_name,
@@ -2887,6 +2981,7 @@ def payment_view(db: Session, payment: Payment, viewer_id: int | None = None) ->
                 )
             )
         ),
+        can_withdraw=bool(viewer_id and payment.status == "PENDING_REVIEW" and payment.submitted_by == viewer_id),
     )
 
 
@@ -3831,17 +3926,50 @@ def _policy_id_list(value: str | None) -> list[int]:
     return result
 
 
+def expand_department_ids(db: Session, department_ids: list[int]) -> list[int]:
+    """把选中的部门展开成包含所有下级部门的 id 集合。
+
+    组织架构是飞书同步过来的多层树，只按 department_id 精确匹配会漏掉挂在
+    子部门下的人（例如选了产品研发部，应用创新中心的人收不到提醒）。
+    """
+    if not department_ids:
+        return []
+    index = DepartmentIndex(list(db.scalars(select(Department)).all()))
+    result: list[int] = []
+    seen: set[int] = set()
+    for department_id in department_ids:
+        for item in index.descendants(department_id):
+            if item not in seen:
+                seen.add(item)
+                result.append(item)
+    return result
+
+
 def worklog_reminder_recipients(db: Session, policy: NotificationPolicy) -> list[User]:
-    """按策略范围解析提醒对象；离职或停用人员不会收到提醒。"""
+    """按策略范围解析提醒对象；离职或停用人员不会收到提醒。
+
+    指定部门时包含其全部下级部门，避免子部门成员收不到提醒。
+    """
     scope = policy.target_scope or "ALL"
     if scope == "ALL":
         return list(db.scalars(select(User).where(User.employment_status == "ACTIVE").order_by(User.id)).all())
-    ids = _policy_id_list(policy.target_ids)
+    raw_ids = _policy_id_list(policy.target_ids)
+    if not raw_ids:
+        return []
+    ids = expand_department_ids(db, raw_ids) if scope == "DEPARTMENT" else raw_ids
     if not ids:
         return []
     query = select(User).where(User.employment_status == "ACTIVE")
     query = query.where(User.department_id.in_(ids) if scope == "DEPARTMENT" else User.id.in_(ids))
     return list(db.scalars(query.order_by(User.id)).all())
+
+
+def previous_workday(day: date) -> date:
+    """返回指定日期之前最近的一个工作日（周一至周五）。"""
+    cursor = day - timedelta(days=1)
+    while cursor.weekday() not in WORKDAY_WEEKDAYS:
+        cursor -= timedelta(days=1)
+    return cursor
 
 
 def has_worklog_on(db: Session, user_id: int, day: date) -> bool:
@@ -3913,6 +4041,68 @@ def run_worklog_fill_reminder_scan_once(force: bool = False) -> dict[str, int]:
         db.close()
 
 
+def run_worklog_fill_reminder_t1_scan_once(force: bool = False) -> dict[str, int]:
+    """T-1 补漏提醒：每个工作日按设定时刻提醒补填上一个工作日漏填的工时。
+
+    与当天填报提醒的区别是只检查上一个工作日，用于兜住当天忘填的人；
+    同一天同一时刻每个人只发一次，已补填的人会在下次扫描时自动跳过。
+    """
+    db = SessionLocal()
+    try:
+        policy = notification_policy(db, WORKLOG_FILL_REMINDER_T1_TYPE)
+        if not policy or not policy.enabled:
+            return {"scanned": 0, "sent": 0, "failed": 0, "skipped": 0}
+        now = now_local()
+        slot = f"manual{now:%H%M}" if force else worklog_fill_reminder_due(policy, now)
+        if slot is None:
+            return {"scanned": 0, "sent": 0, "failed": 0, "skipped": 0}
+        target_day = previous_workday(today_local())
+        recipients = worklog_reminder_recipients(db, policy)
+        base = os.getenv("SYSTEM_PUBLIC_URL", "http://localhost:8088").rstrip("/")
+        channel = notification_policy_channel(db, WORKLOG_FILL_REMINDER_T1_TYPE)
+        weekday_label = "一二三四五六日"[target_day.weekday()]
+        sent = 0
+        failed = 0
+        skipped = 0
+        for user in recipients:
+            key = f"worklog-fill-reminder-t1:{user.id}:{target_day.isoformat()}:{slot}"
+            if db.scalar(select(SystemNotification.id).where(SystemNotification.idempotency_key == key)):
+                skipped += 1
+                continue
+            if policy.only_unfilled and has_worklog_on(db, user.id, target_day):
+                skipped += 1
+                continue
+            result = feishu.notify_worklog_fill_reminder_t1(
+                user.name,
+                f"{target_day.isoformat()}（周{weekday_label}）",
+                f"{base}/?page=worklogs",
+                user.open_id,
+                channel=channel,
+            )
+            db.add(
+                SystemNotification(
+                    notification_type=WORKLOG_FILL_REMINDER_T1_TYPE,
+                    source_type="WORKLOG_REMINDER",
+                    source_id=user.id,
+                    recipient_user_id=user.id,
+                    channel=channel or feishu.notification_mode,
+                    idempotency_key=key,
+                    status=result.status,
+                    message_id=result.message_id,
+                    error_message=result.error_message,
+                    sent_at=now_local() if result.status == "SENT" else None,
+                )
+            )
+            if result.status == "SENT":
+                sent += 1
+            else:
+                failed += 1
+        db.commit()
+        return {"scanned": len(recipients), "sent": sent, "failed": failed, "skipped": skipped}
+    finally:
+        db.close()
+
+
 def reminder_scan_loop() -> None:
     """后台守护任务：合同类提醒按配置间隔扫描（默认 10 分钟），填报提醒按分钟精度检查。"""
     interval = max(30, int(os.getenv("REMINDER_SCAN_INTERVAL_SECONDS", "600")))
@@ -3921,6 +4111,10 @@ def reminder_scan_loop() -> None:
     while True:
         try:
             run_worklog_fill_reminder_scan_once()
+        except Exception:
+            pass
+        try:
+            run_worklog_fill_reminder_t1_scan_once()
         except Exception:
             pass
         try:
@@ -4890,6 +5084,7 @@ async def _execute_import_endpoint(resource: str, file: UploadFile, x_demo_user_
         for payload in payloads:
             if resource == "contracts":
                 item = Contract(**payload)
+                apply_tax_amount_fields(item, payload.get("amount", 0), 0, payload.get("amount", 0))
                 db.add(item)
                 db.flush()
                 audit(db, "contract", item.id, "CREATE", user.id, None, item.status)
@@ -5753,6 +5948,7 @@ def create_contract(payload: ContractCreate, x_demo_user_id: int | None = Header
         status=payload.status,
         description=payload.description.strip() if payload.description and payload.description.strip() else None,
     )
+    apply_tax_amount_fields(contract, payload.amount, payload.tax_rate, payload.amount_without_tax)
     apply_budget_snapshot(contract, budget_item if payload.contract_type == "EXPENSE" else None)
     db.add(contract)
     db.flush()
@@ -5809,6 +6005,7 @@ def update_contract(contract_id: int, payload: ContractUpdate, x_demo_user_id: i
     contract.counterparty_id = payload.counterparty_id
     contract.counterparty_name = counterparty_name
     contract.amount = payload.amount
+    apply_tax_amount_fields(contract, payload.amount, payload.tax_rate, payload.amount_without_tax)
     contract.sign_date = payload.sign_date
     contract.start_date = payload.start_date
     contract.end_date = payload.end_date
@@ -6160,7 +6357,9 @@ def create_contract_stage(contract_id: int, payload: ContractStageCreate, x_demo
     require_access(db, "contracts", "CREATE", x_demo_user_id)
     contract = resolve_contract(db, contract_id)
     ensure_project_in_scope(db, user, contract.project_id)
-    stage = ContractStage(contract_id=contract.id, **payload.model_dump())
+    data = payload.model_dump()
+    data.update(tax_amount_fields(payload.amount, payload.tax_rate, payload.amount_without_tax))
+    stage = ContractStage(contract_id=contract.id, **data)
     db.add(stage)
     db.flush()
     audit(db, "contract_stage", stage.id, "CREATE", user.id, None, stage.status)
@@ -6179,7 +6378,9 @@ def update_contract_stage(stage_id: int, payload: ContractStageUpdate, x_demo_us
     contract = resolve_contract(db, stage.contract_id)
     ensure_project_in_scope(db, user, contract.project_id)
     old_status = stage.status
-    for key, value in payload.model_dump().items():
+    data = payload.model_dump()
+    data.update(tax_amount_fields(payload.amount, payload.tax_rate, payload.amount_without_tax))
+    for key, value in data.items():
         setattr(stage, key, value)
     audit(db, "contract_stage", stage.id, "UPDATE", user.id, old_status, stage.status)
     db.commit()
@@ -6241,7 +6442,7 @@ def list_receipts(
             | Receipt.comment.contains(value)
             | Receipt.contract_id.in_(select(Contract.id).where(Contract.name.contains(value) | Contract.contract_no.contains(value)))
         )
-    return [receipt_view(db, item) for item in db.scalars(query).all()]
+    return [receipt_view(db, item, user.id) for item in db.scalars(query).all()]
 
 
 @app.post("/api/v1/receipts", response_model=ReceiptView, status_code=201)
@@ -6270,6 +6471,7 @@ def create_receipt(payload: ReceiptCreate, x_demo_user_id: int | None = Header(d
         submitted_at=now_local(),
         comment=payload.comment,
     )
+    apply_tax_amount_fields(receipt, payload.amount, payload.tax_rate, payload.amount_without_tax)
     db.add(receipt)
     db.flush()
     audit(db, "receipt", receipt.id, "SUBMIT", user.id, None, "PENDING")
@@ -6288,7 +6490,7 @@ def create_receipt(payload: ReceiptCreate, x_demo_user_id: int | None = Header(d
     )
     db.commit()
     db.refresh(receipt)
-    return receipt_view(db, receipt)
+    return receipt_view(db, receipt, user.id)
 
 
 @app.get("/api/v1/receipts/{receipt_id}", response_model=ReceiptView)
@@ -6298,7 +6500,7 @@ def get_receipt(receipt_id: int, x_demo_user_id: int | None = Header(default=Non
     if not receipt:
         raise HTTPException(404, "RECEIPT_NOT_FOUND")
     ensure_project_in_scope(db, user, receipt.project_id)
-    return receipt_view(db, receipt)
+    return receipt_view(db, receipt, user.id)
 
 
 @app.patch("/api/v1/receipts/{receipt_id}", response_model=ReceiptView)
@@ -6319,6 +6521,7 @@ def update_receipt(receipt_id: int, payload: ReceiptUpdate, x_demo_user_id: int 
     receipt.project_id = contract.project_id
     receipt.stage_id = stage.id if stage else None
     receipt.amount = payload.amount
+    apply_tax_amount_fields(receipt, payload.amount, payload.tax_rate, payload.amount_without_tax)
     receipt.receipt_date = payload.receipt_date
     receipt.payer_name = payload.payer_name
     receipt.payer_bank_name = payload.payer_bank_name
@@ -6327,7 +6530,7 @@ def update_receipt(receipt_id: int, payload: ReceiptUpdate, x_demo_user_id: int 
     audit(db, "receipt", receipt.id, "UPDATE", user.id, receipt.status, receipt.status)
     db.commit()
     db.refresh(receipt)
-    return receipt_view(db, receipt)
+    return receipt_view(db, receipt, user.id)
 
 
 @app.delete("/api/v1/receipts/{receipt_id}")
@@ -6356,11 +6559,11 @@ def submit_receipt(receipt_id: int, x_demo_user_id: int | None = Header(default=
     ensure_project_in_scope(db, user, receipt.project_id)
     if receipt.status not in ("DRAFT", "REJECTED"):
         raise HTTPException(409, "RECEIPT_NOT_RESUBMITTABLE")
+    old_status = receipt.status
     receipt.status = "PENDING"
     receipt.submitted_by = user.id
     receipt.submitted_at = now_local()
-    receipt.comment = None
-    audit(db, "receipt", receipt.id, "SUBMIT", user.id, "REJECTED", "PENDING")
+    audit(db, "receipt", receipt.id, "SUBMIT", user.id, old_status, "PENDING")
     db.commit()
     db.refresh(receipt)
     project = db.get(Project, receipt.project_id)
@@ -6376,7 +6579,29 @@ def submit_receipt(receipt_id: int, x_demo_user_id: int | None = Header(default=
     )
     db.commit()
     db.refresh(receipt)
-    return receipt_view(db, receipt)
+    return receipt_view(db, receipt, user.id)
+
+
+@app.post("/api/v1/receipts/{receipt_id}/withdraw", response_model=ReceiptView)
+def withdraw_receipt(receipt_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ReceiptView:
+    """提交人撤回待出纳复核的合同收款单，恢复为草稿后可重新编辑提交。"""
+    user = require_admin_permission(db, "receipts", x_demo_user_id)
+    receipt = db.get(Receipt, receipt_id)
+    if not receipt:
+        raise HTTPException(404, "RECEIPT_NOT_FOUND")
+    ensure_project_in_scope(db, user, receipt.project_id)
+    if receipt.submitted_by != user.id:
+        raise HTTPException(403, "RECEIPT_WITHDRAW_FORBIDDEN")
+    if receipt.status != "PENDING":
+        raise HTTPException(409, "RECEIPT_NOT_PENDING")
+    receipt.status = "DRAFT"
+    receipt.submitted_at = None
+    receipt.approved_by = None
+    receipt.approved_at = None
+    audit(db, "receipt", receipt.id, "WITHDRAW", user.id, "PENDING", "DRAFT")
+    db.commit()
+    db.refresh(receipt)
+    return receipt_view(db, receipt, user.id)
 
 
 @app.post("/api/v1/receipts/{receipt_id}/approve", response_model=ReceiptView)
@@ -6418,7 +6643,7 @@ def approve_receipt(receipt_id: int, x_demo_user_id: int | None = Header(default
             receipt.submitted_by,
             user.name,
         )
-    return receipt_view(db, receipt)
+    return receipt_view(db, receipt, user.id)
 
 
 @app.post("/api/v1/receipts/{receipt_id}/reject", response_model=ReceiptView)
@@ -6435,7 +6660,7 @@ def reject_receipt(receipt_id: int, payload: CashRejectAction, x_demo_user_id: i
     audit(db, "receipt", receipt.id, "REJECT", user.id, "PENDING", "REJECTED", payload.reason)
     db.commit()
     db.refresh(receipt)
-    return receipt_view(db, receipt)
+    return receipt_view(db, receipt, user.id)
 
 
 @app.post("/api/v1/receipts/{receipt_id}/reverse", response_model=ReceiptView)
@@ -6470,7 +6695,7 @@ def reverse_receipt(receipt_id: int, x_demo_user_id: int | None = Header(default
     audit(db, "receipt", receipt.id, "REVERSE", user.id, "APPROVED", "REVERSED")
     db.commit()
     db.refresh(receipt)
-    return receipt_view(db, receipt)
+    return receipt_view(db, receipt, user.id)
 
 
 @app.get("/api/v1/payments", response_model=list[PaymentView])
@@ -6549,6 +6774,7 @@ def create_payment(payload: PaymentCreate, x_demo_user_id: int | None = Header(d
         submitted_at=None,
         comment=payload.comment,
     )
+    apply_tax_amount_fields(payment, payload.amount, payload.tax_rate, payload.amount_without_tax)
     apply_contract_budget_snapshot(db, payment, contract)
     db.add(payment)
     db.flush()
@@ -6588,6 +6814,7 @@ def update_payment(payment_id: int, payload: PaymentUpdate, x_demo_user_id: int 
     payment.project_id = contract.project_id
     payment.stage_id = stage.id if stage else None
     payment.amount = payload.amount
+    apply_tax_amount_fields(payment, payload.amount, payload.tax_rate, payload.amount_without_tax)
     payment.payment_date = payload.payment_date
     payee_name, payee_bank_name, payee_bank_account = resolve_payment_payee(db, contract, payload.payee_name, payload.payee_bank_name, payload.payee_bank_account)
     payment.payee_name = payee_name
@@ -6822,6 +7049,37 @@ def submit_payment(payment_id: int, x_demo_user_id: int | None = Header(default=
         submitter_name=user.name,
         page="paymentDetail",
     )
+    db.commit()
+    db.refresh(payment)
+    return payment_view(db, payment, user.id)
+
+
+@app.post("/api/v1/payments/{payment_id}/withdraw", response_model=PaymentView)
+def withdraw_payment(payment_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> PaymentView:
+    """提交人撤回待费用复核的合同付款单，恢复为草稿后可重新编辑提交。"""
+    payment = db.get(Payment, payment_id)
+    if not payment:
+        raise HTTPException(404, "PAYMENT_NOT_FOUND")
+    user = payment_access(db, payment, x_demo_user_id)
+    if payment.submitted_by != user.id:
+        raise HTTPException(403, "PAYMENT_WITHDRAW_FORBIDDEN")
+    if payment.status != "PENDING_REVIEW":
+        raise HTTPException(409, "PAYMENT_NOT_PENDING_REVIEW")
+    instance = db.get(WorkflowInstance, payment.current_workflow_instance_id) if payment.current_workflow_instance_id else None
+    if instance:
+        instance.status = "WITHDRAWN"
+        instance.completed_at = now_local()
+        for task in db.scalars(select(WorkflowTask).where(WorkflowTask.workflow_instance_id == instance.id, WorkflowTask.status == "PENDING")).all():
+            task.status = "WITHDRAWN"
+            task.processed_by = user.id
+            task.processed_at = now_local()
+        db.add(WorkflowActionLog(workflow_instance_id=instance.id, action="WITHDRAW", actor_user_id=user.id, actor_name=user.name, from_status="PENDING_REVIEW", to_status="DRAFT"))
+    payment.status = "DRAFT"
+    payment.submitted_at = None
+    payment.approved_by = None
+    payment.approved_at = None
+    payment.current_workflow_instance_id = None
+    audit(db, "payment", payment.id, "WITHDRAW", user.id, "PENDING_REVIEW", "DRAFT")
     db.commit()
     db.refresh(payment)
     return payment_view(db, payment, user.id)
@@ -7627,6 +7885,11 @@ def integration_notification_view(db: Session, item: SystemNotification) -> Inte
     elif item.source_type == "payment":
         source = db.get(Payment, item.source_id)
         source_label = source.payment_no if source else source_label
+    elif item.source_type in {"project_cost_project_expense", "project_cost_personnel_cost"}:
+        source = db.get(ProjectCostEntry, item.source_id)
+        if source:
+            kind_label = PROJECT_COST_KIND_LABELS.get(source.entry_kind, "项目成本单")
+            source_label = f"{kind_label} {source.cost_no}"
     elif item.source_type == "CONTRACT_STAGE":
         source = db.get(ContractStage, item.source_id)
         source_label = source.name if source else source_label
@@ -7863,6 +8126,17 @@ def run_worklog_fill_reminder(x_demo_user_id: int | None = Header(default=None),
     if not policy or not policy.enabled:
         raise HTTPException(409, "WORKLOG_FILL_REMINDER_DISABLED")
     return WorklogFillReminderRunResult(**run_worklog_fill_reminder_scan_once(force=True))
+
+
+@app.post("/api/v1/integrations/worklog-fill-reminder-t1/run", response_model=WorklogFillReminderRunResult)
+def run_worklog_fill_reminder_t1(x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> WorklogFillReminderRunResult:
+    """按当前策略立即发送一次 T-1 补漏提醒，用于验证补填提醒的对象和渠道。"""
+    require_admin_permission(db, "integrations", x_demo_user_id)
+    require_access(db, "integrations", "CONFIGURE", x_demo_user_id)
+    policy = notification_policy(db, WORKLOG_FILL_REMINDER_T1_TYPE)
+    if not policy or not policy.enabled:
+        raise HTTPException(409, "WORKLOG_FILL_REMINDER_T1_DISABLED")
+    return WorklogFillReminderRunResult(**run_worklog_fill_reminder_t1_scan_once(force=True))
 
 
 def integration_notification_rows(
@@ -8570,6 +8844,9 @@ def project_expense_view(db: Session, expense: ProjectExpense, viewer_id: int | 
         applicant_department_name=expense.applicant_department_name,
         occurred_on=expense.occurred_on,
         amount=float(expense.amount),
+        amount_without_tax=float(expense.amount_without_tax or 0),
+        tax_rate=float(expense.tax_rate or 0),
+        tax_amount=float(expense.tax_amount or 0),
         cost_amount=float(expense.cost_amount),
         budget_item_id=expense.budget_item_id,
         budget_item_name=expense.budget_item_name_snapshot,
@@ -8872,6 +9149,7 @@ def apply_expense_fields(db: Session, expense: ProjectExpense, payload: ProjectE
     expense.project_id = payload.project_id
     expense.occurred_on = payload.occurred_on
     expense.amount = payload.amount
+    apply_tax_amount_fields(expense, payload.amount, payload.tax_rate, payload.amount_without_tax)
     expense.cost_amount = payload.cost_amount
     apply_budget_snapshot(expense, budget_item)
     expense.requires_payment = payload.requires_payment
@@ -9289,7 +9567,7 @@ PROJECT_COST_KIND_LABELS = {"PROJECT_EXPENSE": "项目费用单", "PERSONNEL_COS
 PROJECT_COST_KIND_RESOURCES = {"PROJECT_EXPENSE": "project_expenses", "PERSONNEL_COST": "labor_costs"}
 PROJECT_COST_KIND_PREFIXES = {"PROJECT_EXPENSE": "CE", "PERSONNEL_COST": "LC"}
 PROJECT_COST_LEDGER_TYPES = {"PROJECT_EXPENSE": "PROJECT_EXPENSE_COST", "PERSONNEL_COST": "PERSONNEL_COST"}
-PROJECT_COST_KIND_PAGES = {"PROJECT_EXPENSE": "projectExpenses", "PERSONNEL_COST": "laborCosts"}
+PROJECT_COST_KIND_PAGES = {"PROJECT_EXPENSE": "expenseDetail", "PERSONNEL_COST": "expenseDetail"}
 PROJECT_COST_KIND_NOTIFICATIONS = {"PROJECT_EXPENSE": "PENDING_EXPENSE_REVIEW", "PERSONNEL_COST": "PENDING_LABOR_REVIEW"}
 EDITABLE_COST_ENTRY_STATUSES = {"DRAFT", "REJECTED"}
 
@@ -9457,6 +9735,9 @@ def cost_entry_view(db: Session, entry: ProjectCostEntry, viewer: User | None = 
         budget_item_id=entry.budget_item_id,
         budget_item_name=entry.budget_item_name_snapshot,
         amount=float(entry.amount or 0),
+        amount_without_tax=float(entry.amount_without_tax or 0),
+        tax_rate=float(entry.tax_rate or 0),
+        tax_amount=float(entry.tax_amount or 0),
         occurred_on=entry.occurred_on,
         accounting_month=entry.accounting_month,
         description=entry.description,
@@ -9477,6 +9758,7 @@ def cost_entry_view(db: Session, entry: ProjectCostEntry, viewer: User | None = 
             cost_can_review(db, viewer)
             or "REVERSE" in effective_permission_details(db, viewer.id).get(cost_entry_resource(entry.entry_kind), {}).get("actions", [])
         ),
+        can_withdraw=bool(viewer and entry.status == "PENDING_REVIEW" and entry.applicant_user_id == viewer.id),
         same_month_count=same_month_labor_entries(db, entry),
     )
 
@@ -9601,6 +9883,7 @@ def create_project_cost_entry(payload: ProjectCostEntryCreate, x_demo_user_id: i
         status="DRAFT",
         version=1,
     )
+    apply_tax_amount_fields(entry, payload.amount, payload.tax_rate, payload.amount_without_tax)
     apply_cost_entry_snapshot(entry, item)
     db.add(entry)
     db.flush()
@@ -9636,6 +9919,7 @@ def update_project_cost_entry(entry_id: int, payload: ProjectCostEntryUpdate, x_
     item = resolve_cost_entry_budget_item(db, entry.entry_kind, payload.project_id, payload.budget_item_id)
     entry.project_id = payload.project_id
     entry.amount = payload.amount
+    apply_tax_amount_fields(entry, payload.amount, payload.tax_rate, payload.amount_without_tax)
     entry.occurred_on = payload.occurred_on
     entry.accounting_month = payload.accounting_month
     entry.description = (payload.description or "").strip() or None
@@ -9709,6 +9993,28 @@ def submit_project_cost_entry(entry_id: int, x_demo_user_id: int | None = Header
     db.commit()
     db.refresh(entry)
     require_access(db, resource, "VIEW", x_demo_user_id)
+    return cost_entry_view(db, entry, user)
+
+
+@app.post("/api/v1/project-cost-entries/{entry_id}/withdraw", response_model=ProjectCostEntryView)
+def withdraw_project_cost_entry(entry_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ProjectCostEntryView:
+    """申请人撤回待费用复核的项目费用或人工成本结转单，恢复为草稿。"""
+    entry = db.get(ProjectCostEntry, entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    user = cost_entry_access(db, entry, x_demo_user_id)
+    if entry.applicant_user_id != user.id:
+        raise HTTPException(403, "PROJECT_COST_ENTRY_WITHDRAW_FORBIDDEN")
+    if entry.status != "PENDING_REVIEW":
+        raise HTTPException(409, "PROJECT_COST_ENTRY_NOT_PENDING_REVIEW")
+    entry.status = "DRAFT"
+    entry.submitted_at = None
+    entry.reviewed_by = None
+    entry.reviewed_at = None
+    entry.review_comment = None
+    audit(db, "project_cost_entry", entry.id, "WITHDRAW", user.id, "PENDING_REVIEW", "DRAFT")
+    db.commit()
+    db.refresh(entry)
     return cost_entry_view(db, entry, user)
 
 

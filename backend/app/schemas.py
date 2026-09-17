@@ -256,6 +256,9 @@ class ContractCreate(BaseModel):
     counterparty_type: Literal["CUSTOMER", "SUPPLIER"] = "CUSTOMER"
     counterparty_id: int = Field(gt=0)
     amount: float = Field(default=0, ge=0)
+    amount_without_tax: float | None = Field(default=None, ge=0)
+    tax_rate: float = Field(default=0, ge=0, le=1)
+    tax_amount: float | None = Field(default=None, ge=0)
     budget_item_id: int | None = Field(default=None, gt=0)
     sign_date: date | None = None
     start_date: date | None = None
@@ -285,6 +288,9 @@ class ContractView(BaseModel):
     counterparty_id: int
     counterparty_name: str
     amount: float = 0
+    amount_without_tax: float = 0
+    tax_rate: float = 0
+    tax_amount: float = 0
     budget_item_id: int | None = None
     budget_item_name: str | None = None
     sign_date: date | None = None
@@ -330,6 +336,9 @@ class CashDocumentAttachmentView(BaseModel):
 class ContractStageCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     amount: float = Field(default=0, ge=0)
+    amount_without_tax: float | None = Field(default=None, ge=0)
+    tax_rate: float = Field(default=0, ge=0, le=1)
+    tax_amount: float | None = Field(default=None, ge=0)
     planned_date: date | None = None
     remind_days_before: int = Field(default=7, ge=0, le=365)
     reminder_paused: bool = False
@@ -347,6 +356,9 @@ class ContractStageView(BaseModel):
     contract_id: int
     name: str
     amount: float = 0
+    amount_without_tax: float = 0
+    tax_rate: float = 0
+    tax_amount: float = 0
     planned_date: date | None = None
     remind_days_before: int = 7
     reminder_paused: bool = False
@@ -362,6 +374,9 @@ class ReceiptCreate(BaseModel):
     contract_id: int = Field(gt=0)
     stage_id: int = Field(gt=0)
     amount: float = Field(gt=0)
+    amount_without_tax: float | None = Field(default=None, ge=0)
+    tax_rate: float = Field(default=0, ge=0, le=1)
+    tax_amount: float | None = Field(default=None, ge=0)
     receipt_date: date
     payer_name: str = Field(min_length=1, max_length=300)
     payer_bank_name: str | None = Field(default=None, max_length=200)
@@ -395,6 +410,9 @@ class ReceiptView(BaseModel):
     stage_id: int | None = None
     stage_name: str | None = None
     amount: float = 0
+    amount_without_tax: float = 0
+    tax_rate: float = 0
+    tax_amount: float = 0
     receipt_date: date
     payer_name: str
     payer_bank_name: str | None = None
@@ -412,12 +430,16 @@ class ReceiptView(BaseModel):
     stage_remaining_amount: float | None = None
     stage_settlement_rate: float | None = None
     approval_timeline: list[ApprovalTimelineEvent] = []
+    can_withdraw: bool = False
 
 
 class PaymentCreate(BaseModel):
     contract_id: int = Field(gt=0)
     stage_id: int = Field(gt=0)
     amount: float = Field(gt=0)
+    amount_without_tax: float | None = Field(default=None, ge=0)
+    tax_rate: float = Field(default=0, ge=0, le=1)
+    tax_amount: float | None = Field(default=None, ge=0)
     payment_date: date
     # 收款方留空时由支出合同的供应商主数据带出，允许在单据上覆盖。
     payee_name: str | None = Field(default=None, max_length=300)
@@ -446,6 +468,9 @@ class PaymentView(BaseModel):
     stage_id: int | None = None
     stage_name: str | None = None
     amount: float = 0
+    amount_without_tax: float = 0
+    tax_rate: float = 0
+    tax_amount: float = 0
     payment_date: date
     payee_name: str
     payee_bank_name: str | None = None
@@ -471,6 +496,7 @@ class PaymentView(BaseModel):
     version: int = 1
     approval_path: list["WorkflowPathNodeView"] = []
     can_approve: bool = False
+    can_withdraw: bool = False
 
 
 class ProjectView(BaseModel):
@@ -908,6 +934,9 @@ class ProjectExpenseBase(BaseModel):
     project_id: int = Field(gt=0)
     occurred_on: date
     amount: float = Field(gt=0, le=1000000000)
+    amount_without_tax: float | None = Field(default=None, ge=0, le=1000000000)
+    tax_rate: float = Field(default=0, ge=0, le=1)
+    tax_amount: float | None = Field(default=None, ge=0, le=1000000000)
     cost_amount: float = Field(gt=0, le=1000000000)
     budget_item_id: int | None = Field(default=None, gt=0)
     requires_payment: bool = True
@@ -965,6 +994,9 @@ class ProjectExpenseView(BaseModel):
     applicant_department_name: str | None = None
     occurred_on: date
     amount: float
+    amount_without_tax: float = 0
+    tax_rate: float = 0
+    tax_amount: float = 0
     cost_amount: float
     budget_item_id: int | None = None
     budget_item_name: str | None = None
@@ -1413,6 +1445,9 @@ class ProjectCostEntryCreate(BaseModel):
     project_id: int = Field(gt=0)
     budget_item_id: int | None = Field(default=None, gt=0)
     amount: float = Field(gt=0, le=1000000000)
+    amount_without_tax: float | None = Field(default=None, ge=0, le=1000000000)
+    tax_rate: float = Field(default=0, ge=0, le=1)
+    tax_amount: float | None = Field(default=None, ge=0, le=1000000000)
     occurred_on: date | None = None
     accounting_month: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     description: str | None = Field(default=None, max_length=2000)
@@ -1469,6 +1504,9 @@ class ProjectCostEntryView(BaseModel):
     budget_item_id: int | None = None
     budget_item_name: str | None = None
     amount: float
+    amount_without_tax: float = 0
+    tax_rate: float = 0
+    tax_amount: float = 0
     occurred_on: date | None = None
     accounting_month: str | None = None
     description: str | None = None
@@ -1486,6 +1524,7 @@ class ProjectCostEntryView(BaseModel):
     can_edit: bool = False
     can_review: bool = False
     can_reverse: bool = False
+    can_withdraw: bool = False
     same_month_count: int = 0
 
 

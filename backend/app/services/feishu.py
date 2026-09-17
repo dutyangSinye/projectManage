@@ -663,6 +663,81 @@ class FeishuAdapter:
             return NotificationResult(status="SENT", message_id=str(message_id))
         return NotificationResult(status="FAILED", error_message="FEISHU_ROBOT_WEBHOOK_NOT_CONFIGURED")
 
+    def notify_worklog_fill_reminder_t1(
+        self,
+        recipient_name: str,
+        work_date: str,
+        system_url: str,
+        recipient_open_id: str | None = None,
+        channel: str | None = None,
+    ) -> NotificationResult:
+        """提醒成员补填上一个工作日漏填的工时；只做提醒，不判断填报结果。"""
+        notification_mode = self._selected_notification_mode(channel)
+        summary = (
+            "综合项目管理系统 · 工时补填提醒\n"
+            f"成员：{recipient_name}\n日期：{work_date}\n"
+            "提醒：你这一天还没有填报工时，请在今天补填提交。"
+        )
+        content = f"{summary}\n填报地址：{system_url}"
+        if notification_mode == "mock":
+            return NotificationResult(status="SENT", message_id=f"MOCK-WORKLOG-FILL-T1-{now_local():%Y%m%d%H%M%S}")
+        if notification_mode == "webhook" and self.webhook:
+            payload = json.dumps({"msg_type": "text", "content": {"text": content}}).encode("utf-8")
+            try:
+                req = request.Request(self.webhook, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+                with request.urlopen(req, timeout=8) as response:
+                    if response.status >= 300:
+                        return NotificationResult(status="FAILED", error_message=f"HTTP_{response.status}")
+                return NotificationResult(status="SENT", message_id=f"WEBHOOK-WORKLOG-FILL-T1-{now_local():%Y%m%d%H%M%S}")
+            except Exception as exc:  # pragma: no cover - depends on external network
+                return NotificationResult(status="FAILED", error_message=str(exc)[:500])
+        if notification_mode == "app":
+            if not self.app_id or not self.app_secret:
+                return NotificationResult(status="FAILED", error_message="FEISHU_APP_MESSAGE_NOT_CONFIGURED")
+            if not recipient_open_id or not recipient_open_id.strip():
+                return NotificationResult(status="FAILED", error_message="FEISHU_APP_RECIPIENT_OPEN_ID_MISSING")
+            try:
+                token = self._tenant_access_token()
+                webview_url = self._feishu_webview_url(system_url)
+                card = {
+                    "config": {"wide_screen_mode": True},
+                    "header": {
+                        "template": "orange",
+                        "title": {"tag": "plain_text", "content": "综合项目管理系统 · 工时补填提醒"},
+                    },
+                    "elements": [
+                        {"tag": "div", "text": {"tag": "plain_text", "content": summary}},
+                        {
+                            "tag": "action",
+                            "actions": [
+                                {
+                                    "tag": "button",
+                                    "text": {"tag": "plain_text", "content": "去补填工时"},
+                                    "type": "primary",
+                                    "behaviors": [{"type": "open_url", "default_url": webview_url}],
+                                }
+                            ],
+                        },
+                    ],
+                }
+                result = self._message_json_request(
+                    "POST",
+                    f"{self.api_base}/open-apis/im/v1/messages?{parse.urlencode({'receive_id_type': 'open_id'})}",
+                    {
+                        "receive_id": recipient_open_id.strip(),
+                        "msg_type": "interactive",
+                        "content": json.dumps(card, ensure_ascii=False),
+                    },
+                    token,
+                )
+            except Exception as exc:
+                return NotificationResult(status="FAILED", error_message=str(exc)[:500])
+            message_id = (result.get("data") or {}).get("message_id")
+            if not message_id:
+                return NotificationResult(status="FAILED", error_message="FEISHU_APP_MESSAGE_SEND_FAILED:message_id missing")
+            return NotificationResult(status="SENT", message_id=str(message_id))
+        return NotificationResult(status="FAILED", error_message="FEISHU_ROBOT_WEBHOOK_NOT_CONFIGURED")
+
     def notify_settlement_result(
         self,
         recipient_name: str,

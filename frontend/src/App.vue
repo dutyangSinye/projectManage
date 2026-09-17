@@ -185,6 +185,9 @@ type ProjectContract = {
   counterparty_id: number;
   counterparty_name: string;
   amount: number;
+  amount_without_tax?: number;
+  tax_rate?: number;
+  tax_amount?: number;
   budget_item_id?: number | null;
   budget_item_name?: string | null;
   sign_date: string | null;
@@ -219,6 +222,9 @@ type ProjectContractStage = {
   contract_id: number;
   name: string;
   amount: number;
+  amount_without_tax?: number;
+  tax_rate?: number;
+  tax_amount?: number;
   planned_date: string | null;
   remind_days_before?: number;
   reminder_paused?: boolean;
@@ -241,6 +247,9 @@ type Receipt = {
   stage_id: number | null;
   stage_name: string | null;
   amount: number;
+  amount_without_tax: number;
+  tax_rate: number;
+  tax_amount: number;
   receipt_date: string;
   payer_name: string;
   payer_bank_name: string | null;
@@ -256,6 +265,7 @@ type Receipt = {
   stage_remaining_amount?: number | null;
   stage_settlement_rate?: number | null;
   approval_timeline?: ApprovalTimelineEvent[];
+  can_withdraw?: boolean;
 };
 type Payment = {
   id: number;
@@ -269,6 +279,9 @@ type Payment = {
   stage_id: number | null;
   stage_name: string | null;
   amount: number;
+  amount_without_tax: number;
+  tax_rate: number;
+  tax_amount: number;
   payment_date: string;
   payee_name: string;
   payee_bank_name: string | null;
@@ -292,6 +305,7 @@ type Payment = {
   version?: number;
   approval_path?: WorkflowPathNode[];
   can_approve?: boolean;
+  can_withdraw?: boolean;
 };
 type ApprovalTimelineEvent = {
   event: string;
@@ -603,6 +617,9 @@ type ProjectExpense = {
   applicant_department_name: string | null;
   occurred_on: string;
   amount: number;
+  amount_without_tax: number;
+  tax_rate: number;
+  tax_amount: number;
   cost_amount: number;
   budget_item_id?: number | null;
   budget_item_name?: string | null;
@@ -658,6 +675,9 @@ type ProjectCostEntry = {
   budget_item_id: number | null;
   budget_item_name: string | null;
   amount: number;
+  amount_without_tax: number;
+  tax_rate: number;
+  tax_amount: number;
   occurred_on: string | null;
   accounting_month: string | null;
   description: string | null;
@@ -673,6 +693,7 @@ type ProjectCostEntry = {
   can_edit: boolean;
   can_review: boolean;
   can_reverse: boolean;
+  can_withdraw: boolean;
   same_month_count: number;
 };
 type ProjectCostEntryList = {
@@ -759,7 +780,7 @@ type ImportPreview = {
 const importColumns: Record<ImportResource, string[]> = {
   customers: ["客户名称", "付款银行", "付款账号"],
   suppliers: ["供应商名称", "收款银行", "收款账号"],
-  contracts: ["合同编号", "合同名称", "项目名称", "合同类型", "往来单位名称", "合同金额"],
+  contracts: ["合同编号", "合同名称", "项目名称", "合同类型", "往来单位名称", "合同含税金额"],
 };
 type Worklog = {
   id: number;
@@ -1149,6 +1170,9 @@ const costEntryForm = reactive({
   project_id: 0,
   budget_item_id: null as number | null,
   amount: 0,
+  amount_without_tax: 0,
+  tax_rate: 0,
+  tax_amount: 0,
   occurred_on: applicationDate(),
   accounting_month: applicationDate().slice(0, 7),
   description: "",
@@ -1450,6 +1474,9 @@ const contractForm = reactive({
   counterparty_type: "CUSTOMER" as "CUSTOMER" | "SUPPLIER",
   counterparty_id: 0,
   amount: 0,
+  amount_without_tax: 0,
+  tax_rate: 0,
+  tax_amount: 0,
   budget_item_id: null as number | null,
   sign_date: "",
   start_date: "",
@@ -1469,6 +1496,9 @@ const editingStageId = ref<number | null>(null);
 const stageForm = reactive({
   name: "",
   amount: 0,
+  amount_without_tax: 0,
+  tax_rate: 0,
+  tax_amount: 0,
   planned_date: "",
   remind_days_before: 7,
   reminder_paused: false,
@@ -1488,6 +1518,9 @@ const receiptForm = reactive({
   contract_id: 0,
   stage_id: null as number | null,
   amount: 0,
+  amount_without_tax: 0,
+  tax_rate: 0,
+  tax_amount: 0,
   receipt_date: applicationDate(),
   payer_name: "",
   payer_bank_name: "",
@@ -1507,6 +1540,9 @@ const paymentForm = reactive({
   contract_id: 0,
   stage_id: null as number | null,
   amount: 0,
+  amount_without_tax: 0,
+  tax_rate: 0,
+  tax_amount: 0,
   payment_date: applicationDate(),
   payee_name: "",
   payee_bank_name: "",
@@ -2936,7 +2972,9 @@ const applyReceiptContractDefaults = async () => {
     payer_name: counterparty?.name || contract.counterparty_name || "",
     payer_bank_name: counterparty?.bank_name || "",
     payer_bank_account: counterparty?.bank_account || "",
+    tax_rate: contract.tax_rate ?? receiptForm.tax_rate ?? 0,
   });
+  syncTaxFields(receiptForm);
 };
 const applyPaymentContractDefaults = async () => {
   const requestId = ++paymentCounterpartyRequest.value;
@@ -2953,7 +2991,23 @@ const applyPaymentContractDefaults = async () => {
     payee_name: counterparty?.name || contract.counterparty_name || "",
     payee_bank_name: counterparty?.bank_name || "",
     payee_bank_account: counterparty?.bank_account || "",
+    tax_rate: contract.tax_rate ?? paymentForm.tax_rate ?? 0,
   });
+  syncTaxFields(paymentForm);
+};
+const applyReceiptStageDefaults = () => {
+  const stage = stageOptionsFor(receiptForm.contract_id).find((item) => item.id === Number(receiptForm.stage_id));
+  if (stage?.tax_rate !== undefined) {
+    receiptForm.tax_rate = stage.tax_rate || 0;
+    syncTaxFields(receiptForm);
+  }
+};
+const applyPaymentStageDefaults = () => {
+  const stage = stageOptionsFor(paymentForm.contract_id).find((item) => item.id === Number(paymentForm.stage_id));
+  if (stage?.tax_rate !== undefined) {
+    paymentForm.tax_rate = stage.tax_rate || 0;
+    syncTaxFields(paymentForm);
+  }
 };
 const loadProjectBudgetItems = async (projectId: number) => {
   if (!projectId) {
@@ -2997,6 +3051,9 @@ const resetContractForm = () => {
     counterparty_type: "CUSTOMER",
     counterparty_id: 0,
     amount: 0,
+    amount_without_tax: 0,
+    tax_rate: 0,
+    tax_amount: 0,
     budget_item_id: null,
     sign_date: "",
     start_date: "",
@@ -3022,6 +3079,9 @@ const editContract = (item: ProjectContract) => {
     counterparty_type: item.counterparty_type,
     counterparty_id: item.counterparty_id,
     amount: item.amount,
+    amount_without_tax: item.amount_without_tax ?? item.amount,
+    tax_rate: item.tax_rate ?? 0,
+    tax_amount: item.tax_amount ?? 0,
     budget_item_id: item.budget_item_id || null,
     sign_date: item.sign_date || "",
     start_date: item.start_date || "",
@@ -3032,6 +3092,7 @@ const editContract = (item: ProjectContract) => {
   void loadContractAttachments(item.id);
 };
 const saveContract = async (statusOverride?: string) => {
+  syncTaxFields(contractForm, "net");
   if (!contractForm.project_id || !contractForm.counterparty_id) {
     errorMessage.value = "请选择项目和往来单位";
     return;
@@ -3322,7 +3383,7 @@ const deleteContract = async (item: ProjectContract) => {
   }
 };
 const activateContract = async (item: ProjectContract) => {
-  if (!window.confirm(`确定激活合同“${item.name}”吗？阶段金额合计必须等于合同金额。`)) return;
+  if (!window.confirm(`确定激活合同“${item.name}”吗？阶段含税金额合计必须等于合同含税金额。`)) return;
   try {
     await api<ProjectContract>(`/api/v1/contracts/${item.id}/activate`, {
       method: "POST",
@@ -3401,6 +3462,9 @@ const openStageForm = (contractId: number, stage: ProjectContractStage | null = 
   Object.assign(stageForm, {
     name: stage?.name || "",
     amount: stage?.amount || 0,
+    amount_without_tax: stage?.amount_without_tax ?? stage?.amount ?? 0,
+    tax_rate: stage?.tax_rate ?? 0,
+    tax_amount: stage?.tax_amount ?? 0,
     planned_date: stage?.planned_date || "",
     remind_days_before: stage?.remind_days_before ?? 7,
     reminder_paused: stage?.reminder_paused ?? false,
@@ -3410,6 +3474,7 @@ const openStageForm = (contractId: number, stage: ProjectContractStage | null = 
   if (!stage) void loadContractStages(contractId);
 };
 const saveStage = async () => {
+  syncTaxFields(stageForm, "net");
   const contractId = stageContractId.value;
   if (!stageForm.name) {
     errorMessage.value = "请填写阶段名称";
@@ -3497,6 +3562,9 @@ const resetReceiptForm = () => {
     contract_id: 0,
     stage_id: null,
     amount: 0,
+    amount_without_tax: 0,
+    tax_rate: 0,
+    tax_amount: 0,
     receipt_date: applicationDate(),
     payer_name: "",
     payer_bank_name: "",
@@ -3513,6 +3581,9 @@ const openReceiptForm = async (item: Receipt | null = null) => {
     contract_id: item?.contract_id || 0,
     stage_id: item?.stage_id || null,
     amount: item?.amount || 0,
+    amount_without_tax: item?.amount_without_tax ?? item?.amount ?? 0,
+    tax_rate: item?.tax_rate ?? 0,
+    tax_amount: item?.tax_amount ?? 0,
     receipt_date: item?.receipt_date || applicationDate(),
     payer_name: item?.payer_name || "",
     payer_bank_name: item?.payer_bank_name || "",
@@ -3524,6 +3595,7 @@ const openReceiptForm = async (item: Receipt | null = null) => {
   if (editingReceiptId.value) await loadCashAttachments("RECEIPT", editingReceiptId.value);
 };
 const saveReceipt = async () => {
+  syncTaxFields(receiptForm, "net");
   if (
     !receiptForm.contract_id ||
     !receiptForm.stage_id ||
@@ -3532,7 +3604,7 @@ const saveReceipt = async () => {
     !receiptForm.payer_bank_account ||
     !receiptForm.amount
   ) {
-    errorMessage.value = "请填写收入合同、收款阶段、付款方姓名、付款银行、付款账号和金额";
+    errorMessage.value = "请填写收入合同、收款阶段、付款方姓名、付款银行、付款账号和含税金额";
     return;
   }
   if (Number(receiptForm.amount) > receiptStageRemaining.value) {
@@ -3603,6 +3675,17 @@ const rejectReceipt = async (item: Receipt) => {
     errorMessage.value = error instanceof Error ? error.message : "收款驳回失败";
   }
 };
+const withdrawReceipt = async (item: Receipt) => {
+  if (!window.confirm(`确定撤回合同收款单 ${item.receipt_no}，并恢复为草稿吗？`)) return;
+  try {
+    const updated = await api<Receipt>(`/api/v1/receipts/${item.id}/withdraw`, { method: "POST" });
+    if (selectedReceipt.value?.id === updated.id) selectedReceipt.value = updated;
+    await refreshReceipts();
+    successMessage.value = "合同收款单已撤回，可重新编辑提交";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "合同收款单撤回失败";
+  }
+};
 const reverseReceipt = async (item: Receipt) => {
   if (!window.confirm(`确定冲销合同收款单 ${item.receipt_no} 吗？`)) return;
   try {
@@ -3663,6 +3746,9 @@ const resetPaymentForm = () => {
     contract_id: 0,
     stage_id: null,
     amount: 0,
+    amount_without_tax: 0,
+    tax_rate: 0,
+    tax_amount: 0,
     payment_date: applicationDate(),
     payee_name: "",
     payee_bank_name: "",
@@ -3679,6 +3765,9 @@ const openPaymentForm = async (item: Payment | null = null) => {
     contract_id: item?.contract_id || 0,
     stage_id: item?.stage_id || null,
     amount: item?.amount || 0,
+    amount_without_tax: item?.amount_without_tax ?? item?.amount ?? 0,
+    tax_rate: item?.tax_rate ?? 0,
+    tax_amount: item?.tax_amount ?? 0,
     payment_date: item?.payment_date || applicationDate(),
     payee_name: item?.payee_name || "",
     payee_bank_name: item?.payee_bank_name || "",
@@ -3690,6 +3779,7 @@ const openPaymentForm = async (item: Payment | null = null) => {
   if (editingPaymentId.value) await loadCashAttachments("PAYMENT", editingPaymentId.value);
 };
 const savePayment = async () => {
+  syncTaxFields(paymentForm, "net");
   if (
     !paymentForm.contract_id ||
     !paymentForm.stage_id ||
@@ -3698,7 +3788,7 @@ const savePayment = async () => {
     !paymentForm.payee_bank_account ||
     !paymentForm.amount
   ) {
-    errorMessage.value = "请填写支出合同、付款阶段、收款方姓名、收款银行、收款账号和金额";
+    errorMessage.value = "请填写支出合同、付款阶段、收款方姓名、收款银行、收款账号和含税金额";
     return;
   }
   if (Number(paymentForm.amount) > paymentStageRemaining.value) {
@@ -3783,6 +3873,17 @@ const rejectPayment = async (item: Payment) => {
     successMessage.value = "合同付款单已驳回";
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "付款驳回失败";
+  }
+};
+const withdrawPayment = async (item: Payment) => {
+  if (!window.confirm(`确定撤回合同付款单 ${item.payment_no}，并恢复为草稿吗？`)) return;
+  try {
+    const updated = await api<Payment>(`/api/v1/payments/${item.id}/withdraw`, { method: "POST" });
+    if (selectedPayment.value?.id === updated.id) selectedPayment.value = updated;
+    await refreshPayments();
+    successMessage.value = "合同付款单已撤回，可重新编辑提交";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "合同付款单撤回失败";
   }
 };
 const reversePayment = async (item: Payment) => {
@@ -5131,6 +5232,13 @@ const filteredWorklogs = computed(() =>
     ? worklogs.value.filter((item) => item.status === selectedStatus.value)
     : worklogs.value,
 );
+const canWithdrawWorklog = (item: Worklog | null | undefined) =>
+  item?.status === "PENDING_APPROVAL";
+const canWithdrawSelectedWorklog = computed(
+  () =>
+    canWithdrawWorklog(selectedTask.value?.worklog) ||
+    selectedTask.value?.status === "PENDING",
+);
 const approvalItems = computed(() =>
   approvalTab.value === "pending"
     ? pendingApprovals.value
@@ -5611,6 +5719,27 @@ const cashStatusClass = (value: string) =>
   ({ PENDING: "warning", PENDING_APPROVAL: "warning", APPROVED: "success", REJECTED: "danger", REVERSED: "neutral" })[value] || "neutral";
 const moneyText = (value: number | null | undefined) =>
   `¥${Number(value || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+const taxRateOptions = [
+  { label: "0%", value: 0 },
+  { label: "1%", value: 0.01 },
+  { label: "3%", value: 0.03 },
+  { label: "6%", value: 0.06 },
+  { label: "9%", value: 0.09 },
+  { label: "13%", value: 0.13 },
+];
+type TaxFormLike = { amount: number; amount_without_tax: number; tax_rate: number; tax_amount: number };
+const roundMoney = (value: number) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+const syncTaxFields = (target: TaxFormLike, source: "gross" | "net" = "gross") => {
+  const gross = roundMoney(Number(target.amount || 0));
+  const rate = Math.max(Number(target.tax_rate || 0), 0);
+  if (source === "net") {
+    target.amount_without_tax = roundMoney(Number(target.amount_without_tax || 0));
+  } else {
+    target.amount_without_tax = rate > 0 ? roundMoney(gross / (1 + rate)) : gross;
+  }
+  target.tax_amount = roundMoney(Math.max(gross - Number(target.amount_without_tax || 0), 0));
+};
+const taxRateText = (value: number | null | undefined) => `${roundMoney(Number(value || 0) * 100)}%`;
 const analysisStatusLabel = (status: string) =>
   ({
     DONE: "已完成",
@@ -5842,11 +5971,16 @@ const integrationNotificationTypeLabel = (value: string) =>
   ({
     WORKLOG_APPROVAL: "工时审批提醒",
     WORKLOG_FILL_REMINDER: "工时填报提醒",
+    WORKLOG_FILL_REMINDER_T1: "工时补填提醒（T-1）",
     SETTLEMENT_APPROVED: "合同收付款审批结果",
     PAYMENT_RESULT: "合同付款单审批结果",
     EXPENSE_APPROVAL: "项目费用审批提醒",
     EXPENSE_RESULT: "项目费用审批结果",
     EXPENSE_PAYMENT: "项目费用支付提醒",
+    PENDING_PAYMENT_REVIEW: "合同付款待复核",
+    PENDING_EXPENSE_REVIEW: "项目费用待复核",
+    PENDING_LABOR_REVIEW: "人工成本待复核",
+    COST_REVIEW_RESULT: "费用复核结果",
     COST_BUDGET_NEAR: "成本预算预警",
     COST_BUDGET_OVER: "成本预算超支",
     STAGE_UPCOMING: "合同阶段临期",
@@ -5886,9 +6020,10 @@ const integrationPolicyGroups = computed(() => {
       items: [],
     },
   ];
-  // 工时填报提醒有独立的配置卡片，不混在通用策略里，避免同一项两处可改。
+  // 工时填报提醒和 T-1 补漏提醒有独立的配置卡片，不混在通用策略里，避免同一项两处可改。
   for (const policy of integrationPolicies.value) {
-    if (policy.notification_type === WORKLOG_FILL_REMINDER) continue;
+    if (policy.notification_type === WORKLOG_FILL_REMINDER || policy.notification_type === WORKLOG_FILL_REMINDER_T1)
+      continue;
     const group = policy.notification_type.startsWith("STAGE_")
       ? groups[1]
       : policy.notification_type.startsWith("COST_")
@@ -5927,10 +6062,17 @@ const notificationPolicyDescription = (type: string) =>
     STAGE_OVERDUE: "合同阶段逾期且仍有余额时通知项目负责人。",
     PENDING_RECEIPT: "存在待审批合同收款单时通知有权限的出纳人员。",
     PENDING_PAYMENT: "合同付款进入新审批节点时通知该节点全部候选人。",
+    PENDING_PAYMENT_REVIEW: "合同付款提交费用复核后通知费用复核岗位成员。",
+    PENDING_EXPENSE_REVIEW: "项目费用提交复核后通知费用复核岗位成员。",
+    PENDING_LABOR_REVIEW: "人工成本结转提交复核后通知费用复核岗位成员。",
+    COST_REVIEW_RESULT: "费用复核通过或驳回后通知申请人。",
     PAYMENT_RESULT: "合同付款被驳回或由出纳确认支付后通知申请人。",
     WORKLOG_FILL_REMINDER: "每个工作日按设定时刻提醒成员填报工时，已填报的人员自动跳过。",
+    WORKLOG_FILL_REMINDER_T1: "每个工作日按设定时刻检查上一个工作日漏填的工时并提醒补填，已补填的人员自动跳过。",
   } as Record<string, string>)[type] || "该业务事件的飞书通知策略。";
 const WORKLOG_FILL_REMINDER = "WORKLOG_FILL_REMINDER";
+// v3.0.81：T-1 补漏提醒，提醒补填上一个工作日漏填的工时。
+const WORKLOG_FILL_REMINDER_T1 = "WORKLOG_FILL_REMINDER_T1";
 const parseReminderTargets = (raw?: string | null): number[] => {
   if (!raw) return [];
   try {
@@ -6150,6 +6292,220 @@ const runWorklogFillReminder = async () => {
     worklogReminderRunning.value = false;
   }
 };
+const createReminderCard = (config: { type: string; label: string; runPath: string; conditionText: string }) => {
+  const editing = ref(false);
+  const saving = ref(false);
+  const running = ref(false);
+  const timeInput = ref("");
+  const userKeyword = ref("");
+  const draft = reactive({
+    enabled: false,
+    send_channel: "app" as "app" | "webhook" | "mock",
+    times: [] as string[],
+    target_scope: "ALL" as "ALL" | "DEPARTMENT" | "USER",
+    target_id_list: [] as number[],
+    only_unfilled: true,
+  });
+  const policy = computed(
+    () => integrationPolicies.value.find((item) => item.notification_type === config.type) || null,
+  );
+  const activeTimes = computed(() =>
+    editing.value ? [...draft.times].sort() : splitReminderTimes(policy.value?.schedule_time),
+  );
+  const activeScope = computed<"ALL" | "DEPARTMENT" | "USER">(() =>
+    editing.value ? draft.target_scope : ((policy.value?.target_scope || "ALL") as "ALL" | "DEPARTMENT" | "USER"),
+  );
+  const activeIds = computed(() =>
+    editing.value ? draft.target_id_list : parseReminderTargets(policy.value?.target_ids),
+  );
+  const targetText = computed(() => {
+    const ids = activeIds.value;
+    if (activeScope.value === "ALL") return `全部在职人员（${demoUsers.value.length} 人）`;
+    if (activeScope.value === "DEPARTMENT") {
+      const names = departments.value.filter((item) => ids.includes(item.id)).map((item) => item.name);
+      if (!names.length) return "未选择部门";
+      return names.length > 3 ? `${names.slice(0, 3).join("、")} 等 ${names.length} 个部门` : `${names.join("、")}（${names.length} 个部门）`;
+    }
+    const names = demoUsers.value.filter((item) => ids.includes(item.id)).map((item) => item.name);
+    if (!names.length) return "未选择人员";
+    return names.length > 4 ? `${names.slice(0, 4).join("、")} 等 ${names.length} 人` : `${names.join("、")}（${names.length} 人）`;
+  });
+  const nextText = computed(() => {
+    const times = activeTimes.value;
+    if (!times.length) return "尚未设置提醒时刻";
+    const now = new Date();
+    const weekdayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+    for (let offset = 0; offset < 9; offset += 1) {
+      const day = new Date(now.getTime() + offset * 86400000);
+      const weekday = day.getDay();
+      if (weekday === 0 || weekday === 6) continue;
+      const slot = times[0];
+      const [hour, minute] = slot.split(":").map(Number);
+      if (offset === 0 && hour * 60 + minute <= now.getHours() * 60 + now.getMinutes()) continue;
+      return `${day.getMonth() + 1}月${day.getDate()}日 ${weekdayNames[weekday]} ${slot}`;
+    }
+    return `下一个工作日 ${times[0]}`;
+  });
+  const filteredUsers = computed(() => {
+    const keyword = userKeyword.value.trim();
+    if (!keyword) return demoUsers.value;
+    return demoUsers.value.filter(
+      (item) => item.name.includes(keyword) || (item.department_name || "").includes(keyword),
+    );
+  });
+  const applyUpdated = (updated: NotificationPolicy) => {
+    integrationPolicies.value = integrationPolicies.value.map((item) =>
+      item.notification_type === config.type ? updated : item,
+    );
+    if (integrationOverview.value) integrationOverview.value.policies = integrationPolicies.value;
+  };
+  const startEdit = () => {
+    const current = policy.value;
+    if (!current) return;
+    draft.enabled = current.enabled;
+    draft.send_channel = (current.send_channel || "app") as "app" | "webhook" | "mock";
+    draft.times = splitReminderTimes(current.schedule_time);
+    draft.target_scope = (current.target_scope || "ALL") as "ALL" | "DEPARTMENT" | "USER";
+    draft.target_id_list = parseReminderTargets(current.target_ids);
+    draft.only_unfilled = current.only_unfilled !== false;
+    timeInput.value = "";
+    userKeyword.value = "";
+    editing.value = true;
+  };
+  const cancelEdit = () => {
+    if (saving.value) return;
+    editing.value = false;
+  };
+  const addTime = (value?: string) => {
+    const slot = (value ?? timeInput.value).trim();
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(slot)) {
+      if (!value) errorMessage.value = "请填写 24 小时制时刻，例如 09:00";
+      return;
+    }
+    if (draft.times.includes(slot)) {
+      if (!value) errorMessage.value = `已存在 ${slot} 这个时刻`;
+      return;
+    }
+    if (draft.times.length >= 6) {
+      errorMessage.value = "最多设置 6 个提醒时刻";
+      return;
+    }
+    draft.times = [...draft.times, slot].sort();
+    timeInput.value = "";
+  };
+  const removeTime = (index: number) => {
+    draft.times = draft.times.filter((_item, current) => current !== index);
+  };
+  const toggleTarget = (id: number) => {
+    draft.target_id_list = draft.target_id_list.includes(id)
+      ? draft.target_id_list.filter((item) => item !== id)
+      : [...draft.target_id_list, id];
+  };
+  const save = async () => {
+    if (saving.value) return;
+    if (!policy.value) return;
+    if (!draft.times.length) {
+      errorMessage.value = "请至少添加一个提醒时刻";
+      return;
+    }
+    if (draft.target_scope !== "ALL" && !draft.target_id_list.length) {
+      errorMessage.value = draft.target_scope === "DEPARTMENT" ? "请选择至少一个部门" : "请选择至少一名人员";
+      return;
+    }
+    saving.value = true;
+    try {
+      const updated = await api<NotificationPolicy>(`/api/v1/integrations/policies/${config.type}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          enabled: draft.enabled,
+          send_channel: draft.send_channel,
+          remind_days_before: 0,
+          schedule_time: [...draft.times].sort().join(","),
+          target_scope: draft.target_scope,
+          target_ids: JSON.stringify(draft.target_scope === "ALL" ? [] : draft.target_id_list),
+          only_unfilled: draft.only_unfilled,
+        }),
+      });
+      applyUpdated(updated);
+      successMessage.value = `${config.label}已保存`;
+      editing.value = false;
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : `${config.label}保存失败`;
+    } finally {
+      saving.value = false;
+    }
+  };
+  const toggleEnabled = async () => {
+    const current = policy.value;
+    if (!current || saving.value) return;
+    saving.value = true;
+    try {
+      const updated = await api<NotificationPolicy>(`/api/v1/integrations/policies/${config.type}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          enabled: !current.enabled,
+          send_channel: current.send_channel || "app",
+          remind_days_before: current.remind_days_before || 0,
+          schedule_time: current.schedule_time || "",
+          target_scope: current.target_scope || "ALL",
+          target_ids: current.target_ids || "[]",
+          only_unfilled: current.only_unfilled !== false,
+        }),
+      });
+      applyUpdated(updated);
+      successMessage.value = updated.enabled ? `${config.label}已启用` : `${config.label}已停用`;
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : `${config.label}状态更新失败`;
+    } finally {
+      saving.value = false;
+    }
+  };
+  const run = async () => {
+    if (running.value) return;
+    running.value = true;
+    try {
+      const result = await api<WorklogFillReminderResult>(config.runPath, { method: "POST" });
+      successMessage.value = `${config.label}已发送：成功 ${result.sent} 条，失败 ${result.failed} 条，跳过 ${result.skipped} 人`;
+      await refreshIntegrationOverview();
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : `${config.label}发送失败`;
+    } finally {
+      running.value = false;
+    }
+  };
+  return {
+    editing,
+    saving,
+    running,
+    timeInput,
+    userKeyword,
+    draft,
+    policy,
+    activeTimes,
+    activeScope,
+    activeIds,
+    targetText,
+    nextText,
+    filteredUsers,
+    startEdit,
+    cancelEdit,
+    addTime,
+    removeTime,
+    toggleTarget,
+    save,
+    toggleEnabled,
+    run,
+  };
+};
+// reactive 包装后才能直接在模板里解包内部的 ref。
+const t1Reminder = reactive(
+  createReminderCard({
+    type: WORKLOG_FILL_REMINDER_T1,
+    label: "工时补填提醒",
+    runPath: "/api/v1/integrations/worklog-fill-reminder-t1/run",
+    conditionText: "只提醒上一个工作日还没有填报的人",
+  }),
+);
 const openIntegrationNotificationSource = async () => {
   const item = selectedIntegrationNotification.value;
   if (!item || !item.source_id) return;
@@ -6171,6 +6527,16 @@ const openIntegrationNotificationSource = async () => {
       go("paymentDetail");
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : "合同付款单详情加载失败";
+    }
+  } else if (
+    item.source_type === "project_cost_project_expense" ||
+    item.source_type === "project_cost_personnel_cost"
+  ) {
+    closeIntegrationNotification();
+    try {
+      await openExpenseDetail({ id: item.source_id });
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : "成本单详情加载失败";
     }
   }
 };
@@ -6797,6 +7163,9 @@ const resetCostEntryForm = () => {
     project_id: projects.value[0]?.id || 0,
     budget_item_id: null,
     amount: 0,
+    amount_without_tax: 0,
+    tax_rate: 0,
+    tax_amount: 0,
     occurred_on: applicationDate(),
     accounting_month: applicationDate().slice(0, 7),
     description: "",
@@ -6818,8 +7187,9 @@ const chooseExpenseFiles = (event: Event) => {
 };
 const saveCostEntry = async (submit = false) => {
   const form = costEntryForm;
+  syncTaxFields(form, "net");
   if (!form.project_id || !form.amount) {
-    errorMessage.value = "请填写项目和金额";
+    errorMessage.value = "请填写项目和含税金额";
     return;
   }
   if (form.entry_kind === "PERSONNEL_COST") {
@@ -6839,6 +7209,9 @@ const saveCostEntry = async (submit = false) => {
       // 人工成本结转固定归集到人工费用，不提交预算项（后端同样忽略该字段）。
       budget_item_id: form.entry_kind === "PERSONNEL_COST" ? null : form.budget_item_id || null,
       amount: form.amount,
+      amount_without_tax: form.amount_without_tax,
+      tax_rate: form.tax_rate,
+      tax_amount: form.tax_amount,
       occurred_on: form.entry_kind === "PERSONNEL_COST" ? null : form.occurred_on,
       accounting_month: form.entry_kind === "PERSONNEL_COST" ? form.accounting_month : null,
       description: form.description || null,
@@ -6878,6 +7251,9 @@ const editCostEntry = (item: ProjectCostEntry) => {
     project_id: item.project_id,
     budget_item_id: item.budget_item_id || null,
     amount: item.amount,
+    amount_without_tax: item.amount_without_tax ?? item.amount,
+    tax_rate: item.tax_rate ?? 0,
+    tax_amount: item.tax_amount ?? 0,
     occurred_on: item.occurred_on || applicationDate(),
     accounting_month: item.accounting_month || applicationDate().slice(0, 7),
     description: item.description || "",
@@ -6896,6 +7272,18 @@ const submitCostEntry = async () => {
     successMessage.value = "成本单已提交复核";
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "提交失败";
+  }
+};
+const withdrawCostEntry = async (entry: ProjectCostEntry) => {
+  if (!window.confirm(`确定撤回成本单 ${entry.cost_no}，并恢复为草稿吗？`)) return;
+  try {
+    const updated = await api<ProjectCostEntry>(`/api/v1/project-cost-entries/${entry.id}/withdraw`, { method: "POST" });
+    if (selectedExpense.value?.id === updated.id) selectedExpense.value = updated;
+    await refreshProjectExpenses();
+    await refreshCostReview();
+    successMessage.value = "成本单已撤回，可重新编辑提交";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "成本单撤回失败";
   }
 };
 const approveCostEntry = async () => {
@@ -7079,8 +7467,8 @@ const loadRequestedPage = async () => {
   if (page.value === "costReview") await refreshCostReview();
   if (page.value === "expenseDetail") {
     const expenseId = Number(new URLSearchParams(window.location.search).get("id") || 0);
-  if (expenseId) selectedExpense.value = await api<ProjectExpense>(`/api/v1/project-expenses/${expenseId}`);
-}
+    if (expenseId) selectedExpense.value = await api<ProjectCostEntry>(`/api/v1/project-cost-entries/${expenseId}`);
+  }
   if (page.value === "approvalPositions") await refreshApprovalPositions();
   if (page.value === "projectBoard") {
     await refreshProjectBoard();
@@ -7740,11 +8128,11 @@ onMounted(() => {
                           查看详情
                         </button
                         ><button
-                          v-if="item.status === 'PENDING_APPROVAL'"
+                          v-if="canWithdrawWorklog(item)"
                           class="text-button danger-button"
                           @click="withdrawWorklog(item)"
                         >
-                          撤回
+                          撤回工时
                         </button>
                       </div>
                     </td>
@@ -7936,9 +8324,18 @@ onMounted(() => {
               <h1>工时提交结果</h1>
               <p class="muted">本条工时的完整信息、审批状态和通知结果。</p>
             </div>
-            <button class="secondary" @click="go('worklogs')">
-              返回我的工时
-            </button>
+            <div class="actions detail-page-actions">
+              <button
+                v-if="canWithdrawSelectedWorklog"
+                class="secondary danger-button"
+                @click="withdrawWorklog()"
+              >
+                撤回工时
+              </button>
+              <button class="secondary" @click="go('worklogs')">
+                返回我的工时
+              </button>
+            </div>
           </div>
           <section v-if="selectedTask" class="detail-layout">
             <article class="card detail-main-card">
@@ -8127,11 +8524,11 @@ onMounted(() => {
                 </div>
               </div>
               <button
-                v-if="selectedTask.worklog.status === 'PENDING_APPROVAL'"
+                v-if="canWithdrawSelectedWorklog"
                 class="secondary danger-button detail-back-button"
                 @click="withdrawWorklog()"
               >
-                撤回审批
+                撤回工时
               </button>
               <button
                 class="secondary detail-back-button"
@@ -9484,7 +9881,7 @@ onMounted(() => {
                   <div v-if="!selectedProjectIncomeContracts.length" class="empty">该项目暂无收入合同。</div>
                   <div v-else class="table-wrap">
                     <table class="v3-ops-table project-contract-table">
-                      <thead><tr><th>合同</th><th>客户</th><th>金额</th><th>已确认</th><th>状态</th></tr></thead>
+                      <thead><tr><th>合同</th><th>客户</th><th>含税金额</th><th>已确认</th><th>状态</th></tr></thead>
                       <tbody>
                         <tr v-for="item in selectedProjectIncomeContracts" :key="item.id">
                           <td><button class="text-button contract-name-link" @click="openContractDetail(item)"><strong>{{ item.name }}</strong></button><small>{{ item.contract_no }}</small></td>
@@ -9502,7 +9899,7 @@ onMounted(() => {
                   <div v-if="!selectedProjectExpenseContracts.length" class="empty">该项目暂无支出合同。</div>
                   <div v-else class="table-wrap">
                     <table class="v3-ops-table project-contract-table">
-                      <thead><tr><th>合同</th><th>供应商</th><th>预算项</th><th>金额</th><th>已确认</th><th>状态</th></tr></thead>
+                      <thead><tr><th>合同</th><th>供应商</th><th>预算项</th><th>含税金额</th><th>已确认</th><th>状态</th></tr></thead>
                       <tbody>
                         <tr v-for="item in selectedProjectExpenseContracts" :key="item.id">
                           <td><button class="text-button contract-name-link" @click="openContractDetail(item)"><strong>{{ item.name }}</strong></button><small>{{ item.contract_no }}</small></td>
@@ -9529,19 +9926,19 @@ onMounted(() => {
               <section v-else-if="projectFinanceTab === 'receipts'" class="project-finance-document-panel">
                 <div class="project-tab-subhead"><strong>合同收款单</strong><span>共 {{ projectDetailReceipts.length }} 张</span></div>
                 <div v-if="!projectDetailReceipts.length" class="empty">该项目暂无合同收款单。</div>
-                <div v-else class="table-wrap"><table class="v3-ops-table"><thead><tr><th>合同收款单号</th><th>合同 / 阶段</th><th>付款方</th><th>金额</th><th>日期</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in projectDetailReceipts" :key="item.id"><td>{{ item.receipt_no }}</td><td><strong>{{ item.contract_name }}</strong><small>{{ item.stage_name || '未关联阶段' }}</small></td><td>{{ item.payer_name }}</td><td>{{ moneyText(item.amount) }}</td><td>{{ item.receipt_date }}</td><td><span class="tag" :class="cashStatusClass(item.status)">{{ cashStatusLabel(item.status) }}</span></td><td><button class="text-button" @click="openReceiptApproval(item)">查看详情</button></td></tr></tbody></table></div>
+                <div v-else class="table-wrap"><table class="v3-ops-table"><thead><tr><th>合同收款单号</th><th>合同 / 阶段</th><th>付款方</th><th>含税金额</th><th>日期</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in projectDetailReceipts" :key="item.id"><td>{{ item.receipt_no }}</td><td><strong>{{ item.contract_name }}</strong><small>{{ item.stage_name || '未关联阶段' }}</small></td><td>{{ item.payer_name }}</td><td>{{ moneyText(item.amount) }}</td><td>{{ item.receipt_date }}</td><td><span class="tag" :class="cashStatusClass(item.status)">{{ cashStatusLabel(item.status) }}</span></td><td><button class="text-button" @click="openReceiptApproval(item)">查看详情</button></td></tr></tbody></table></div>
               </section>
               <section v-else class="project-finance-document-panel">
                 <div class="project-tab-subhead"><strong>合同付款单</strong><span>共 {{ projectDetailPayments.length }} 张</span></div>
                 <div v-if="!projectDetailPayments.length" class="empty">该项目暂无合同付款单。</div>
-                <div v-else class="table-wrap"><table class="v3-ops-table"><thead><tr><th>合同付款单号</th><th>合同 / 阶段</th><th>收款方</th><th>金额</th><th>日期</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in projectDetailPayments" :key="item.id"><td>{{ item.payment_no }}</td><td><strong>{{ item.contract_name }}</strong><small>{{ item.stage_name || '未关联阶段' }}</small></td><td>{{ item.payee_name }}</td><td>{{ moneyText(item.amount) }}</td><td>{{ item.payment_date }}</td><td><span class="tag" :class="cashStatusClass(item.status)">{{ cashStatusLabel(item.status) }}</span></td><td><button class="text-button" @click="openPaymentApproval(item)">查看详情</button></td></tr></tbody></table></div>
+                <div v-else class="table-wrap"><table class="v3-ops-table"><thead><tr><th>合同付款单号</th><th>合同 / 阶段</th><th>收款方</th><th>含税金额</th><th>日期</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in projectDetailPayments" :key="item.id"><td>{{ item.payment_no }}</td><td><strong>{{ item.contract_name }}</strong><small>{{ item.stage_name || '未关联阶段' }}</small></td><td>{{ item.payee_name }}</td><td>{{ moneyText(item.amount) }}</td><td>{{ item.payment_date }}</td><td><span class="tag" :class="cashStatusClass(item.status)">{{ cashStatusLabel(item.status) }}</span></td><td><button class="text-button" @click="openPaymentApproval(item)">查看详情</button></td></tr></tbody></table></div>
               </section>
             </section>
 
             <section v-else-if="projectDetailTab === 'expenses'" class="card project-tab-panel">
               <div class="section-head"><div><h2>项目费用明细</h2><p class="muted">审批通过后计入项目成本，支付完成后计入已付</p></div><button v-if="canAction('project_expenses','CREATE')" class="primary" @click="openExpenseForm">＋ 新增费用</button></div>
               <div class="project-kpi-row project-budget-kpis"><section><span>非人工预算</span><strong>{{ moneyText(selectedManagedProject.expense_budget) }}</strong></section><section><span>合同成本</span><strong>{{ moneyText(selectedManagedProject.actual_contract_cost) }}</strong></section><section><span>项目费用</span><strong>{{ moneyText(selectedManagedProject.actual_expense_cost) }}</strong></section><section><span>非人工剩余</span><strong :class="selectedManagedProject.expense_budget_remaining < 0 ? 'negative-number' : ''">{{ moneyText(selectedManagedProject.expense_budget_remaining) }}</strong></section></div>
-              <div v-if="!projectExpenses.length" class="empty">该项目暂无费用记录。</div><div v-else class="table-wrap"><table><thead><tr><th>单据编号</th><th>预算项</th><th>申请人</th><th>发生日期</th><th>金额</th><th>状态</th></tr></thead><tbody><tr v-for="item in projectExpenses" :key="item.id"><td><button class="detail-link" @click="openExpenseDetail(item)">{{ item.cost_no }}</button></td><td>{{ item.budget_item_name || '未归集' }}</td><td>{{ item.applicant_name }}</td><td>{{ item.occurred_on || item.accounting_month || '—' }}</td><td>{{ moneyText(item.amount) }}</td><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td></tr></tbody></table></div>
+              <div v-if="!projectExpenses.length" class="empty">该项目暂无费用记录。</div><div v-else class="table-wrap"><table><thead><tr><th>单据编号</th><th>预算项</th><th>申请人</th><th>发生日期</th><th>含税金额</th><th>状态</th></tr></thead><tbody><tr v-for="item in projectExpenses" :key="item.id"><td><button class="detail-link" @click="openExpenseDetail(item)">{{ item.cost_no }}</button></td><td>{{ item.budget_item_name || '未归集' }}</td><td>{{ item.applicant_name }}</td><td>{{ item.occurred_on || item.accounting_month || '—' }}</td><td>{{ moneyText(item.amount) }}</td><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td></tr></tbody></table></div>
             </section>
 
             <section v-else-if="projectDetailTab === 'audit'" class="card project-tab-panel">
@@ -9675,7 +10072,7 @@ onMounted(() => {
                     <th>项目</th>
                     <th>往来单位</th>
                     <th>预算项</th>
-                    <th>合同金额</th>
+                    <th>合同含税金额</th>
                     <th>结算进度</th>
                     <th>下一阶段</th>
                     <th>状态</th>
@@ -9753,7 +10150,10 @@ onMounted(() => {
                     </option>
                   </select>
                 </label>
-                <label>合同金额<input v-model.number="contractForm.amount" type="number" min="0" step="0.01" /></label>
+                <label>合同含税金额<input v-model.number="contractForm.amount" type="number" min="0" step="0.01" @input="syncTaxFields(contractForm)" /></label>
+                <label>税率<select v-model.number="contractForm.tax_rate" @change="syncTaxFields(contractForm)"><option v-for="item in taxRateOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label>
+                <label>合同未税金额<input v-model.number="contractForm.amount_without_tax" type="number" min="0" step="0.01" @input="syncTaxFields(contractForm, 'net')" /></label>
+                <label>税额<input :value="moneyText(contractForm.tax_amount)" disabled /></label>
                 <label v-if="contractForm.contract_type === 'EXPENSE'">
                   预算项
                   <select v-model.number="contractForm.budget_item_id">
@@ -9843,7 +10243,10 @@ onMounted(() => {
               </div>
               <div class="form-grid">
                 <label>阶段名称<input v-model.trim="stageForm.name" placeholder="如 设备到货款" /></label>
-                <label>阶段金额<input v-model.number="stageForm.amount" type="number" min="0" step="0.01" /></label>
+                <label>阶段含税金额<input v-model.number="stageForm.amount" type="number" min="0" step="0.01" @input="syncTaxFields(stageForm)" /></label>
+                <label>税率<select v-model.number="stageForm.tax_rate" @change="syncTaxFields(stageForm)"><option v-for="item in taxRateOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label>
+                <label>阶段未税金额<input v-model.number="stageForm.amount_without_tax" type="number" min="0" step="0.01" @input="syncTaxFields(stageForm, 'net')" /></label>
+                <label>税额<input :value="moneyText(stageForm.tax_amount)" disabled /></label>
                 <label>计划日期<input v-model="stageForm.planned_date" type="date" /></label>
                 <label>提前提醒<input v-model.number="stageForm.remind_days_before" type="number" min="0" max="365" /></label>
                 <label>排序<input v-model.number="stageForm.sort_order" type="number" min="0" /></label>
@@ -9875,7 +10278,8 @@ onMounted(() => {
             <div v-else-if="contractDetailError" class="card contract-detail-state error-state"><strong>合同详情加载失败</strong><span class="muted">{{ contractDetailError }}</span><button class="secondary" @click="openContractDetail(selectedContract)">重新加载</button></div>
             <template v-else>
               <section class="card contract-detail-summary">
-                <div class="contract-detail-summary-primary"><span>合同金额</span><strong>{{ moneyText(selectedContract.amount) }}</strong><small>{{ selectedContract.contract_type === 'INCOME' ? '收入合同' : '支出合同' }}</small></div>
+                <div class="contract-detail-summary-primary"><span>合同含税金额</span><strong>{{ moneyText(selectedContract.amount) }}</strong><small>{{ selectedContract.contract_type === 'INCOME' ? '收入合同' : '支出合同' }}</small></div>
+                <div class="contract-detail-summary-primary"><span>合同未税金额</span><strong>{{ moneyText(selectedContract.amount_without_tax) }}</strong><small>{{ taxRateText(selectedContract.tax_rate) }} · 税额 {{ moneyText(selectedContract.tax_amount) }}</small></div>
                 <div><span>结算率</span><strong>{{ selectedContract.settlement_rate === null || selectedContract.settlement_rate === undefined ? '暂无' : formatProjectDays(selectedContract.settlement_rate) + '%' }}</strong><small>{{ selectedContract.settled_document_count || 0 }} 笔已确认{{ selectedContract.contract_type === 'INCOME' ? '收款' : '付款' }}</small></div>
                 <div><span>{{ selectedContract.contract_type === 'INCOME' ? '已收' : '已付' }}</span><strong>{{ moneyText(selectedContract.settled_amount) }}</strong><small>已审批确认</small></div>
                 <div><span>{{ selectedContract.contract_type === 'INCOME' ? '待收' : '待付' }}</span><strong :class="selectedContract.amount - selectedContract.settled_amount > 0 ? 'warning-number' : 'positive-number'">{{ moneyText(Math.max(selectedContract.amount - selectedContract.settled_amount, 0)) }}</strong><small>尚未确认</small></div>
@@ -9897,7 +10301,7 @@ onMounted(() => {
                 <div class="section-head"><div><h2>阶段详情</h2><p class="muted">收付款计划、结算进度和关联单据一览</p></div><span class="muted">共 {{ contractDetailStages.length }} 个阶段</span></div>
                 <div v-if="!contractDetailStages.length" class="empty contract-detail-empty"><strong>暂无合同阶段</strong><span class="muted">点击右上角“新增阶段”建立收付款计划</span></div>
                 <div v-else class="contract-detail-stage-list">
-                  <div class="contract-detail-stage-head"><span>阶段</span><span>计划日期</span><span>计划金额</span><span>已{{ selectedContract.contract_type === 'INCOME' ? '收' : '付' }}</span><span>未{{ selectedContract.contract_type === 'INCOME' ? '收' : '付' }}</span><span>结算率</span><span>{{ selectedContract.contract_type === 'INCOME' ? '收款' : '付款' }}单</span><span>状态</span><span>操作</span></div>
+                  <div class="contract-detail-stage-head"><span>阶段</span><span>计划日期</span><span>计划含税金额</span><span>已{{ selectedContract.contract_type === 'INCOME' ? '收' : '付' }}</span><span>未{{ selectedContract.contract_type === 'INCOME' ? '收' : '付' }}</span><span>结算率</span><span>{{ selectedContract.contract_type === 'INCOME' ? '收款' : '付款' }}单</span><span>状态</span><span>操作</span></div>
                   <div v-for="stage in contractDetailStages" :key="stage.id" class="contract-detail-stage-row">
                     <div><strong>{{ stage.name }}</strong><small>第 {{ stage.sort_order + 1 }} 阶段 · 提前 {{ stage.remind_days_before || 0 }} 天提醒</small></div>
                     <span class="stage-cell-date">{{ stage.planned_date || '未排期' }}</span>
@@ -9941,7 +10345,10 @@ onMounted(() => {
                 <label>合同类型<select v-model="contractForm.contract_type"><option value="INCOME">收入合同</option><option value="EXPENSE">支出合同</option></select></label>
                 <label>往来单位类型<select v-model="contractForm.counterparty_type" @change="contractForm.counterparty_id = 0"><option value="CUSTOMER">客户</option><option value="SUPPLIER">供应商</option></select></label>
                 <label>往来单位<select v-model.number="contractForm.counterparty_id"><option :value="0" disabled>请选择往来单位</option><option v-for="item in contractForm.counterparty_type === 'CUSTOMER' ? customers : suppliers" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
-                <label>合同金额<input v-model.number="contractForm.amount" type="number" min="0" step="0.01" /></label>
+                <label>合同含税金额<input v-model.number="contractForm.amount" type="number" min="0" step="0.01" @input="syncTaxFields(contractForm)" /></label>
+                <label>税率<select v-model.number="contractForm.tax_rate" @change="syncTaxFields(contractForm)"><option v-for="item in taxRateOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label>
+                <label>合同未税金额<input v-model.number="contractForm.amount_without_tax" type="number" min="0" step="0.01" @input="syncTaxFields(contractForm, 'net')" /></label>
+                <label>税额<input :value="moneyText(contractForm.tax_amount)" disabled /></label>
                 <label v-if="contractForm.contract_type === 'EXPENSE'">预算项<select v-model.number="contractForm.budget_item_id"><option :value="null" disabled>{{ projectBudgetLoading ? "正在加载预算项…" : "请选择预算项" }}</option><option v-for="item in budgetOptionsForContract" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
                 <label>签订日期<input v-model="contractForm.sign_date" type="date" /></label>
                 <label>开始日期<input v-model="contractForm.start_date" type="date" /></label>
@@ -9970,7 +10377,7 @@ onMounted(() => {
           <div v-if="stageFormOpen" class="modal-backdrop">
             <section class="modal-card v3-modal stage-form-modal" role="dialog" aria-modal="true">
               <div class="modal-head"><div><div class="eyebrow">CONTRACT STAGE FORM</div><h2>{{ editingStageId ? '编辑合同阶段' : '新增合同阶段' }}</h2></div><button class="modal-close" aria-label="关闭弹窗" @click="stageFormOpen = false">×</button></div>
-              <div class="form-grid"><label>阶段名称<input v-model.trim="stageForm.name" placeholder="如 设备到货款" /></label><label>阶段金额<input v-model.number="stageForm.amount" type="number" min="0" step="0.01" /></label><label>计划日期<input v-model="stageForm.planned_date" type="date" /></label><label>提前提醒<input v-model.number="stageForm.remind_days_before" type="number" min="0" max="365" /></label><label>排序<input v-model.number="stageForm.sort_order" type="number" min="0" /></label><label class="checkbox-field"><input v-model="stageForm.reminder_paused" type="checkbox" /> 暂停提醒</label></div>
+              <div class="form-grid"><label>阶段名称<input v-model.trim="stageForm.name" placeholder="如 设备到货款" /></label><label>阶段含税金额<input v-model.number="stageForm.amount" type="number" min="0" step="0.01" @input="syncTaxFields(stageForm)" /></label><label>税率<select v-model.number="stageForm.tax_rate" @change="syncTaxFields(stageForm)"><option v-for="item in taxRateOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label><label>阶段未税金额<input v-model.number="stageForm.amount_without_tax" type="number" min="0" step="0.01" @input="syncTaxFields(stageForm, 'net')" /></label><label>税额<input :value="moneyText(stageForm.tax_amount)" disabled /></label><label>计划日期<input v-model="stageForm.planned_date" type="date" /></label><label>提前提醒<input v-model.number="stageForm.remind_days_before" type="number" min="0" max="365" /></label><label>排序<input v-model.number="stageForm.sort_order" type="number" min="0" /></label><label class="checkbox-field"><input v-model="stageForm.reminder_paused" type="checkbox" /> 暂停提醒</label></div>
               <div class="form-footer"><button class="secondary" @click="stageFormOpen = false">取消</button><button class="primary" @click="saveStage">保存阶段</button></div>
             </section>
           </div>
@@ -10044,7 +10451,7 @@ onMounted(() => {
                     <th>合同收款单号</th>
                     <th>项目 / 合同</th>
                     <th>阶段</th>
-                    <th>金额</th>
+                    <th>含税金额</th>
                     <th>收款日期</th>
                     <th>付款方</th>
                     <th>状态</th>
@@ -10063,6 +10470,7 @@ onMounted(() => {
                     <td>
                       <div class="table-actions">
                         <button class="text-button" @click="openReceiptApproval(item)">查看</button>
+                        <button v-if="item.can_withdraw" class="text-button danger-text" @click="withdrawReceipt(item)">撤回</button>
                         <button v-if="item.status === 'PENDING' && canAction('cash_approval', 'APPROVE')" class="text-button" @click="approveReceipt(item)">通过</button>
                         <button v-if="item.status === 'PENDING' && canAction('cash_approval', 'APPROVE')" class="text-button danger-text" @click="rejectReceipt(item)">驳回</button>
                         <button v-if="item.status === 'APPROVED' && canAction('cash_approval', 'APPROVE')" class="text-button" @click="reverseReceipt(item)">冲销</button>
@@ -10096,7 +10504,7 @@ onMounted(() => {
                 </label>
                 <label>
                   收款阶段
-                  <select v-model="receiptForm.stage_id">
+                  <select v-model="receiptForm.stage_id" @change="applyReceiptStageDefaults">
               <option :value="null" disabled>请选择收款阶段</option>
                     <option v-for="item in stageOptionsFor(receiptForm.contract_id)" :key="item.id" :value="item.id">
                       {{ item.name }} · {{ moneyText(item.amount) }}
@@ -10106,7 +10514,10 @@ onMounted(() => {
                     计划 {{ moneyText(receiptSelectedStage.amount) }} · 已收 {{ moneyText(receiptSelectedStage.settled_amount) }} · 剩余 {{ moneyText(receiptStageRemaining) }}
                   </small>
                 </label>
-                <label>收款金额<input v-model.number="receiptForm.amount" type="number" min="0.01" step="0.01" /></label>
+                <label>收款含税金额<input v-model.number="receiptForm.amount" type="number" min="0.01" step="0.01" @input="syncTaxFields(receiptForm)" /></label>
+                <label>税率<select v-model.number="receiptForm.tax_rate" @change="syncTaxFields(receiptForm)"><option v-for="item in taxRateOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label>
+                <label>收款未税金额<input v-model.number="receiptForm.amount_without_tax" type="number" min="0" step="0.01" @input="syncTaxFields(receiptForm, 'net')" /></label>
+                <label>税额<input :value="moneyText(receiptForm.tax_amount)" disabled /></label>
                 <label>收款日期<input v-model="receiptForm.receipt_date" type="date" /></label>
                 <label>付款方名称<input v-model.trim="receiptForm.payer_name" placeholder="从客户带出后可修改" /></label>
                 <label>付款银行<input v-model.trim="receiptForm.payer_bank_name" /></label>
@@ -10145,6 +10556,7 @@ onMounted(() => {
             </div>
             <div class="actions">
               <span v-if="selectedReceipt" class="tag" :class="cashStatusClass(selectedReceipt.status)">{{ cashStatusLabel(selectedReceipt.status) }}</span>
+              <button v-if="selectedReceipt?.can_withdraw" class="secondary danger-button" @click="withdrawReceipt(selectedReceipt)">撤回</button>
               <button class="secondary" @click="go('projectReceipts')">返回合同收款</button>
             </div>
           </div>
@@ -10158,7 +10570,9 @@ onMounted(() => {
                 <div><small>收入合同</small><button class="detail-link" @click="openContractDetail({ id: selectedReceipt.contract_id } as ProjectContract)">{{ selectedReceipt.contract_name }}</button><small>{{ selectedReceipt.contract_no || "—" }}</small></div>
                 <div><small>客户</small><strong>{{ selectedReceipt.counterparty_name || "—" }}</strong></div>
                 <div><small>收款阶段</small><strong>{{ selectedReceipt.stage_name || "未关联阶段" }}</strong></div>
-                <div><small>收款金额</small><strong>{{ moneyText(selectedReceipt.amount) }}</strong></div>
+                <div><small>收款含税金额</small><strong>{{ moneyText(selectedReceipt.amount) }}</strong></div>
+                <div><small>收款未税金额</small><strong>{{ moneyText(selectedReceipt.amount_without_tax) }}</strong></div>
+                <div><small>税率 / 税额</small><strong>{{ taxRateText(selectedReceipt.tax_rate) }} · {{ moneyText(selectedReceipt.tax_amount) }}</strong></div>
                 <div><small>阶段计划金额</small><strong>{{ selectedReceipt.stage_planned_amount === null || selectedReceipt.stage_planned_amount === undefined ? "—" : moneyText(selectedReceipt.stage_planned_amount) }}</strong></div>
                 <div><small>阶段已收</small><strong>{{ selectedReceipt.stage_settled_amount === null || selectedReceipt.stage_settled_amount === undefined ? "—" : moneyText(selectedReceipt.stage_settled_amount) }}</strong></div>
                 <div><small>阶段剩余应收</small><strong>{{ selectedReceipt.stage_remaining_amount === null || selectedReceipt.stage_remaining_amount === undefined ? "—" : moneyText(selectedReceipt.stage_remaining_amount) }}</strong></div>
@@ -10170,7 +10584,7 @@ onMounted(() => {
               </div>
               <div v-if="selectedReceipt.status === 'PENDING' && canAction('cash_approval', 'APPROVE')" class="cash-approval-confirm">
                 <strong>审批前确认</strong>
-                <span>通过后将计入项目收入，并按本阶段金额核减应收。</span>
+                <span>通过后将计入项目收入，并按本阶段含税金额核减应收。</span>
               </div>
               <div v-if="selectedReceipt.status === 'PENDING' && canAction('cash_approval', 'APPROVE')" class="actions">
                 <button class="primary success-button" @click="approveReceipt(selectedReceipt)">通过</button>
@@ -10277,7 +10691,7 @@ onMounted(() => {
                     <th>合同付款单号</th>
                     <th>项目 / 合同</th>
                     <th>阶段</th>
-                    <th>金额</th>
+                    <th>含税金额</th>
                     <th>付款日期</th>
                     <th>收款方</th>
                     <th>状态</th>
@@ -10296,6 +10710,7 @@ onMounted(() => {
                     <td>
                       <div class="table-actions">
                         <button class="text-button" @click="openPaymentApproval(item)">查看</button>
+                        <button v-if="item.can_withdraw" class="text-button danger-text" @click="withdrawPayment(item)">撤回</button>
                         <button v-if="item.can_approve" class="text-button" @click="approvePayment(item)">{{ item.current_node_name === '出纳支付' || !item.current_workflow_instance_id ? '确认支付' : '通过' }}</button>
                         <button v-if="item.can_approve" class="text-button danger-text" @click="rejectPayment(item)">驳回</button>
                         <button v-if="item.status === 'APPROVED' && canAction('cash_approval', 'APPROVE')" class="text-button" @click="reversePayment(item)">冲销</button>
@@ -10329,7 +10744,7 @@ onMounted(() => {
                 </label>
                 <label>
                   付款阶段
-                  <select v-model="paymentForm.stage_id">
+                  <select v-model="paymentForm.stage_id" @change="applyPaymentStageDefaults">
                     <option :value="null" disabled>请选择付款阶段</option>
                     <option v-for="item in stageOptionsFor(paymentForm.contract_id)" :key="item.id" :value="item.id">
                       {{ item.name }} · {{ moneyText(item.amount) }}
@@ -10339,7 +10754,10 @@ onMounted(() => {
                     计划 {{ moneyText(paymentSelectedStage.amount) }} · 已付 {{ moneyText(paymentSelectedStage.settled_amount) }} · 剩余 {{ moneyText(paymentStageRemaining) }}
                   </small>
                 </label>
-                <label>付款金额<input v-model.number="paymentForm.amount" type="number" min="0.01" step="0.01" /></label>
+                <label>付款含税金额<input v-model.number="paymentForm.amount" type="number" min="0.01" step="0.01" @input="syncTaxFields(paymentForm)" /></label>
+                <label>税率<select v-model.number="paymentForm.tax_rate" @change="syncTaxFields(paymentForm)"><option v-for="item in taxRateOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label>
+                <label>付款未税金额<input v-model.number="paymentForm.amount_without_tax" type="number" min="0" step="0.01" @input="syncTaxFields(paymentForm, 'net')" /></label>
+                <label>税额<input :value="moneyText(paymentForm.tax_amount)" disabled /></label>
                 <label>付款日期<input v-model="paymentForm.payment_date" type="date" /></label>
                 <label>收款方名称<input v-model.trim="paymentForm.payee_name" placeholder="从供应商带出后可修改" /></label>
                 <label>收款银行<input v-model.trim="paymentForm.payee_bank_name" /></label>
@@ -10378,6 +10796,7 @@ onMounted(() => {
             </div>
             <div class="actions">
               <span v-if="selectedPayment" class="tag" :class="cashStatusClass(selectedPayment.status)">{{ cashStatusLabel(selectedPayment.status) }}</span>
+              <button v-if="selectedPayment?.can_withdraw" class="secondary danger-button" @click="withdrawPayment(selectedPayment)">撤回</button>
               <button class="secondary" @click="canManage('payments') ? go('projectPayments') : go('workbench')">{{ canManage('payments') ? '返回合同付款' : '返回工作台' }}</button>
             </div>
           </div>
@@ -10391,7 +10810,9 @@ onMounted(() => {
                 <div><small>支出合同</small><button class="detail-link" @click="openContractDetail({ id: selectedPayment.contract_id } as ProjectContract)">{{ selectedPayment.contract_name }}</button><small>{{ selectedPayment.contract_no || "—" }}</small></div>
                 <div><small>供应商</small><strong>{{ selectedPayment.counterparty_name || "—" }}</strong></div>
                 <div><small>付款阶段</small><strong>{{ selectedPayment.stage_name || "未关联阶段" }}</strong></div>
-                <div><small>付款金额</small><strong>{{ moneyText(selectedPayment.amount) }}</strong></div>
+                <div><small>付款含税金额</small><strong>{{ moneyText(selectedPayment.amount) }}</strong></div>
+                <div><small>付款未税金额</small><strong>{{ moneyText(selectedPayment.amount_without_tax) }}</strong></div>
+                <div><small>税率 / 税额</small><strong>{{ taxRateText(selectedPayment.tax_rate) }} · {{ moneyText(selectedPayment.tax_amount) }}</strong></div>
                 <div><small>阶段计划金额</small><strong>{{ selectedPayment.stage_planned_amount === null || selectedPayment.stage_planned_amount === undefined ? "—" : moneyText(selectedPayment.stage_planned_amount) }}</strong></div>
                 <div><small>阶段已付</small><strong>{{ selectedPayment.stage_settled_amount === null || selectedPayment.stage_settled_amount === undefined ? "—" : moneyText(selectedPayment.stage_settled_amount) }}</strong></div>
                 <div><small>阶段剩余应付</small><strong>{{ selectedPayment.stage_remaining_amount === null || selectedPayment.stage_remaining_amount === undefined ? "—" : moneyText(selectedPayment.stage_remaining_amount) }}</strong></div>
@@ -10403,7 +10824,7 @@ onMounted(() => {
               </div>
               <div v-if="selectedPayment.can_approve" class="cash-approval-confirm">
                 <strong>当前节点：{{ selectedPayment.current_node_name || '费用复核' }}</strong>
-                <span>复核通过后计入项目成本与已付，并按本阶段金额核减应付。</span>
+                <span>复核通过后计入项目成本与已付，并按本阶段含税金额核减应付。</span>
               </div>
               <div v-if="selectedPayment.can_approve" class="actions">
                 <button class="primary success-button" @click="approvePayment(selectedPayment)">复核通过</button>
@@ -10461,14 +10882,14 @@ onMounted(() => {
           </section>
           <section class="card table-card">
             <div class="section-head"><div><h2>{{ page === 'laborCosts' ? '结转台账' : '费用台账' }}</h2><p class="muted">共 {{ projectExpenseTotal }} 条 · 已通过 {{ moneyText(costEntrySummary.total_amount || 0) }} · 待复核 {{ moneyText(costEntrySummary.pending_amount || 0) }}</p></div></div>
-            <div class="table-wrap"><table><thead><tr><th>单据编号</th><th>项目</th><th>预算项</th><th>申请人</th><th>{{ page === 'laborCosts' ? '会计期间' : '发生日期' }}</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in projectExpenses" :key="item.id"><td><button class="detail-link" @click="openExpenseDetail(item)">{{ item.cost_no }}</button></td><td><strong>{{ item.project_name }}</strong><small>{{ item.project_code }}</small></td><td>{{ item.budget_item_name || '未归集' }}</td><td>{{ item.applicant_name }}</td><td>{{ page === 'laborCosts' ? (item.accounting_month || '—') : (item.occurred_on || '—') }}</td><td>{{ moneyText(item.amount) }}</td><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td><td><div class="table-actions"><button class="text-button" @click="openExpenseDetail(item)">查看</button><button v-if="item.can_edit" class="text-button" @click="editCostEntry(item)">编辑</button></div></td></tr></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>单据编号</th><th>项目</th><th>预算项</th><th>申请人</th><th>{{ page === 'laborCosts' ? '会计期间' : '发生日期' }}</th><th>含税金额</th><th>未税金额</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in projectExpenses" :key="item.id"><td><button class="detail-link" @click="openExpenseDetail(item)">{{ item.cost_no }}</button></td><td><strong>{{ item.project_name }}</strong><small>{{ item.project_code }}</small></td><td>{{ item.budget_item_name || '未归集' }}</td><td>{{ item.applicant_name }}</td><td>{{ page === 'laborCosts' ? (item.accounting_month || '—') : (item.occurred_on || '—') }}</td><td>{{ moneyText(item.amount) }}</td><td>{{ moneyText(item.amount_without_tax) }}</td><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td><td><div class="table-actions"><button class="text-button" @click="openExpenseDetail(item)">查看</button><button v-if="item.can_withdraw" class="text-button danger-text" @click="withdrawCostEntry(item)">撤回</button><button v-if="item.can_edit" class="text-button" @click="editCostEntry(item)">编辑</button></div></td></tr></tbody></table></div>
             <div v-if="!projectExpenses.length" class="empty">暂无符合条件的单据</div>
             <div class="pagination"><button class="secondary" :disabled="expensePage<=1" @click="expensePage--; refreshProjectExpenses()">上一页</button><span>第 {{ expensePage }} 页</span><button class="secondary" :disabled="expensePage * expensePageSize >= projectExpenseTotal" @click="expensePage++; refreshProjectExpenses()">下一页</button><select v-model.number="expensePageSize" @change="expensePage=1; refreshProjectExpenses()"><option :value="10">10 条/页</option><option :value="20">20 条/页</option><option :value="50">50 条/页</option></select></div>
           </section>
           <div v-if="expenseFormOpen" class="modal-backdrop">
             <section class="modal-card expense-form-modal">
               <div class="modal-head"><div><span class="eyebrow">COST ENTRY DRAFT</span><h2>{{ selectedExpense ? '编辑成本单' : (page === 'laborCosts' ? '新增人工成本结转' : '新增项目费用') }}</h2></div><button class="modal-close" aria-label="关闭" @click="expenseFormOpen=false">×</button></div>
-              <div class="expense-form-section"><h3>基本信息</h3><div class="form-grid three-cols"><label>项目<select v-model.number="costEntryForm.project_id" @change="loadProjectBudgetItems(costEntryForm.project_id)"><option :value="0" disabled>请选择项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'">会计期间<input v-model="costEntryForm.accounting_month" type="month" /></label><label v-else>发生日期<input v-model="costEntryForm.occurred_on" type="date" /></label><label>金额<input v-model.number="costEntryForm.amount" type="number" min="0.01" step="0.01" /></label></div></div>
+              <div class="expense-form-section"><h3>基本信息</h3><div class="form-grid three-cols"><label>项目<select v-model.number="costEntryForm.project_id" @change="loadProjectBudgetItems(costEntryForm.project_id)"><option :value="0" disabled>请选择项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'">会计期间<input v-model="costEntryForm.accounting_month" type="month" /></label><label v-else>发生日期<input v-model="costEntryForm.occurred_on" type="date" /></label><label>含税金额<input v-model.number="costEntryForm.amount" type="number" min="0.01" step="0.01" @input="syncTaxFields(costEntryForm)" /></label><label>税率<select v-model.number="costEntryForm.tax_rate" @change="syncTaxFields(costEntryForm)"><option v-for="item in taxRateOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label><label>未税金额<input v-model.number="costEntryForm.amount_without_tax" type="number" min="0" step="0.01" @input="syncTaxFields(costEntryForm, 'net')" /><small>多张发票税率不一致时，可手动填写实际入账未税金额，保存以此为准。</small></label><label>税额<input :value="moneyText(costEntryForm.tax_amount)" disabled /></label></div></div>
               <div class="expense-form-section"><h3>预算归集</h3><div class="form-grid three-cols"><label v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'">预算项<input value="人工费用" disabled /><small>人工成本结转固定归集到「人工费用」，无需选择</small></label><label v-else>预算项<select v-model.number="costEntryForm.budget_item_id"><option :value="0">{{ projectBudgetLoading ? '正在加载预算项…' : '不归集' }}</option><option v-for="item in budgetOptionsForExpense" :key="item.id" :value="item.id">{{ item.name }}</option></select></label></div></div>
               <div class="expense-form-section"><h3>附件与说明</h3><div class="form-grid"><label class="span-2">说明<textarea v-model.trim="costEntryForm.description" rows="3"></textarea></label><label class="file-drop span-2">选择凭证（可选）<input type="file" multiple accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.pdf,.png,.jpg,.jpeg,.webp" @change="chooseExpenseFiles" /><span>{{ pendingExpenseFiles.length ? `已选择 ${pendingExpenseFiles.length} 个文件` : '可不上传附件，选择后保存会自动上传' }}</span></label></div></div>
               <div class="form-footer"><button class="secondary" @click="expenseFormOpen=false">取消</button><button class="secondary" :disabled="expenseFormSaving" @click="saveCostEntry(false)">保存草稿</button><button class="primary" :disabled="expenseFormSaving" @click="saveCostEntry(true)">{{ expenseFormSaving ? '正在保存…' : '提交复核' }}</button></div>
@@ -10477,9 +10898,9 @@ onMounted(() => {
         </section>
 
         <section v-else-if="page === 'expenseDetail'" class="page-view expense-detail-page">
-          <div class="page-head"><div><div class="eyebrow">COST ENTRY / {{ selectedExpense?.cost_no }}</div><h1>成本单详情</h1><p class="muted">{{ costKindLabel(selectedExpense?.entry_kind || 'PROJECT_EXPENSE') }} · 一级费用复核通过后计入项目成本</p></div><div class="actions"><span v-if="selectedExpense" class="tag" :class="costEntryStatusClass(selectedExpense.status)">{{ costEntryStatusLabel(selectedExpense.status) }}</span><button class="secondary" @click="go(costEntryKind === 'PERSONNEL_COST' ? 'laborCosts' : 'projectExpenses')">返回台账</button></div></div>
+          <div class="page-head"><div><div class="eyebrow">COST ENTRY / {{ selectedExpense?.cost_no }}</div><h1>成本单详情</h1><p class="muted">{{ costKindLabel(selectedExpense?.entry_kind || 'PROJECT_EXPENSE') }} · 一级费用复核通过后计入项目成本</p></div><div class="actions"><span v-if="selectedExpense" class="tag" :class="costEntryStatusClass(selectedExpense.status)">{{ costEntryStatusLabel(selectedExpense.status) }}</span><button v-if="selectedExpense?.can_withdraw" class="secondary danger-button" @click="withdrawCostEntry(selectedExpense)">撤回</button><button class="secondary" @click="go(selectedExpense?.entry_kind === 'PERSONNEL_COST' ? 'laborCosts' : 'projectExpenses')">返回台账</button></div></div>
           <template v-if="selectedExpense">
-            <section class="expense-hero-grid"><div class="expense-kpi"><span>单据金额</span><strong>{{ moneyText(selectedExpense.amount) }}</strong></div><div class="expense-kpi"><span>归集预算项</span><strong>{{ selectedExpense.budget_item_name || '未归集' }}</strong></div><div class="expense-kpi"><span>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? '会计期间' : '发生日期' }}</span><strong>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? (selectedExpense.accounting_month || '—') : (selectedExpense.occurred_on || '—') }}</strong></div><div class="expense-kpi"><span>同期间单据数</span><strong>{{ selectedExpense.same_month_count }}</strong></div></section>
+            <section class="expense-hero-grid"><div class="expense-kpi"><span>含税金额</span><strong>{{ moneyText(selectedExpense.amount) }}</strong></div><div class="expense-kpi"><span>未税金额 / 税额</span><strong>{{ moneyText(selectedExpense.amount_without_tax) }}</strong><small>{{ taxRateText(selectedExpense.tax_rate) }} · 税额 {{ moneyText(selectedExpense.tax_amount) }}</small></div><div class="expense-kpi"><span>归集预算项</span><strong>{{ selectedExpense.budget_item_name || '未归集' }}</strong></div><div class="expense-kpi"><span>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? '会计期间' : '发生日期' }}</span><strong>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? (selectedExpense.accounting_month || '—') : (selectedExpense.occurred_on || '—') }}</strong></div><div class="expense-kpi"><span>同期间单据数</span><strong>{{ selectedExpense.same_month_count }}</strong></div></section>
             <section class="expense-detail-grid"><section class="card"><div class="section-head"><div><h2>单据信息</h2><p class="muted">{{ selectedExpense.project_name }} · {{ selectedExpense.project_code }}</p></div><button v-if="selectedExpense.can_edit" class="secondary" @click="editCostEntry(selectedExpense)">编辑草稿</button></div><div class="detail-grid"><div><small>单据编号</small><strong>{{ selectedExpense.cost_no }}</strong></div><div><small>单据类型</small><strong>{{ costKindLabel(selectedExpense.entry_kind) }}</strong></div><div><small>申请人</small><strong>{{ selectedExpense.applicant_name }}</strong></div><div><small>所属部门</small><strong>{{ selectedExpense.applicant_department_name || '未分配' }}</strong></div><div class="full"><small>说明</small><strong>{{ selectedExpense.description || '无' }}</strong></div></div></section>
               <section class="card"><h2>复核信息</h2><div class="workflow-track"><div :class="['workflow-node', selectedExpense.status === 'APPROVED' ? 'approved' : selectedExpense.status === 'REJECTED' ? 'rejected' : selectedExpense.status === 'PENDING_REVIEW' ? 'pending' : 'draft']"><i>1</i><span><strong>费用复核</strong><small>{{ selectedExpense.reviewed_by_name || '待费用复核岗位处理' }}</small></span></div></div><div class="timeline"><div v-if="selectedExpense.submitted_at"><b>{{ selectedExpense.submitted_by_name || '申请人' }} 提交复核</b><small>{{ formatDateTime(selectedExpense.submitted_at) }}</small></div><div v-if="selectedExpense.reviewed_at"><b>{{ selectedExpense.reviewed_by_name }} {{ costEntryStatusLabel(selectedExpense.status) }}</b><small>{{ formatDateTime(selectedExpense.reviewed_at) }}<span v-if="selectedExpense.review_comment"> · {{ selectedExpense.review_comment }}</span></small></div><div v-else><b>等待费用复核</b><small>{{ formatDateTime(selectedExpense.created_at) }}</small></div></div></section>
             </section>
@@ -10503,7 +10924,7 @@ onMounted(() => {
           </div>
           <section class="card">
             <div class="section-head"><div><h2>复核清单</h2><p class="muted">共 {{ costReviewTotal }} 条</p></div><button class="secondary" @click="refreshCostReview">刷新</button></div>
-            <div class="table-wrap"><table class="v3-ops-table"><thead><tr><th>单据编号</th><th>单据类型</th><th>项目</th><th>预算项</th><th>申请人</th><th>金额</th><th>提交时间</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in costReviewItems" :key="`${item.kind}-${item.entry_id}`"><td><button class="detail-link" @click="openCostReviewTarget(item)">{{ item.document_no }}</button></td><td>{{ item.document_label }}</td><td><strong>{{ item.project_name }}</strong><small>{{ item.project_code }}</small></td><td>{{ item.budget_item_name || '—' }}</td><td>{{ item.applicant_name }}</td><td>{{ moneyText(item.amount) }}</td><td>{{ formatDateTime(item.submitted_at) }}</td><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td><td><div class="table-actions"><button class="text-button" @click="openCostReviewTarget(item)">查看</button><button v-if="item.status === 'PENDING_REVIEW'" class="text-button" @click="costRejectTarget = item; costEntryRejectOpen = true">驳回</button><button v-if="item.status === 'PENDING_REVIEW'" class="text-button" @click="approveCostReview(item)">通过</button></div></td></tr></tbody></table></div>
+            <div class="table-wrap"><table class="v3-ops-table"><thead><tr><th>单据编号</th><th>单据类型</th><th>项目</th><th>预算项</th><th>申请人</th><th>含税金额</th><th>提交时间</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in costReviewItems" :key="`${item.kind}-${item.entry_id}`"><td><button class="detail-link" @click="openCostReviewTarget(item)">{{ item.document_no }}</button></td><td>{{ item.document_label }}</td><td><strong>{{ item.project_name }}</strong><small>{{ item.project_code }}</small></td><td>{{ item.budget_item_name || '—' }}</td><td>{{ item.applicant_name }}</td><td>{{ moneyText(item.amount) }}</td><td>{{ formatDateTime(item.submitted_at) }}</td><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td><td><div class="table-actions"><button class="text-button" @click="openCostReviewTarget(item)">查看</button><button v-if="item.status === 'PENDING_REVIEW'" class="text-button" @click="costRejectTarget = item; costEntryRejectOpen = true">驳回</button><button v-if="item.status === 'PENDING_REVIEW'" class="text-button" @click="approveCostReview(item)">通过</button></div></td></tr></tbody></table></div>
             <div v-if="!costReviewItems.length" class="empty">当前没有符合条件的单据</div>
           </section>
           <div v-if="costEntryRejectOpen" class="modal-backdrop"><section class="modal-card compact-modal"><div class="modal-head"><div><span class="eyebrow">COST REVIEW REJECT</span><h2>驳回单据</h2></div><button class="modal-close" @click="costEntryRejectOpen=false">×</button></div><div class="form-grid"><label class="span-2">驳回原因<textarea v-model.trim="costEntryRejectReason" rows="3" placeholder="至少填写 2 个字"></textarea></label></div><div class="form-footer"><button class="secondary" @click="costEntryRejectOpen=false">取消</button><button class="primary" @click="costRejectTarget ? rejectCostReview(costRejectTarget) : rejectCostEntry()">确认驳回</button></div></section></div>
@@ -11242,7 +11663,7 @@ onMounted(() => {
                       <div v-if="policy.notification_type === WORKLOG_FILL_REMINDER" class="integration-policy-schedule">
                         <label class="integration-policy-schedule-time">提醒时间<input v-model="policy.schedule_time" type="text" placeholder="09:00, 17:30" /><small>每个工作日生效，多个时刻用逗号分隔</small></label>
                         <label>通知范围<select v-model="policy.target_scope"><option value="ALL">全部在职人员</option><option value="DEPARTMENT">指定部门</option><option value="USER">指定人员</option></select></label>
-                        <label v-if="policy.target_scope === 'DEPARTMENT'" class="integration-policy-schedule-target">选择部门<select v-model="policy.target_id_list" multiple size="5"><option v-for="item in departments" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+                        <label v-if="policy.target_scope === 'DEPARTMENT'" class="integration-policy-schedule-target">选择部门（含下级）<select v-model="policy.target_id_list" multiple size="5"><option v-for="item in departments" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
                         <label v-else-if="policy.target_scope === 'USER'" class="integration-policy-schedule-target">选择人员<select v-model="policy.target_id_list" multiple size="6"><option v-for="item in demoUsers" :key="item.id" :value="item.id">{{ item.name }} · {{ item.department_name }}</option></select></label>
                         <label class="check-line"><input v-model="policy.only_unfilled" type="checkbox" />只提醒当天未填报的人</label>
                       </div>
@@ -11289,7 +11710,7 @@ onMounted(() => {
                   <div class="reminder-block-head"><strong>通知范围</strong><span>{{ reminderTargetText }}</span></div>
                   <div class="reminder-scope">
                     <button
-                      v-for="option in [{ value: 'ALL', label: '全部在职人员' }, { value: 'DEPARTMENT', label: '指定部门' }, { value: 'USER', label: '指定人员' }]"
+                      v-for="option in [{ value: 'ALL', label: '全部在职人员' }, { value: 'DEPARTMENT', label: '指定部门（含下级）' }, { value: 'USER', label: '指定人员' }]"
                       :key="option.value"
                       type="button"
                       class="reminder-scope-option"
@@ -11330,6 +11751,86 @@ onMounted(() => {
                     <button class="primary" type="button" :disabled="worklogReminderSaving" @click="saveWorklogReminder">{{ worklogReminderSaving ? '保存中…' : '保存设置' }}</button>
                   </template>
                   <button v-else class="secondary" type="button" :disabled="worklogReminderRunning || !worklogReminderPolicy.enabled" @click="runWorklogFillReminder">{{ worklogReminderRunning ? '发送中…' : '立即发送一次' }}</button>
+                </div>
+              </footer>
+            </section>
+            <section v-if="t1Reminder.policy" class="card worklog-reminder-card">
+              <div class="section-head worklog-reminder-head">
+                <div>
+                  <span class="integration-section-label">WORKLOG FILL REMINDER T-1</span>
+                  <h2>工时补填提醒（T-1）</h2>
+                  <p class="muted">每个工作日按设定时刻检查上一个工作日漏填的工时，提醒成员当天补填。</p>
+                </div>
+                <div class="worklog-reminder-head-actions">
+                  <button
+                    type="button"
+                    class="reminder-switch"
+                    :class="{ on: t1Reminder.policy.enabled }"
+                    :disabled="t1Reminder.saving || t1Reminder.editing"
+                    :aria-pressed="t1Reminder.policy.enabled"
+                    @click="t1Reminder.toggleEnabled"
+                  ><i></i><span>{{ t1Reminder.policy.enabled ? '已启用' : '已停用' }}</span></button>
+                  <button v-if="!t1Reminder.editing" class="primary" type="button" @click="t1Reminder.startEdit">配置提醒</button>
+                </div>
+              </div>
+              <div class="worklog-reminder-body">
+                <div class="reminder-block">
+                  <div class="reminder-block-head"><strong>提醒时刻</strong><span>周一至周五生效，检查的是上一个工作日</span></div>
+                  <div class="reminder-time-chips">
+                    <span v-for="(slot, index) in t1Reminder.activeTimes" :key="slot" class="reminder-time-chip">{{ slot }}<button v-if="t1Reminder.editing" type="button" :aria-label="`删除 ${slot}`" @click="t1Reminder.removeTime(index)">×</button></span>
+                    <span v-if="!t1Reminder.activeTimes.length" class="reminder-placeholder">尚未设置提醒时刻</span>
+                  </div>
+                  <div v-if="t1Reminder.editing" class="reminder-time-editor">
+                    <input v-model="t1Reminder.timeInput" type="time" aria-label="提醒时刻" />
+                    <button class="secondary" type="button" @click="t1Reminder.addTime(t1Reminder.timeInput)">添加时刻</button>
+                    <span class="reminder-quick">常用时刻：<button v-for="slot in ['08:30', '09:00', '09:30']" :key="slot" type="button" class="reminder-quick-button" @click="t1Reminder.addTime(slot)">{{ slot }}</button></span>
+                  </div>
+                </div>
+                <div class="reminder-block">
+                  <div class="reminder-block-head"><strong>通知范围</strong><span>{{ t1Reminder.targetText }}</span></div>
+                  <div class="reminder-scope">
+                    <button
+                      v-for="option in [{ value: 'ALL', label: '全部在职人员' }, { value: 'DEPARTMENT', label: '指定部门（含下级）' }, { value: 'USER', label: '指定人员' }]"
+                      :key="option.value"
+                      type="button"
+                      class="reminder-scope-option"
+                      :class="{ active: t1Reminder.activeScope === option.value }"
+                      :disabled="!t1Reminder.editing"
+                      @click="t1Reminder.draft.target_scope = option.value as 'ALL' | 'DEPARTMENT' | 'USER'"
+                    >{{ option.label }}</button>
+                  </div>
+                  <template v-if="t1Reminder.activeScope === 'DEPARTMENT'">
+                    <div class="reminder-picker">
+                      <label v-for="item in departments" :key="item.id" class="reminder-pick" :class="{ selected: t1Reminder.activeIds.includes(item.id) }"><input type="checkbox" :checked="t1Reminder.activeIds.includes(item.id)" :disabled="!t1Reminder.editing" @change="t1Reminder.toggleTarget(item.id)" /><span>{{ item.name }}</span></label>
+                      <span v-if="!departments.length" class="reminder-placeholder">暂无部门数据，请先同步组织架构</span>
+                    </div>
+                  </template>
+                  <template v-else-if="t1Reminder.activeScope === 'USER'">
+                    <label v-if="t1Reminder.editing" class="reminder-search"><span>搜索人员</span><input v-model.trim="t1Reminder.userKeyword" placeholder="输入姓名或部门" /></label>
+                    <div class="reminder-picker">
+                      <label v-for="item in (t1Reminder.editing ? t1Reminder.filteredUsers : demoUsers.filter((user) => t1Reminder.activeIds.includes(user.id)))" :key="item.id" class="reminder-pick" :class="{ selected: t1Reminder.activeIds.includes(item.id) }"><input type="checkbox" :checked="t1Reminder.activeIds.includes(item.id)" :disabled="!t1Reminder.editing" @change="t1Reminder.toggleTarget(item.id)" /><span>{{ item.name }}<small>{{ item.department_name || '未同步部门' }}</small></span></label>
+                      <span v-if="!t1Reminder.filteredUsers.length" class="reminder-placeholder">没有匹配的人员</span>
+                    </div>
+                  </template>
+                </div>
+                <div class="reminder-block">
+                  <div class="reminder-block-head"><strong>发送条件</strong></div>
+                  <label class="reminder-check"><input v-model="t1Reminder.draft.only_unfilled" type="checkbox" :disabled="!t1Reminder.editing" /><span>只提醒上一个工作日还没有填报的人</span></label>
+                  <label class="reminder-check"><span class="reminder-check-label">通知通道</span><select v-model="t1Reminder.draft.send_channel" :disabled="!t1Reminder.editing"><option value="app">飞书应用</option><option value="webhook">群机器人</option><option value="mock">仅记录不发送</option></select></label>
+                </div>
+              </div>
+              <footer class="worklog-reminder-foot">
+                <div class="reminder-foot-info">
+                  <span :class="{ 'reminder-warn': !t1Reminder.activeTimes.length }">{{ t1Reminder.nextText }}</span>
+                  <span class="reminder-foot-sep">·</span>
+                  <span>{{ t1Reminder.targetText }}</span>
+                </div>
+                <div class="actions">
+                  <template v-if="t1Reminder.editing">
+                    <button class="secondary" type="button" :disabled="t1Reminder.saving" @click="t1Reminder.cancelEdit">取消</button>
+                    <button class="primary" type="button" :disabled="t1Reminder.saving" @click="t1Reminder.save">{{ t1Reminder.saving ? '保存中…' : '保存设置' }}</button>
+                  </template>
+                  <button v-else class="secondary" type="button" :disabled="t1Reminder.running || !t1Reminder.policy.enabled" @click="t1Reminder.run">{{ t1Reminder.running ? '发送中…' : '立即发送一次' }}</button>
                 </div>
               </footer>
             </section>
