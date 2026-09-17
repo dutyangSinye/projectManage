@@ -11707,6 +11707,11 @@ onMounted(() => {
                   </div>
                 </div>
                 <div class="reminder-block">
+                  <div class="reminder-block-head"><strong>发送条件</strong></div>
+                  <label class="reminder-check"><input v-model="worklogReminderDraft.only_unfilled" type="checkbox" :disabled="!worklogReminderEditing" /><span>只提醒当天还没有填报的人</span></label>
+                  <label class="reminder-check"><span class="reminder-check-label">通知通道</span><select v-model="worklogReminderDraft.send_channel" :disabled="!worklogReminderEditing"><option value="app">飞书应用</option><option value="webhook">群机器人</option><option value="mock">仅记录不发送</option></select></label>
+                </div>
+                <div class="reminder-block reminder-block--scope">
                   <div class="reminder-block-head"><strong>通知范围</strong><span>{{ reminderTargetText }}</span></div>
                   <div class="reminder-scope">
                     <button
@@ -11732,11 +11737,6 @@ onMounted(() => {
                       <span v-if="!filteredReminderUsers.length" class="reminder-placeholder">没有匹配的人员</span>
                     </div>
                   </template>
-                </div>
-                <div class="reminder-block">
-                  <div class="reminder-block-head"><strong>发送条件</strong></div>
-                  <label class="reminder-check"><input v-model="worklogReminderDraft.only_unfilled" type="checkbox" :disabled="!worklogReminderEditing" /><span>只提醒当天还没有填报的人</span></label>
-                  <label class="reminder-check"><span class="reminder-check-label">通知通道</span><select v-model="worklogReminderDraft.send_channel" :disabled="!worklogReminderEditing"><option value="app">飞书应用</option><option value="webhook">群机器人</option><option value="mock">仅记录不发送</option></select></label>
                 </div>
               </div>
               <footer class="worklog-reminder-foot">
@@ -11787,6 +11787,11 @@ onMounted(() => {
                   </div>
                 </div>
                 <div class="reminder-block">
+                  <div class="reminder-block-head"><strong>发送条件</strong></div>
+                  <label class="reminder-check"><input v-model="t1Reminder.draft.only_unfilled" type="checkbox" :disabled="!t1Reminder.editing" /><span>只提醒上一个工作日还没有填报的人</span></label>
+                  <label class="reminder-check"><span class="reminder-check-label">通知通道</span><select v-model="t1Reminder.draft.send_channel" :disabled="!t1Reminder.editing"><option value="app">飞书应用</option><option value="webhook">群机器人</option><option value="mock">仅记录不发送</option></select></label>
+                </div>
+                <div class="reminder-block reminder-block--scope">
                   <div class="reminder-block-head"><strong>通知范围</strong><span>{{ t1Reminder.targetText }}</span></div>
                   <div class="reminder-scope">
                     <button
@@ -11812,11 +11817,6 @@ onMounted(() => {
                       <span v-if="!t1Reminder.filteredUsers.length" class="reminder-placeholder">没有匹配的人员</span>
                     </div>
                   </template>
-                </div>
-                <div class="reminder-block">
-                  <div class="reminder-block-head"><strong>发送条件</strong></div>
-                  <label class="reminder-check"><input v-model="t1Reminder.draft.only_unfilled" type="checkbox" :disabled="!t1Reminder.editing" /><span>只提醒上一个工作日还没有填报的人</span></label>
-                  <label class="reminder-check"><span class="reminder-check-label">通知通道</span><select v-model="t1Reminder.draft.send_channel" :disabled="!t1Reminder.editing"><option value="app">飞书应用</option><option value="webhook">群机器人</option><option value="mock">仅记录不发送</option></select></label>
                 </div>
               </div>
               <footer class="worklog-reminder-foot">
