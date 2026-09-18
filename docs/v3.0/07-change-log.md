@@ -1,5 +1,19 @@
 # v3.0 变更记录
 
+## v3.0.83（2026-09-18，人工成本结转金额口径 + 填报日期 + 批量导入）
+
+- 人工成本结转不再区分税务：表单「含税金额」改为「金额」，移除税率、未税金额、税额三个输入；服务端强制
+  `tax_rate = 0`、`tax_amount = 0`、`amount_without_tax = amount`。项目费用保持原含税口径不变。
+- 新增「填报日期」（`project_cost_entries.fill_date`）：新增时由服务端取 Asia/Shanghai 当天写入，接口不接受客户端传值，
+  编辑时不随单据变化；<｜hy_place▁holder▁no▁813｜>时间在酸痛时应由这种模式决定，历史单据迁移时按 `created_at` 回填。
+- 新增人工成本结转批量导入：模板只需「项目名称 / 结转月份 / 金额」（备注可选），支持 `.xlsx` 与 `.csv`，
+  复用现有「预览 → 校验 → 确认导入」流程；可勾选「导入后直接提交费用复核」，默认生成草稿。
+- 导入防呆：项目必须在数据范围内且名称唯一、月份容错解析（`2026-09` / `2026/9` / `2026年9月` / `202609` / 日期串）、
+  金额须为正数；同一项目同一结转月份已存在未冲销单据时拦截。
+- 新增 `POST /api/v1/imports/labor_costs/preview`、`POST /api/v1/imports/labor_costs`（`?submit=true` 可直提）。
+- 提交复核逻辑抽成 `mark_cost_entry_submitted()`，供表单与批量导入共用。
+- 新增后端回归测试 8 条，全量 106 通过。详见 `docs/v3.0/73-labor-cost-amount-fill-date-and-import-v3.0.83.md`。
+
 ## v3.0.82（2026-09-17，工时填报提醒配置卡界面重做）
 
 - 修复配置卡「部门/人员选项变方块墙、发送条件勾选框被拉成大块」：`styles.css` 中全局 `label { display:flex; flex-direction:column }` 会污染卡内 `<label>`（`.reminder-pick`、`.reminder-check` 未显式声明方向），现已显式声明 `flex-direction: row` 并回落字号字重。

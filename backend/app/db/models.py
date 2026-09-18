@@ -823,6 +823,8 @@ class ProjectCostEntry(Base):
     tax_amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0, nullable=False)
     occurred_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     accounting_month: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    # 填报日期：服务端按 Asia/Shanghai 当日写入，不可由用户修改，用于区分「业务日期」与「录入日期」。
+    fill_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="DRAFT", nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

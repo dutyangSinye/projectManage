@@ -680,6 +680,7 @@ type ProjectCostEntry = {
   tax_amount: number;
   occurred_on: string | null;
   accounting_month: string | null;
+  fill_date: string | null;
   description: string | null;
   status: string;
   version: number;
@@ -763,7 +764,7 @@ type ApprovalPosition = {
   member_names: string[];
   updated_at: string;
 };
-type ImportResource = "customers" | "suppliers" | "contracts";
+type ImportResource = "customers" | "suppliers" | "contracts" | "labor_costs";
 type ImportIssue = {
   row: number;
   field: string;
@@ -781,6 +782,7 @@ const importColumns: Record<ImportResource, string[]> = {
   customers: ["客户名称", "付款银行", "付款账号"],
   suppliers: ["供应商名称", "收款银行", "收款账号"],
   contracts: ["合同编号", "合同名称", "项目名称", "合同类型", "往来单位名称", "合同含税金额"],
+  labor_costs: ["项目名称", "结转月份", "金额", "备注"],
 };
 type Worklog = {
   id: number;
@@ -1175,6 +1177,7 @@ const costEntryForm = reactive({
   tax_amount: 0,
   occurred_on: applicationDate(),
   accounting_month: applicationDate().slice(0, 7),
+  fill_date: applicationDate(),
   description: "",
   version: 1,
 });
@@ -1604,6 +1607,8 @@ const importResource = ref<ImportResource>("customers");
 const importFile = ref<File | null>(null);
 const importPreview = ref<ImportPreview | null>(null);
 const importLoading = ref(false);
+// 人工成本结转支持导入后直接提交费用复核；其余资源恒为草稿。
+const importSubmitAfter = ref(false);
 const boardFilterProject = ref(0);
 const boardFilterType = ref("");
 const boardFilterStatus = ref("");
@@ -2830,11 +2835,12 @@ const refreshSuppliers = async () => {
   }
 };
 const importResourceLabel = (resource: ImportResource) =>
-  resource === "customers" ? "客户" : resource === "suppliers" ? "供应商" : "合同";
+  resource === "customers" ? "客户" : resource === "suppliers" ? "供应商" : resource === "labor_costs" ? "人工成本结转" : "合同";
 const openImport = (resource: ImportResource) => {
   importResource.value = resource;
   importFile.value = null;
   importPreview.value = null;
+  importSubmitAfter.value = false;
   importModalOpen.value = true;
 };
 const closeImport = () => {
@@ -2842,6 +2848,7 @@ const closeImport = () => {
   importModalOpen.value = false;
   importFile.value = null;
   importPreview.value = null;
+  importSubmitAfter.value = false;
 };
 const selectImportFile = (event: Event) => {
   const input = event.target as HTMLInputElement;
@@ -2850,9 +2857,15 @@ const selectImportFile = (event: Event) => {
   input.value = "";
   errorMessage.value = "";
 };
+const IMPORT_TEMPLATE_FILES: Record<ImportResource, string> = {
+  customers: "customer",
+  suppliers: "supplier",
+  contracts: "contract",
+  labor_costs: "labor-cost",
+};
 const downloadImportTemplate = (resource: ImportResource) => {
   const link = document.createElement("a");
-  link.href = `/templates/${resource === "customers" ? "customer" : resource === "suppliers" ? "supplier" : "contract"}-import-template.xlsx`;
+  link.href = `/templates/${IMPORT_TEMPLATE_FILES[resource]}-import-template.xlsx`;
   link.download = link.href.split("/").pop() || "导入模板.xlsx";
   document.body.appendChild(link);
   link.click();
@@ -2885,17 +2898,22 @@ const executeImport = async () => {
   try {
     const formData = new FormData();
     formData.append("file", importFile.value);
-    const result = await api<{ imported: number }>(`/api/v1/imports/${importResource.value}`, {
+    const suffix = importResource.value === "labor_costs" && importSubmitAfter.value ? "?submit=true" : "";
+    const result = await api<{ imported: number; submitted?: number }>(`/api/v1/imports/${importResource.value}${suffix}`, {
       method: "POST",
       body: formData,
     });
     const label = importResourceLabel(importResource.value);
-    successMessage.value = `${label}导入成功，共导入 ${result.imported} 条`;
+    successMessage.value =
+      importResource.value === "labor_costs" && result.submitted
+        ? `${label}导入成功，共导入 ${result.imported} 条并已提交复核`
+        : `${label}导入成功，共导入 ${result.imported} 条`;
     const resource = importResource.value;
     closeImport();
     if (resource === "customers") await refreshCustomers();
     if (resource === "suppliers") await refreshSuppliers();
     if (resource === "contracts") await refreshContracts();
+    if (resource === "labor_costs") await refreshProjectExpenses();
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "数据导入失败";
   } finally {
@@ -7168,6 +7186,7 @@ const resetCostEntryForm = () => {
     tax_amount: 0,
     occurred_on: applicationDate(),
     accounting_month: applicationDate().slice(0, 7),
+    fill_date: applicationDate(),
     description: "",
     version: 1,
   });
@@ -7187,9 +7206,9 @@ const chooseExpenseFiles = (event: Event) => {
 };
 const saveCostEntry = async (submit = false) => {
   const form = costEntryForm;
-  syncTaxFields(form, "net");
+  if (form.entry_kind !== "PERSONNEL_COST") syncTaxFields(form, "net");
   if (!form.project_id || !form.amount) {
-    errorMessage.value = "请填写项目和含税金额";
+    errorMessage.value = `请填写项目和${form.entry_kind === "PERSONNEL_COST" ? "金额" : "含税金额"}`;
     return;
   }
   if (form.entry_kind === "PERSONNEL_COST") {
@@ -7209,9 +7228,10 @@ const saveCostEntry = async (submit = false) => {
       // 人工成本结转固定归集到人工费用，不提交预算项（后端同样忽略该字段）。
       budget_item_id: form.entry_kind === "PERSONNEL_COST" ? null : form.budget_item_id || null,
       amount: form.amount,
-      amount_without_tax: form.amount_without_tax,
-      tax_rate: form.tax_rate,
-      tax_amount: form.tax_amount,
+      // 人工成本结转不涉税：金额即入账金额，税率与税额恒为 0。
+      amount_without_tax: form.entry_kind === "PERSONNEL_COST" ? form.amount : form.amount_without_tax,
+      tax_rate: form.entry_kind === "PERSONNEL_COST" ? 0 : form.tax_rate,
+      tax_amount: form.entry_kind === "PERSONNEL_COST" ? 0 : form.tax_amount,
       occurred_on: form.entry_kind === "PERSONNEL_COST" ? null : form.occurred_on,
       accounting_month: form.entry_kind === "PERSONNEL_COST" ? form.accounting_month : null,
       description: form.description || null,
@@ -7256,6 +7276,8 @@ const editCostEntry = (item: ProjectCostEntry) => {
     tax_amount: item.tax_amount ?? 0,
     occurred_on: item.occurred_on || applicationDate(),
     accounting_month: item.accounting_month || applicationDate().slice(0, 7),
+    // 填报日期由服务端写入且不可修改，编辑时沿用原值。
+    fill_date: item.fill_date || applicationDate(),
     description: item.description || "",
     version: item.version,
   });
@@ -10868,8 +10890,9 @@ onMounted(() => {
         <section v-else-if="page === 'projectExpenses' || page === 'laborCosts'" class="page-view expense-page">
           <div class="page-head">
             <div><div class="eyebrow">PROJECT COST / REVIEW</div><h1>{{ page === 'laborCosts' ? '人工成本结转' : '项目费用' }}</h1><p class="muted">{{ page === 'laborCosts' ? '按会计期间把人工成本结转到项目，复核通过后计入项目成本。' : '项目发生的各类费用，按统一 8 项预算项归集，复核通过后计入项目成本。' }}</p></div>
-            <button v-if="canAction(costEntryResourceKey, 'CREATE')" class="primary" @click="openExpenseForm">＋ 新增{{ page === 'laborCosts' ? '结转单' : '费用单' }}</button>
-          </div>
+              <button v-if="page === 'laborCosts' && canAction('labor_costs', 'CREATE')" class="secondary" @click="openImport('labor_costs')">导入结转单</button>
+              <button v-if="canAction(costEntryResourceKey, 'CREATE')" class="primary" @click="openExpenseForm">＋ 新增{{ page === 'laborCosts' ? '结转单' : '费用单' }}</button>
+            </div>
           <section class="card filter-card expense-filter-card">
             <div class="filter-grid">
               <label>项目<select v-model.number="expenseFilterProject"><option :value="0">全部项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
@@ -10882,14 +10905,14 @@ onMounted(() => {
           </section>
           <section class="card table-card">
             <div class="section-head"><div><h2>{{ page === 'laborCosts' ? '结转台账' : '费用台账' }}</h2><p class="muted">共 {{ projectExpenseTotal }} 条 · 已通过 {{ moneyText(costEntrySummary.total_amount || 0) }} · 待复核 {{ moneyText(costEntrySummary.pending_amount || 0) }}</p></div></div>
-            <div class="table-wrap"><table><thead><tr><th>单据编号</th><th>项目</th><th>预算项</th><th>申请人</th><th>{{ page === 'laborCosts' ? '会计期间' : '发生日期' }}</th><th>含税金额</th><th>未税金额</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in projectExpenses" :key="item.id"><td><button class="detail-link" @click="openExpenseDetail(item)">{{ item.cost_no }}</button></td><td><strong>{{ item.project_name }}</strong><small>{{ item.project_code }}</small></td><td>{{ item.budget_item_name || '未归集' }}</td><td>{{ item.applicant_name }}</td><td>{{ page === 'laborCosts' ? (item.accounting_month || '—') : (item.occurred_on || '—') }}</td><td>{{ moneyText(item.amount) }}</td><td>{{ moneyText(item.amount_without_tax) }}</td><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td><td><div class="table-actions"><button class="text-button" @click="openExpenseDetail(item)">查看</button><button v-if="item.can_withdraw" class="text-button danger-text" @click="withdrawCostEntry(item)">撤回</button><button v-if="item.can_edit" class="text-button" @click="editCostEntry(item)">编辑</button></div></td></tr></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>单据编号</th><th>项目</th><th>预算项</th><th>申请人</th><th>{{ page === 'laborCosts' ? '会计期间' : '发生日期' }}</th><template v-if="page === 'laborCosts'"><th>填报日期</th><th>金额</th></template><template v-else><th>含税金额</th><th>未税金额</th></template><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in projectExpenses" :key="item.id"><td><button class="detail-link" @click="openExpenseDetail(item)">{{ item.cost_no }}</button></td><td><strong>{{ item.project_name }}</strong><small>{{ item.project_code }}</small></td><td>{{ item.budget_item_name || '未归集' }}</td><td>{{ item.applicant_name }}</td><td>{{ page === 'laborCosts' ? (item.accounting_month || '—') : (item.occurred_on || '—') }}</td><template v-if="page === 'laborCosts'"><td>{{ item.fill_date || '—' }}</td><td>{{ moneyText(item.amount) }}</td></template><template v-else><td>{{ moneyText(item.amount) }}</td><td>{{ moneyText(item.amount_without_tax) }}</td></template><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td><td><div class="table-actions"><button class="text-button" @click="openExpenseDetail(item)">查看</button><button v-if="item.can_withdraw" class="text-button danger-text" @click="withdrawCostEntry(item)">撤回</button><button v-if="item.can_edit" class="text-button" @click="editCostEntry(item)">编辑</button></div></td></tr></tbody></table></div>
             <div v-if="!projectExpenses.length" class="empty">暂无符合条件的单据</div>
             <div class="pagination"><button class="secondary" :disabled="expensePage<=1" @click="expensePage--; refreshProjectExpenses()">上一页</button><span>第 {{ expensePage }} 页</span><button class="secondary" :disabled="expensePage * expensePageSize >= projectExpenseTotal" @click="expensePage++; refreshProjectExpenses()">下一页</button><select v-model.number="expensePageSize" @change="expensePage=1; refreshProjectExpenses()"><option :value="10">10 条/页</option><option :value="20">20 条/页</option><option :value="50">50 条/页</option></select></div>
           </section>
           <div v-if="expenseFormOpen" class="modal-backdrop">
             <section class="modal-card expense-form-modal">
               <div class="modal-head"><div><span class="eyebrow">COST ENTRY DRAFT</span><h2>{{ selectedExpense ? '编辑成本单' : (page === 'laborCosts' ? '新增人工成本结转' : '新增项目费用') }}</h2></div><button class="modal-close" aria-label="关闭" @click="expenseFormOpen=false">×</button></div>
-              <div class="expense-form-section"><h3>基本信息</h3><div class="form-grid three-cols"><label>项目<select v-model.number="costEntryForm.project_id" @change="loadProjectBudgetItems(costEntryForm.project_id)"><option :value="0" disabled>请选择项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'">会计期间<input v-model="costEntryForm.accounting_month" type="month" /></label><label v-else>发生日期<input v-model="costEntryForm.occurred_on" type="date" /></label><label>含税金额<input v-model.number="costEntryForm.amount" type="number" min="0.01" step="0.01" @input="syncTaxFields(costEntryForm)" /></label><label>税率<select v-model.number="costEntryForm.tax_rate" @change="syncTaxFields(costEntryForm)"><option v-for="item in taxRateOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label><label>未税金额<input v-model.number="costEntryForm.amount_without_tax" type="number" min="0" step="0.01" @input="syncTaxFields(costEntryForm, 'net')" /><small>多张发票税率不一致时，可手动填写实际入账未税金额，保存以此为准。</small></label><label>税额<input :value="moneyText(costEntryForm.tax_amount)" disabled /></label></div></div>
+              <div class="expense-form-section"><h3>基本信息</h3><div class="form-grid three-cols"><label>项目<select v-model.number="costEntryForm.project_id" @change="loadProjectBudgetItems(costEntryForm.project_id)"><option :value="0" disabled>请选择项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'">会计期间<input v-model="costEntryForm.accounting_month" type="month" /></label><label v-else>发生日期<input v-model="costEntryForm.occurred_on" type="date" /></label><template v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'"><label>填报日期<input :value="costEntryForm.fill_date" disabled /><small>填报日期由系统取当天自动生成，不可修改</small></label><label>金额<input v-model.number="costEntryForm.amount" type="number" min="0.01" step="0.01" /></label></template><template v-else><label>含税金额<input v-model.number="costEntryForm.amount" type="number" min="0.01" step="0.01" @input="syncTaxFields(costEntryForm)" /></label><label>税率<select v-model.number="costEntryForm.tax_rate" @change="syncTaxFields(costEntryForm)"><option v-for="item in taxRateOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label><label>未税金额<input v-model.number="costEntryForm.amount_without_tax" type="number" min="0" step="0.01" @input="syncTaxFields(costEntryForm, 'net')" /><small>多张发票税率不一致时，可手动填写实际入账未税金额，保存以此为准。</small></label><label>税额<input :value="moneyText(costEntryForm.tax_amount)" disabled /></label></template></div></div>
               <div class="expense-form-section"><h3>预算归集</h3><div class="form-grid three-cols"><label v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'">预算项<input value="人工费用" disabled /><small>人工成本结转固定归集到「人工费用」，无需选择</small></label><label v-else>预算项<select v-model.number="costEntryForm.budget_item_id"><option :value="0">{{ projectBudgetLoading ? '正在加载预算项…' : '不归集' }}</option><option v-for="item in budgetOptionsForExpense" :key="item.id" :value="item.id">{{ item.name }}</option></select></label></div></div>
               <div class="expense-form-section"><h3>附件与说明</h3><div class="form-grid"><label class="span-2">说明<textarea v-model.trim="costEntryForm.description" rows="3"></textarea></label><label class="file-drop span-2">选择凭证（可选）<input type="file" multiple accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.pdf,.png,.jpg,.jpeg,.webp" @change="chooseExpenseFiles" /><span>{{ pendingExpenseFiles.length ? `已选择 ${pendingExpenseFiles.length} 个文件` : '可不上传附件，选择后保存会自动上传' }}</span></label></div></div>
               <div class="form-footer"><button class="secondary" @click="expenseFormOpen=false">取消</button><button class="secondary" :disabled="expenseFormSaving" @click="saveCostEntry(false)">保存草稿</button><button class="primary" :disabled="expenseFormSaving" @click="saveCostEntry(true)">{{ expenseFormSaving ? '正在保存…' : '提交复核' }}</button></div>
@@ -10900,8 +10923,8 @@ onMounted(() => {
         <section v-else-if="page === 'expenseDetail'" class="page-view expense-detail-page">
           <div class="page-head"><div><div class="eyebrow">COST ENTRY / {{ selectedExpense?.cost_no }}</div><h1>成本单详情</h1><p class="muted">{{ costKindLabel(selectedExpense?.entry_kind || 'PROJECT_EXPENSE') }} · 一级费用复核通过后计入项目成本</p></div><div class="actions"><span v-if="selectedExpense" class="tag" :class="costEntryStatusClass(selectedExpense.status)">{{ costEntryStatusLabel(selectedExpense.status) }}</span><button v-if="selectedExpense?.can_withdraw" class="secondary danger-button" @click="withdrawCostEntry(selectedExpense)">撤回</button><button class="secondary" @click="go(selectedExpense?.entry_kind === 'PERSONNEL_COST' ? 'laborCosts' : 'projectExpenses')">返回台账</button></div></div>
           <template v-if="selectedExpense">
-            <section class="expense-hero-grid"><div class="expense-kpi"><span>含税金额</span><strong>{{ moneyText(selectedExpense.amount) }}</strong></div><div class="expense-kpi"><span>未税金额 / 税额</span><strong>{{ moneyText(selectedExpense.amount_without_tax) }}</strong><small>{{ taxRateText(selectedExpense.tax_rate) }} · 税额 {{ moneyText(selectedExpense.tax_amount) }}</small></div><div class="expense-kpi"><span>归集预算项</span><strong>{{ selectedExpense.budget_item_name || '未归集' }}</strong></div><div class="expense-kpi"><span>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? '会计期间' : '发生日期' }}</span><strong>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? (selectedExpense.accounting_month || '—') : (selectedExpense.occurred_on || '—') }}</strong></div><div class="expense-kpi"><span>同期间单据数</span><strong>{{ selectedExpense.same_month_count }}</strong></div></section>
-            <section class="expense-detail-grid"><section class="card"><div class="section-head"><div><h2>单据信息</h2><p class="muted">{{ selectedExpense.project_name }} · {{ selectedExpense.project_code }}</p></div><button v-if="selectedExpense.can_edit" class="secondary" @click="editCostEntry(selectedExpense)">编辑草稿</button></div><div class="detail-grid"><div><small>单据编号</small><strong>{{ selectedExpense.cost_no }}</strong></div><div><small>单据类型</small><strong>{{ costKindLabel(selectedExpense.entry_kind) }}</strong></div><div><small>申请人</small><strong>{{ selectedExpense.applicant_name }}</strong></div><div><small>所属部门</small><strong>{{ selectedExpense.applicant_department_name || '未分配' }}</strong></div><div class="full"><small>说明</small><strong>{{ selectedExpense.description || '无' }}</strong></div></div></section>
+            <section class="expense-hero-grid"><div class="expense-kpi"><span>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? '结转金额' : '含税金额' }}</span><strong>{{ moneyText(selectedExpense.amount) }}</strong><small v-if="selectedExpense.entry_kind === 'PERSONNEL_COST'">填报日期 {{ selectedExpense.fill_date || '—' }}</small></div><div v-if="selectedExpense.entry_kind !== 'PERSONNEL_COST'" class="expense-kpi"><span>未税金额 / 税额</span><strong>{{ moneyText(selectedExpense.amount_without_tax) }}</strong><small>{{ taxRateText(selectedExpense.tax_rate) }} · 税额 {{ moneyText(selectedExpense.tax_amount) }}</small></div><div class="expense-kpi"><span>归集预算项</span><strong>{{ selectedExpense.budget_item_name || '未归集' }}</strong></div><div class="expense-kpi"><span>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? '会计期间' : '发生日期' }}</span><strong>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? (selectedExpense.accounting_month || '—') : (selectedExpense.occurred_on || '—') }}</strong></div><div class="expense-kpi"><span>同期间单据数</span><strong>{{ selectedExpense.same_month_count }}</strong></div></section>
+            <section class="expense-detail-grid"><section class="card"><div class="section-head"><div><h2>单据信息</h2><p class="muted">{{ selectedExpense.project_name }} · {{ selectedExpense.project_code }}</p></div><button v-if="selectedExpense.can_edit" class="secondary" @click="editCostEntry(selectedExpense)">编辑草稿</button></div><div class="detail-grid"><div><small>单据编号</small><strong>{{ selectedExpense.cost_no }}</strong></div><div><small>单据类型</small><strong>{{ costKindLabel(selectedExpense.entry_kind) }}</strong></div><div><small>申请人</small><strong>{{ selectedExpense.applicant_name }}</strong></div><div v-if="selectedExpense.entry_kind === 'PERSONNEL_COST'"><small>填报日期</small><strong>{{ selectedExpense.fill_date || '—' }}</strong></div><div><small>所属部门</small><strong>{{ selectedExpense.applicant_department_name || '未分配' }}</strong></div><div class="full"><small>说明</small><strong>{{ selectedExpense.description || '无' }}</strong></div></div></section>
               <section class="card"><h2>复核信息</h2><div class="workflow-track"><div :class="['workflow-node', selectedExpense.status === 'APPROVED' ? 'approved' : selectedExpense.status === 'REJECTED' ? 'rejected' : selectedExpense.status === 'PENDING_REVIEW' ? 'pending' : 'draft']"><i>1</i><span><strong>费用复核</strong><small>{{ selectedExpense.reviewed_by_name || '待费用复核岗位处理' }}</small></span></div></div><div class="timeline"><div v-if="selectedExpense.submitted_at"><b>{{ selectedExpense.submitted_by_name || '申请人' }} 提交复核</b><small>{{ formatDateTime(selectedExpense.submitted_at) }}</small></div><div v-if="selectedExpense.reviewed_at"><b>{{ selectedExpense.reviewed_by_name }} {{ costEntryStatusLabel(selectedExpense.status) }}</b><small>{{ formatDateTime(selectedExpense.reviewed_at) }}<span v-if="selectedExpense.review_comment"> · {{ selectedExpense.review_comment }}</span></small></div><div v-else><b>等待费用复核</b><small>{{ formatDateTime(selectedExpense.created_at) }}</small></div></div></section>
             </section>
             <section class="card contract-attachments-card"><div class="section-head"><div><h2>单据附件</h2><p class="muted">复核依据与费用凭证</p></div><span>{{ selectedExpense.attachments.length }} 个文件</span></div><div v-if="!selectedExpense.attachments.length" class="empty">暂无附件</div><div v-else class="contract-attachment-list"><div v-for="attachment in selectedExpense.attachments" :key="attachment.id" class="contract-attachment-row"><div class="attachment-file-icon" :class="`attachment-${attachment.preview_kind}`">{{ attachmentKindLabel(attachment.preview_kind) }}</div><div class="attachment-file-main"><strong>{{ attachment.file_name }}</strong><small>{{ attachmentSizeText(attachment.file_size) }} · {{ formatDateTime(attachment.created_at) }}</small></div><div class="table-actions"><button v-if="attachment.can_preview" class="text-button" @click="previewContractAttachment(attachment)">预览</button><button class="text-button" @click="downloadContractAttachment(attachment)">下载</button></div></div></div></section>
@@ -12725,10 +12748,15 @@ onMounted(() => {
           </div>
           <button type="button" class="secondary" @click="downloadImportTemplate(importResource)">下载{{ importResourceLabel(importResource) }}模板</button>
         </div>
+        <p v-if="importResource === 'labor_costs'" class="muted import-template-hint">项目名称须与系统一致；结转月份支持 2026-09 / 2026/9 / 2026年9月 / 202609；金额即入账金额。同一项目同一月份只允许一条未冲销结转单。</p>
         <label class="import-file-picker">
           <input type="file" accept=".xlsx,.csv" :disabled="importLoading" @change="selectImportFile" />
           <span class="import-file-picker-title">{{ importFile ? importFile.name : '选择导入文件' }}</span>
           <span class="muted">选择后点击“开始校验”查看导入预览</span>
+        </label>
+        <label v-if="importResource === 'labor_costs'" class="import-submit-check">
+          <input v-model="importSubmitAfter" type="checkbox" :disabled="importLoading" />
+          <span>导入后直接提交费用复核<small>不勾选则生成草稿，可到台账逐张提交</small></span>
         </label>
         <div v-if="importPreview" class="import-preview-area">
           <div class="import-success-summary" :class="importPreview.errors.length ? 'has-errors' : 'is-valid'">

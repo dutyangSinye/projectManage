@@ -9352,6 +9352,43 @@ tbody tr:hover td {
   color: var(--ui-ink);
   font-weight: 750;
 }
+.import-template-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+/* 全局 label 是纵向 flex，这里显式声明方向与字重，避免勾选框被拉成上下两行。 */
+.import-submit-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  background: #fbfefd;
+  font-weight: 400;
+  cursor: pointer;
+}
+.import-submit-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--ui-teal);
+  cursor: pointer;
+}
+.import-submit-check > span {
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 400;
+}
+.import-submit-check small {
+  color: var(--ui-muted);
+  font-size: 11px;
+}
 .import-preview-area {
   display: grid;
   gap: 12px;

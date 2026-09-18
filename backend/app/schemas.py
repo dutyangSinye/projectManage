@@ -1509,6 +1509,8 @@ class ProjectCostEntryView(BaseModel):
     tax_amount: float = 0
     occurred_on: date | None = None
     accounting_month: str | None = None
+    # 填报日期由服务端在新增时写入当天（Asia/Shanghai），不可修改。
+    fill_date: date | None = None
     description: str | None = None
     status: str
     version: int = 1

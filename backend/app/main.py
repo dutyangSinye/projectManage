@@ -160,7 +160,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.82"
+API_VERSION = "3.0.83"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -1592,6 +1592,18 @@ def upgrade_schema() -> None:
                       AND COALESCE(tax_rate, 0) = 0
                       AND COALESCE(tax_amount, 0) = 0
                 """))
+        # v3.0.83：填报日期上线后，按单据统计口径把历史单据的填报日期回填为创建日，
+        # 保证按填报日期查询与导出时历史数据不为空。
+        if inspect(engine).has_table("project_cost_entries"):
+            _fill_date_column = {column["name"] for column in inspect(engine).get_columns("project_cost_entries")}
+            if "fill_date" in _fill_date_column and "created_at" in _fill_date_column:
+                date_expression = "DATE(created_at)" if is_sqlite else "created_at::date"
+                connection.execute(
+                    text(
+                        f"UPDATE project_cost_entries SET fill_date = {date_expression} "
+                        "WHERE fill_date IS NULL AND created_at IS NOT NULL"
+                    )
+                )
         for table, columns in retired_cost_classification_columns.items():
             if not inspect(engine).has_table(table):
                 continue
@@ -2414,7 +2426,38 @@ IMPORT_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "customers": ("客户名称",),
     "suppliers": ("供应商名称",),
     "contracts": ("合同编号", "合同名称", "项目名称", "合同类型", "往来单位名称", "合同含税金额"),
+    "labor_costs": ("项目名称", "结转月份", "金额"),
 }
+# 导入资源 -> 权限项；人工成本结转沿用 labor_costs 菜单权限。
+IMPORT_RESOURCE_PERMISSIONS: dict[str, str] = {
+    "customers": "counterparties",
+    "suppliers": "counterparties",
+    "contracts": "contracts",
+    "labor_costs": "labor_costs",
+}
+IMPORT_MONTH_PATTERN = re.compile(r"^(\d{4})\s*[-/.年]\s*(\d{1,2})\s*月?$")
+
+
+def parse_import_month(value: str) -> str | None:
+    """容错解析导入模板里的结转月份，返回 YYYY-MM。
+
+    兼容 `2026-09` / `2026/9` / `2026年9月` / `202609`，以及 Excel 日期单元格被读成
+    `2026-09-01` 或 `2026-09-01 00:00:00` 的情况。
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    if re.match(r"^\d{4}-\d{2}-\d{2}", raw):
+        raw = raw[:7]
+    match = IMPORT_MONTH_PATTERN.match(raw)
+    if not match:
+        match = re.match(r"^(\d{4})(\d{2})$", raw)
+        if not match:
+            return None
+    year, month = int(match.group(1)), int(match.group(2))
+    if not 1 <= month <= 12:
+        return None
+    return f"{year:04d}-{month:02d}"
 
 
 def _normalize_import_header(value: str) -> str:
@@ -2659,12 +2702,113 @@ def _validate_contract_import(db: Session, user: User, records: list[dict[str, o
     return payloads, errors
 
 
+def _validate_labor_cost_import(db: Session, user: User, records: list[dict[str, object]], errors: list[dict[str, object]]) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """校验人工成本结转导入：项目必须在数据范围内且名称唯一，月份与金额需可解析。"""
+    project_ids = project_scope_ids(db, user, "labor_costs")
+    projects: dict[str, list[Project]] = defaultdict(list)
+    for item in db.scalars(select(Project).where(Project.status != "DELETED")).all():
+        if project_ids is None or item.id in project_ids:
+            projects[item.name].append(item)
+    existing_keys = {
+        (int(project_id), month)
+        for project_id, month in db.execute(
+            select(ProjectCostEntry.project_id, ProjectCostEntry.accounting_month).where(
+                ProjectCostEntry.entry_kind == "PERSONNEL_COST",
+                ProjectCostEntry.status != "REVERSED",
+            )
+        ).all()
+    }
+    seen_keys: set[tuple[int, str]] = set()
+    payloads: list[dict[str, object]] = []
+    for record in records:
+        row = int(record["row"])
+        values = {field: str(record.get(field, "")).strip() for field in IMPORT_REQUIRED_FIELDS["labor_costs"]}
+        row_has_error = False
+        for field in IMPORT_REQUIRED_FIELDS["labor_costs"]:
+            if not values[field]:
+                errors.append({"row": row, "field": field, "message": "不能为空"})
+                row_has_error = True
+        matching_projects = projects.get(values["项目名称"], [])
+        if values["项目名称"] and not matching_projects:
+            errors.append({"row": row, "field": "项目名称", "message": "未找到匹配的项目名称或项目不在当前数据范围，请修正后重新导入"})
+            row_has_error = True
+        elif len(matching_projects) > 1:
+            errors.append({"row": row, "field": "项目名称", "message": "匹配到多个同名项目，请先保证项目名称唯一后重新导入"})
+            row_has_error = True
+        month = parse_import_month(values["结转月份"])
+        if values["结转月份"] and not month:
+            errors.append({"row": row, "field": "结转月份", "message": "请填写 2026-09 这样的年月"})
+            row_has_error = True
+        amount_text = str(record.get("金额", "")).strip().replace(",", "").replace("¥", "").replace("￥", "")
+        try:
+            amount = float(amount_text)
+            if not math.isfinite(amount) or amount <= 0:
+                raise ValueError
+        except ValueError:
+            if amount_text:
+                errors.append({"row": row, "field": "金额", "message": "必须是大于 0 的数字"})
+            row_has_error = True
+            amount = 0
+        key = (matching_projects[0].id, month or "") if matching_projects and month else None
+        if key and not row_has_error:
+            if key in existing_keys or key in seen_keys:
+                errors.append({"row": row, "field": "项目名称", "message": f"该项目已存在 {key[1]} 的人工成本结转单，如需追加请先调整台账"})
+                row_has_error = True
+        if not row_has_error and key:
+            seen_keys.add(key)
+            payloads.append({
+                "row": row,
+                "project_id": key[0],
+                "accounting_month": key[1],
+                "amount": round(amount, 2),
+                "description": str(record.get("备注", "")).strip() or "批量导入",
+            })
+    return payloads, errors
+
+
+def create_labor_cost_entries_from_import(db: Session, user: User, payloads: list[dict[str, object]], submit: bool = False) -> list[ProjectCostEntry]:
+    """把导入校验通过的明细写成人工成本结转单；税额恒为 0，填报日期取当天。"""
+    department_index = DepartmentIndex(db.scalars(select(Department)).all())
+    created: list[ProjectCostEntry] = []
+    for payload in payloads:
+        project_id = int(payload["project_id"])
+        ensure_cost_entry_scope(db, user, project_id, "PERSONNEL_COST")
+        budget_item = resolve_cost_entry_budget_item(db, "PERSONNEL_COST", project_id, None)
+        entry = ProjectCostEntry(
+            cost_no=next_document_no(db, ProjectCostEntry, PROJECT_COST_KIND_PREFIXES["PERSONNEL_COST"]),
+            entry_kind="PERSONNEL_COST",
+            project_id=project_id,
+            applicant_user_id=user.id,
+            applicant_name=user.name,
+            applicant_department_name=department_index.path(user.department_id),
+            amount=float(payload["amount"]),
+            occurred_on=None,
+            accounting_month=str(payload["accounting_month"]),
+            fill_date=today_local(),
+            description=str(payload.get("description") or "批量导入")[:2000] or None,
+            status="DRAFT",
+            version=1,
+        )
+        apply_tax_amount_fields(entry, entry.amount, 0, entry.amount)
+        apply_cost_entry_snapshot(entry, budget_item)
+        db.add(entry)
+        db.flush()
+        audit(db, "project_cost_entry", entry.id, "CREATE", user.id, None, "DRAFT", f"人工成本结转导入 · {project_id}")
+        if submit:
+            mark_cost_entry_submitted(db, entry, user)
+        db.flush()
+        created.append(entry)
+    return created
+
+
 async def _prepare_import(resource: str, file: UploadFile, db: Session, user: User) -> tuple[dict[str, object], list[dict[str, object]]]:
     """读取并校验导入文件，返回预览和可直接写入的字段。"""
     filename, rows = await _read_import_file(file)
     records, errors = _import_records(resource, rows)
     if resource in {"customers", "suppliers"}:
         payloads, errors = _validate_counterparty_import(db, resource, records, errors)
+    elif resource == "labor_costs":
+        payloads, errors = _validate_labor_cost_import(db, user, records, errors)
     else:
         payloads, errors = _validate_contract_import(db, user, records, errors)
     return _import_preview(resource, filename, records, errors), payloads
@@ -5065,22 +5209,43 @@ def delete_supplier(supplier_id: int, x_demo_user_id: int | None = Header(defaul
 
 async def _preview_import_endpoint(resource: str, file: UploadFile, x_demo_user_id: int | None, db: Session) -> dict[str, object]:
     """执行导入预览；只读取和校验文件，不写入业务数据。"""
-    permission = "counterparties" if resource in {"customers", "suppliers"} else "contracts"
-    user = require_access(db, permission, "VIEW", x_demo_user_id)
+    user = require_access(db, IMPORT_RESOURCE_PERMISSIONS[resource], "VIEW", x_demo_user_id)
     preview, _ = await _prepare_import(resource, file, db, user)
     return preview
 
 
-async def _execute_import_endpoint(resource: str, file: UploadFile, x_demo_user_id: int | None, db: Session) -> dict[str, object]:
+async def _execute_import_endpoint(resource: str, file: UploadFile, x_demo_user_id: int | None, db: Session, submit: bool = False) -> dict[str, object]:
     """在完整校验通过后一次性导入，任一数据库异常都会整体回滚。"""
-    permission = "counterparties" if resource in {"customers", "suppliers"} else "contracts"
-    user = require_access(db, permission, "CREATE", x_demo_user_id)
+    user = require_access(db, IMPORT_RESOURCE_PERMISSIONS[resource], "CREATE", x_demo_user_id)
     preview, payloads = await _prepare_import(resource, file, db, user)
     errors = preview["errors"]
     if errors:
         raise HTTPException(422, detail=errors)
-    model = Customer if resource == "customers" else Supplier if resource == "suppliers" else Contract
     try:
+        if resource == "labor_costs":
+            entries = create_labor_cost_entries_from_import(db, user, payloads, submit)
+            db.commit()
+            # 通知需要单据已落库，因此放在统一提交之后。
+            for entry in entries:
+                if entry.status != "PENDING_REVIEW":
+                    continue
+                project = db.get(Project, entry.project_id)
+                notify_cost_review_submitted(
+                    db,
+                    source_type=f"project_cost_{entry.entry_kind.lower()}",
+                    source_id=entry.id,
+                    version=entry.version,
+                    notification_type=PROJECT_COST_KIND_NOTIFICATIONS[entry.entry_kind],
+                    document_label=PROJECT_COST_KIND_LABELS[entry.entry_kind],
+                    serial_no=entry.cost_no,
+                    project_name=project.name if project else "",
+                    amount=float(entry.amount),
+                    submitter_name=user.name,
+                    page=PROJECT_COST_KIND_PAGES[entry.entry_kind],
+                )
+            db.commit()
+            return {"resource": resource, "filename": preview["filename"], "imported": len(entries), "submitted": len(entries) if submit else 0, "skipped": 0}
+        model = Customer if resource == "customers" else Supplier if resource == "suppliers" else Contract
         for payload in payloads:
             if resource == "contracts":
                 item = Contract(**payload)
@@ -5129,6 +5294,23 @@ async def preview_contract_import(file: UploadFile = File(...), x_demo_user_id: 
 @app.post("/api/v1/imports/contracts")
 async def execute_contract_import(file: UploadFile = File(...), x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
     return await _execute_import_endpoint("contracts", file, x_demo_user_id, db)
+
+
+@app.post("/api/v1/imports/labor_costs/preview")
+async def preview_labor_cost_import(file: UploadFile = File(...), x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
+    """校验人工成本结转导入文件：项目名称、结转月份、金额。"""
+    return await _preview_import_endpoint("labor_costs", file, x_demo_user_id, db)
+
+
+@app.post("/api/v1/imports/labor_costs")
+async def execute_labor_cost_import(
+    file: UploadFile = File(...),
+    submit: bool = Query(default=False, description="导入后是否直接提交费用复核"),
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """批量写入人工成本结转单，全部校验通过才落库，任一异常整体回滚。"""
+    return await _execute_import_endpoint("labor_costs", file, x_demo_user_id, db, submit)
 
 
 @app.get("/api/v1/projects", response_model=list[ProjectView])
@@ -9740,6 +9922,7 @@ def cost_entry_view(db: Session, entry: ProjectCostEntry, viewer: User | None = 
         tax_amount=float(entry.tax_amount or 0),
         occurred_on=entry.occurred_on,
         accounting_month=entry.accounting_month,
+        fill_date=entry.fill_date,
         description=entry.description,
         status=entry.status,
         version=entry.version,
@@ -9879,11 +10062,17 @@ def create_project_cost_entry(payload: ProjectCostEntryCreate, x_demo_user_id: i
         amount=payload.amount,
         occurred_on=payload.occurred_on,
         accounting_month=payload.accounting_month,
+        # 填报日期固定为当天且不开放修改，编辑单据时保持创建日不变。
+        fill_date=today_local(),
         description=(payload.description or "").strip() or None,
         status="DRAFT",
         version=1,
     )
-    apply_tax_amount_fields(entry, payload.amount, payload.tax_rate, payload.amount_without_tax)
+    if entry_kind == "PERSONNEL_COST":
+        # 人工成本结转是内部成本结转，不产生进项税：金额即入账金额，税额恒为 0。
+        apply_tax_amount_fields(entry, payload.amount, 0, payload.amount)
+    else:
+        apply_tax_amount_fields(entry, payload.amount, payload.tax_rate, payload.amount_without_tax)
     apply_cost_entry_snapshot(entry, item)
     db.add(entry)
     db.flush()
@@ -9919,7 +10108,10 @@ def update_project_cost_entry(entry_id: int, payload: ProjectCostEntryUpdate, x_
     item = resolve_cost_entry_budget_item(db, entry.entry_kind, payload.project_id, payload.budget_item_id)
     entry.project_id = payload.project_id
     entry.amount = payload.amount
-    apply_tax_amount_fields(entry, payload.amount, payload.tax_rate, payload.amount_without_tax)
+    if entry.entry_kind == "PERSONNEL_COST":
+        apply_tax_amount_fields(entry, payload.amount, 0, payload.amount)
+    else:
+        apply_tax_amount_fields(entry, payload.amount, payload.tax_rate, payload.amount_without_tax)
     entry.occurred_on = payload.occurred_on
     entry.accounting_month = payload.accounting_month
     entry.description = (payload.description or "").strip() or None
@@ -9953,14 +10145,9 @@ def delete_project_cost_entry(entry_id: int, x_demo_user_id: int | None = Header
     return {"deleted": True, "entry_id": entry_id}
 
 
-@app.post("/api/v1/project-cost-entries/{entry_id}/submit", response_model=ProjectCostEntryView)
-def submit_project_cost_entry(entry_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ProjectCostEntryView:
-    """提交一级费用复核，并通知费用复核岗位全部有效成员。"""
-    entry = db.get(ProjectCostEntry, entry_id)
-    if not entry:
-        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
-    resource = cost_entry_resource(entry.entry_kind)
-    user = cost_entry_access(db, entry, x_demo_user_id, action="EDIT")
+def mark_cost_entry_submitted(db: Session, entry: ProjectCostEntry, user: User) -> None:
+    """把草稿或被驳回的成本单推进到待复核；不提交事务，也不负责通知。"""
+
     if entry.status not in EDITABLE_COST_ENTRY_STATUSES:
         raise HTTPException(409, "PROJECT_COST_ENTRY_NOT_RESUBMITTABLE")
     if float(entry.amount or 0) <= 0:
@@ -9973,8 +10160,19 @@ def submit_project_cost_entry(entry_id: int, x_demo_user_id: int | None = Header
     entry.review_comment = None
     entry.version += 1
     entry.status = "PENDING_REVIEW"
-    project = db.get(Project, entry.project_id)
     audit(db, "project_cost_entry", entry.id, "SUBMIT", user.id, old_status, "PENDING_REVIEW")
+
+
+@app.post("/api/v1/project-cost-entries/{entry_id}/submit", response_model=ProjectCostEntryView)
+def submit_project_cost_entry(entry_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ProjectCostEntryView:
+    """提交一级费用复核，并通知费用复核岗位全部有效成员。"""
+    entry = db.get(ProjectCostEntry, entry_id)
+    if not entry:
+        raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    resource = cost_entry_resource(entry.entry_kind)
+    user = cost_entry_access(db, entry, x_demo_user_id, action="EDIT")
+    mark_cost_entry_submitted(db, entry, user)
+    project = db.get(Project, entry.project_id)
     db.commit()
     kind = entry.entry_kind
     notify_cost_review_submitted(
