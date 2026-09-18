@@ -142,3 +142,27 @@ else:
 1. 同一「项目 + 结转月份」目前只允许一条未冲销单据，重复导入会被拦截。若实际业务允许拆多张，需要改成行级提示并可放行。
 2. 节假日/调休同样未参与结转月份校验（与工时提醒一致）。
 3. 导入后的人工成本结转单仍需费用复核通过后才会计入项目成本，若希望导入即入账，需要另行开放「免复核」通道。
+
+## 9. 发布与热修（2026-09-18）
+
+| 步骤 | 结果 |
+|---|---|
+| git 提交 | `dda8ee0`（10 文件 +750/−34） |
+| 发布前备份 | 部署文件 `.backup-mcp-20260918-122014-51df5be8`；数据库 `workhours-preimport-20260918-202044.db`（847 KB，已拉回 `_archive/prod-backup`） |
+| 首次发布 | health 返回 3.0.83，但核对发现 `project_cost_entries` **没有 fill_date 列** |
+| 热修 | `0f8f075`：`additions["project_cost_entries"]` 补 `("fill_date", "DATE")`，重发 |
+| 生产核对 | 列已存在；25 条全部回填（PERSONNEL_COST 3 / PROJECT_EXPENSE 22）；前端产物 `index-C5jggQM2.js`、`index-CbBLaic1.css`，`templates/labor-cost-import-template.xlsx` 已上线 |
+
+### 漏列的原因与两个教训
+
+1. **自查脚本用裸片段判断不可靠**：`'("fill_date", "DATE"),' in src` 会命中 `worklogs` 的同名列定义而假通过；
+   `'"project_cost_entries": ['` 在 `main.py` 里出现两次（retired 字典在前、additions 在后），取段时必须锁定
+   含 `amount_without_tax` 的那一段。**核对迁移改动一律带表级上下文。**
+2. **health 通过 ≠ 发布成功**：缺列时 `/health` 照样 200，只有打开人工成本结转页才会 500。
+   发布后要用只读脚本核对表结构（`test-artifacts/_prod_verify_v3083.py`）。
+   另注：web 容器是 nginx 镜像**没有 python**，核对静态资源要用 `sh -c`。
+
+### 迁移前验证（推荐沿用）
+
+用生产库副本验证，不动真实数据：`_archive/prod-backup/*.db` → copy 到临时目录 → `DATABASE_URL` 指向副本 →
+`upgrade_schema()` → 检查列与回填（`test-artifacts/_verify_fill_date_migration_on_prod_copy.py`）。
