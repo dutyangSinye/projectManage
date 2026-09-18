@@ -1500,6 +1500,8 @@ def upgrade_schema() -> None:
             ("amount_without_tax", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
             ("tax_rate", "NUMERIC(8, 6) NOT NULL DEFAULT 0"),
             ("tax_amount", "NUMERIC(14, 2) NOT NULL DEFAULT 0"),
+            # v3.0.83：填报日期，新增结转单由服务端写当天，历史单据升级时按创建日回填。
+            ("fill_date", "DATE"),
         ],
         "project_ledger_entries": [
             ("budget_item_id", "INTEGER"),
