@@ -2875,10 +2875,15 @@ const renderCharts = async () => {
       formatter: (params: unknown) =>
         Array.isArray(params)
           ? `${(params[0] as { axisValue?: string }).axisValue}<br>${(
-              params as Array<{ seriesName?: string; value?: number }>
+              params as Array<{ axisValue?: string; seriesName?: string; value?: number }>
             )
               .filter((item) => Number(item.value) > 0)
-              .map((item) => `${item.seriesName}: ${item.value} ${unitName}`)
+              .map((item) => {
+                const projectName = item.axisValue || "";
+                const stageName = item.seriesName || "";
+                const days = stageValue(projectName, stageName);
+                return `${stageName}: ${item.value}%（实际 ${Number(days.toFixed(2))} ${unitName}）`;
+              })
               .join("<br>")}`
           : "",
     },
