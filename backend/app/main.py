@@ -32,7 +32,7 @@ from sqlalchemy import and_, func, inspect, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .db.models import AdminPermission, ApprovalPosition, ApprovalPositionMember, AuditLog, ApprovalTask, BudgetItemTemplate, CashDocumentAttachment, ConfigOption, Contract, ContractAttachment, ContractStage, Customer, Department, Menu, Notification, NotificationPolicy, OrgSyncLog, Payment, PermissionAudit, Project, ProjectBudgetItem, ProjectCostAttachment, ProjectCostEntry, ProjectExpense, ProjectExpenseAttachment, ProjectExpensePayment, ProjectLedgerEntry, Receipt, ReminderEvent, Role, RoleDataScope, RolePermission, Supplier, SystemNotification, Timesheet, User, UserRole, UserRoleScope, WorkflowActionLog, WorkflowDefinition, WorkflowInstance, WorkflowNode, WorkflowTask, WorkflowVersion, Worklog
+from .db.models import AdminPermission, ApprovalPosition, ApprovalPositionMember, AuditLog, ApprovalTask, BudgetItemTemplate, CashDocumentAttachment, ConfigOption, Contract, ContractAttachment, ContractStage, Customer, Department, Menu, Notification, NotificationPolicy, OrgSyncLog, Payment, PaymentPlan, PermissionAudit, Project, ProjectBudgetItem, ProjectCostAttachment, ProjectCostEntry, ProjectExpense, ProjectExpenseAttachment, ProjectExpensePayment, ProjectLedgerEntry, Receipt, ReceiptPlan, ReminderEvent, Role, RoleDataScope, RolePermission, Supplier, SystemNotification, Timesheet, User, UserRole, UserRoleScope, WorkCalendarDay, WorkflowActionLog, WorkflowDefinition, WorkflowInstance, WorkflowNode, WorkflowTask, WorkflowVersion, Worklog
 from .db.session import Base, SessionLocal, engine, get_db
 from .time_utils import now_local, today_local
 from .schemas import (
@@ -41,6 +41,10 @@ from .schemas import (
     ApprovalPositionView,
     AdminWorklogList,
     AdminWorklogView,
+    BatchApprovalRequest,
+    BatchApprovalResult,
+    BatchApprovalResultItem,
+    BatchRejectionRequest,
     DataScopeInput,
     EffectivePermissionMenu,
     EffectivePermissionView,
@@ -86,6 +90,11 @@ from .schemas import (
     OrgDepartmentView,
     OrgSyncView,
     PaymentCreate,
+    PaymentPlanCreate,
+    PaymentPlanList,
+    PaymentPlanSummary,
+    PaymentPlanUpdate,
+    PaymentPlanView,
     PaymentUpdate,
     PaymentView,
     ProjectBoardOption,
@@ -132,8 +141,14 @@ from .schemas import (
     RoleView,
     ReportView,
     ReceiptCreate,
+    ReceiptLedgerList,
+    ReceiptLedgerSummary,
+    ReceiptPlanUpsert,
+    ReceiptPlanView,
     ReceiptUpdate,
     ReceiptView,
+    BusinessAnalysisTrendItem,
+    BusinessAnalysisView,
     RejectionAction,
     SupplierCreate,
     SupplierUpdate,
@@ -152,19 +167,30 @@ from .schemas import (
     WorkbenchOverview,
     WorkbenchProjectRow,
     WorkbenchReminder,
+    WorklogCalendar,
+    WorklogCalendarDay,
+    WorklogCalendarSummary,
     WorklogCreate,
     WorklogList,
+    WorklogMonthlyLedgerDetailList,
+    WorklogMonthlyLedgerItem,
+    WorklogMonthlyLedgerList,
+    WorklogMonthlyLedgerPrintRow,
+    WorklogMonthlyLedgerPrintView,
     WorklogUpdate,
+    WorkCalendarList,
+    WorkCalendarDayView,
+    WorkCalendarDayUpsert,
     WorklogView,
 )
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.83"
+API_VERSION = "3.0.97"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
-RBAC_ACTIONS = ("VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "EXPORT", "SYNC", "CONFIGURE", "PUBLISH", "DISABLE", "REVERSE")
+RBAC_ACTIONS = ("VIEW", "CREATE", "UPDATE", "EDIT", "DELETE", "APPROVE", "EXPORT", "IMPORT", "UPLOAD", "DOWNLOAD", "SYNC", "RETRY", "CONFIGURE", "PUBLISH", "DISABLE", "REVERSE")
 RBAC_SCOPE_RANK = {"SELF": 1, "OWNED_PROJECTS": 2, "DEPARTMENT_AND_CHILDREN": 3, "ALL": 4}
 RBAC_SCOPE_LABELS = {
     "SELF": "仅本人",
@@ -182,12 +208,15 @@ RBAC_MENU_SEED = [
     ("contracts", None, "项目合同", "projectContracts", 32, ["VIEW", "CREATE", "EDIT", "DELETE"]),
     ("receipts", None, "合同收款", "projectReceipts", 33, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "EXPORT"]),
     ("payments", None, "合同付款", "projectPayments", 34, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "EXPORT"]),
-    ("project_expenses", None, "项目费用", "projectExpenses", 35, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "REVERSE", "EXPORT"]),
-    ("labor_costs", None, "人工成本结转", "laborCosts", 36, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "REVERSE", "EXPORT"]),
-    ("cost_review", None, "费用复核", "costReview", 37, ["VIEW", "APPROVE"]),
-    ("project_board", None, "项目看板", "projectBoard", 38, ["VIEW", "EXPORT"]),
-    ("counterparties", None, "客户与供应商", "customers", 39, ["VIEW", "CREATE", "EDIT", "DELETE"]),
-    ("cash_approval", None, "收付款复核", "projectReceipts", 40, ["VIEW", "APPROVE"]),
+    ("receipt_ledger", None, "回款台账", "receiptLedger", 35, ["VIEW", "CREATE", "EDIT", "DELETE", "EXPORT"]),
+    ("payment_plan", None, "付款计划", "paymentPlans", 36, ["VIEW", "CREATE", "EDIT", "DELETE", "EXPORT"]),
+    ("business_analysis", None, "经营分析", "businessAnalysis", 37, ["VIEW", "EXPORT"]),
+    ("project_expenses", None, "项目费用", "projectExpenses", 38, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "REVERSE", "EXPORT"]),
+    ("labor_costs", None, "人工成本结转", "laborCosts", 39, ["VIEW", "CREATE", "EDIT", "DELETE", "APPROVE", "REVERSE", "EXPORT"]),
+    ("cost_review", None, "费用复核", "costReview", 40, ["VIEW", "APPROVE"]),
+    ("project_board", None, "项目看板", "projectBoard", 41, ["VIEW", "EXPORT"]),
+    ("counterparties", None, "客户与供应商", "customers", 42, ["VIEW", "CREATE", "EDIT", "DELETE"]),
+    ("cash_approval", None, "收付款复核", "projectReceipts", 43, ["VIEW", "APPROVE"]),
     ("budget_templates", None, "预算项模板", "budgetTemplates", 45, ["VIEW", "CREATE", "EDIT", "DELETE"]),
     ("integrations", None, "集成与通知", "integrations", 50, ["VIEW", "CONFIGURE", "SYNC", "EXPORT"]),
     ("admins", None, "权限管理", "adminPermissions", 51, ["VIEW", "CONFIGURE"]),
@@ -206,8 +235,8 @@ RETIRED_MENU_SEED = ["budget_templates", "project_budget"]
 PURGED_MENU_SEED = ["personnel_costs", "approval_workflows"]
 RBAC_ROLE_SEED = {
     "system_admin": ("系统管理员", "拥有全部菜单、操作和数据范围", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED}, "ALL"),
-    "project_manager": ("项目经营管理员", "维护项目经营主数据、预算、成本和收付款", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED if code in {"projects", "project_budget", "contracts", "receipts", "payments", "project_expenses", "labor_costs", "cost_review", "project_board", "counterparties"}}, "ALL"),
-    "project_owner": ("项目负责人", "管理负责项目的经营数据", {code: ["VIEW", "CREATE", "EDIT"] for code in ["projects", "contracts", "receipts", "payments", "project_expenses", "labor_costs"]} | {"project_budget": ["VIEW"], "project_board": ["VIEW"], "cost_review": ["VIEW"]}, "OWNED_PROJECTS"),
+    "project_manager": ("项目经营管理员", "维护项目经营主数据、预算、成本和收付款", {code: list(actions) for code, _, _, _, _, actions in RBAC_MENU_SEED if code in {"projects", "project_budget", "contracts", "receipts", "payments", "receipt_ledger", "payment_plan", "business_analysis", "project_expenses", "labor_costs", "cost_review", "project_board", "counterparties"}}, "ALL"),
+    "project_owner": ("项目负责人", "管理负责项目的经营数据", {code: ["VIEW", "CREATE", "EDIT"] for code in ["projects", "contracts", "receipts", "payments", "receipt_ledger", "payment_plan", "project_expenses", "labor_costs"]} | {"project_budget": ["VIEW"], "business_analysis": ["VIEW"], "project_board": ["VIEW"], "cost_review": ["VIEW"]}, "OWNED_PROJECTS"),
     "cashier": ("出纳", "处理合同收付款单据和收付款复核", {"receipts": ["VIEW", "CREATE", "EDIT", "APPROVE"], "payments": ["VIEW", "CREATE", "EDIT", "APPROVE"], "cash_approval": ["VIEW", "APPROVE"], "cost_review": ["VIEW"]}, "OWNED_PROJECTS"),
     "worklog_manager": ("工时管理员", "维护工时台账和工时看板", {"worklogs": ["VIEW", "EDIT", "DELETE", "EXPORT"], "reports": ["VIEW", "EXPORT"]}, "DEPARTMENT_AND_CHILDREN"),
     "worklog_approver": ("工时审批人", "处理分配给自己的工时审批", {"approvals": ["VIEW", "APPROVE"]}, "SELF"),
@@ -230,10 +259,25 @@ CLASSIFICATION_TREE_CATEGORIES = {
 }
 DEFAULT_CONFIG_OPTIONS = {
     "project_stage": [("需求", "需求"), ("设计", "设计"), ("开发", "开发"), ("联调", "联调"), ("测试", "测试"), ("交付", "交付"), ("管理", "管理"), ("现场", "现场"), ("其它", "其它")],
-    "work_type": [("PROJECT", "项目工时"), ("MANAGEMENT", "管理工时"), ("OTHER", "其它工时")],
+    "work_type": [
+        ("RND_PROJECT_WORK", "研发项目工时"),
+        ("TECH_SERVICE_WORK", "技术服务工时"),
+        ("DEMO_PROMOTION_WORK", "观摩推广工时"),
+        ("MARKETING_WORK", "市场营销工时"),
+        ("MANAGEMENT_WORK", "管理工时"),
+        ("OTHER_WORK", "其他工时"),
+    ],
     "work_status": [("LOCAL", "本地"), ("BUSINESS_TRIP", "出差"), ("REMOTE", "异地办公"), ("LEAVE", "休假")],
-    "project_status": [("ACTIVE", "进行中"), ("ACCEPTANCE", "验收中"), ("PAUSED", "已暂停"), ("COMPLETED", "已完成")],
+    "project_status": [("PRE_APPROVAL", "预立项"), ("ACTIVE", "进行中"), ("ACCEPTANCE", "验收中"), ("PAUSED", "已暂停"), ("COMPLETED", "已完成"), ("PRE_APPROVAL_FAILED", "预立项失败")],
 }
+PROJECT_WORK_TYPES = {"RND_PROJECT_WORK", "TECH_SERVICE_WORK", "PROJECT"}
+NON_PROJECT_WORK_TYPES = {"DEMO_PROMOTION_WORK", "MARKETING_WORK", "MANAGEMENT_WORK", "OTHER_WORK", "MANAGEMENT", "OTHER"}
+LEGACY_WORK_TYPE_VALUES = {"PROJECT", "MANAGEMENT", "OTHER"}
+WORK_TYPE_PROJECT_CATEGORY = {
+    "RND_PROJECT_WORK": "RND_PROJECT",
+    "TECH_SERVICE_WORK": "BUSINESS_PROJECT",
+}
+PRE_APPROVAL_CONVERTIBLE_WORK_TYPES = {"RND_PROJECT_WORK", "TECH_SERVICE_WORK", "PROJECT"}
 # 项目分类树默认内容，依据《项目预算与成本复核重构设计》v3.0.59 第 3 节。
 # 数组结构：上级编码、上级名称、[(下级编码, 下级名称), ...]。
 DEFAULT_CLASSIFICATION_TREES = {
@@ -335,8 +379,52 @@ WORKLOG_FILL_REMINDER_TYPE = "WORKLOG_FILL_REMINDER"
 WORKLOG_FILL_REMINDER_DEFAULT_TIME = "09:00"
 # 扫描器按分钟推进，命中窗口覆盖扫描间隔，保证配置时刻一定会被扫到且只发一次。
 WORKLOG_FILL_REMINDER_MATCH_WINDOW_MINUTES = 10
-# 工时只统计周一至周五，定时提醒同样跳过周末。
+# 默认工作日规则：未被国家法定工作日历覆盖的日期按周一至周五处理。
 WORKDAY_WEEKDAYS = (0, 1, 2, 3, 4)
+CHINA_2026_WORK_CALENDAR_SOURCE = "国务院办公厅2026年部分节假日安排"
+CHINA_2026_HOLIDAYS = {
+    "2026-01-01": "元旦",
+    "2026-01-02": "元旦",
+    "2026-01-03": "元旦",
+    "2026-02-15": "春节",
+    "2026-02-16": "春节",
+    "2026-02-17": "春节",
+    "2026-02-18": "春节",
+    "2026-02-19": "春节",
+    "2026-02-20": "春节",
+    "2026-02-21": "春节",
+    "2026-02-22": "春节",
+    "2026-02-23": "春节",
+    "2026-04-04": "清明节",
+    "2026-04-05": "清明节",
+    "2026-04-06": "清明节",
+    "2026-05-01": "劳动节",
+    "2026-05-02": "劳动节",
+    "2026-05-03": "劳动节",
+    "2026-05-04": "劳动节",
+    "2026-05-05": "劳动节",
+    "2026-06-19": "端午节",
+    "2026-06-20": "端午节",
+    "2026-06-21": "端午节",
+    "2026-09-25": "中秋节",
+    "2026-09-26": "中秋节",
+    "2026-09-27": "中秋节",
+    "2026-10-01": "国庆节",
+    "2026-10-02": "国庆节",
+    "2026-10-03": "国庆节",
+    "2026-10-04": "国庆节",
+    "2026-10-05": "国庆节",
+    "2026-10-06": "国庆节",
+    "2026-10-07": "国庆节",
+}
+CHINA_2026_ADJUSTED_WORKDAYS = {
+    "2026-01-04": "元旦调休上班",
+    "2026-02-14": "春节调休上班",
+    "2026-02-28": "春节调休上班",
+    "2026-05-09": "劳动节调休上班",
+    "2026-09-20": "中秋节调休上班",
+    "2026-10-10": "国庆节调休上班",
+}
 # v3.0.81：T-1 补漏提醒——每个工作日按设定时刻提醒补填上一个工作日漏填的工时。
 WORKLOG_FILL_REMINDER_T1_TYPE = "WORKLOG_FILL_REMINDER_T1"
 WORKLOG_FILL_REMINDER_T1_DEFAULT_TIME = "09:30"
@@ -595,6 +683,27 @@ def seed_config_options(db: Session) -> None:
             option = db.scalar(select(ConfigOption).where(ConfigOption.category == category, ConfigOption.value == value))
             if not option:
                 db.add(ConfigOption(category=category, value=value, label=label, sort_order=order, is_active=True, is_builtin=True))
+
+
+def seed_work_calendar(db: Session) -> None:
+    """内置国家法定工作日历覆盖项；只补缺失项，不覆盖管理员后续维护。"""
+    rows: list[tuple[str, str, str]] = []
+    rows.extend((day, "HOLIDAY", name) for day, name in CHINA_2026_HOLIDAYS.items())
+    rows.extend((day, "WORKDAY", name) for day, name in CHINA_2026_ADJUSTED_WORKDAYS.items())
+    for day_text, day_type, name in rows:
+        calendar_date = date.fromisoformat(day_text)
+        existing = db.scalar(select(WorkCalendarDay).where(WorkCalendarDay.calendar_date == calendar_date))
+        if existing:
+            continue
+        db.add(
+            WorkCalendarDay(
+                calendar_date=calendar_date,
+                day_type=day_type,
+                name=name,
+                source=CHINA_2026_WORK_CALENDAR_SOURCE,
+                is_builtin=True,
+            )
+        )
 
 
 def seed_classification_trees(db: Session) -> None:
@@ -1320,6 +1429,10 @@ QUERY_INDEX_SPECS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("ix_payments_contract_status", "payments", ("contract_id", "status", "id")),
     ("ix_payments_stage_status", "payments", ("stage_id", "status", "id")),
     ("ix_payments_budget_item_status", "payments", ("budget_item_id", "status")),
+    ("ix_receipt_plans_month_project", "receipt_plans", ("period_month", "project_id", "contract_id")),
+    ("ix_payment_plans_month_project", "payment_plans", ("period_month", "project_id", "status", "id")),
+    ("ix_payment_plans_handler_month", "payment_plans", ("handler_user_id", "period_month", "status")),
+    ("ix_payment_plans_source", "payment_plans", ("source_type", "contract_id", "contract_stage_id")),
     ("ix_project_ledger_project_type", "project_ledger_entries", ("project_id", "entry_type", "created_at", "id")),
     ("ix_project_ledger_source", "project_ledger_entries", ("source_type", "source_id", "entry_type")),
     ("ix_project_ledger_budget_item", "project_ledger_entries", ("budget_item_id", "entry_type")),
@@ -1362,6 +1475,66 @@ def ensure_query_indexes(connection) -> None:
         connection.execute(text(f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "{table}" ({column_sql})'))
 
 
+def ensure_worklogs_project_nullable(connection) -> None:
+    """旧 SQLite 库中 worklogs.project_id 曾是 NOT NULL；非项目工时需要允许为空。"""
+    if engine.dialect.name != "sqlite":
+        return
+    inspector = inspect(engine)
+    if not inspector.has_table("worklogs"):
+        return
+    columns = inspector.get_columns("worklogs")
+    project_column = next((column for column in columns if column["name"] == "project_id"), None)
+    if not project_column or project_column.get("nullable", True):
+        return
+
+    target_columns: list[tuple[str, str, str]] = [
+        ("id", "INTEGER PRIMARY KEY", "id"),
+        ("user_id", "INTEGER NOT NULL", "user_id"),
+        ("user_name_snapshot", "VARCHAR(100) NOT NULL", "user_name_snapshot"),
+        ("project_id", "INTEGER", "project_id"),
+        ("project_name_snapshot", "VARCHAR(300) NOT NULL", "COALESCE(project_name_snapshot, '非项目工时')"),
+        ("stage", "VARCHAR(40) NOT NULL", "stage"),
+        ("work_type", "VARCHAR(40) NOT NULL", "work_type"),
+        ("work_status", "VARCHAR(40) NOT NULL", "work_status"),
+        ("fill_date", "DATE", "fill_date"),
+        ("start_date", "DATE NOT NULL", "start_date"),
+        ("end_date", "DATE NOT NULL", "end_date"),
+        ("quantity", "NUMERIC(10, 2) NOT NULL", "quantity"),
+        ("unit", "VARCHAR(10) NOT NULL DEFAULT 'DAY'", "COALESCE(unit, 'DAY')"),
+        ("description", "TEXT NOT NULL", "description"),
+        ("status", "VARCHAR(20) NOT NULL DEFAULT 'DRAFT'", "COALESCE(status, 'DRAFT')"),
+        ("timesheet_id", "INTEGER", "timesheet_id"),
+        ("approver_user_id", "INTEGER", "approver_user_id"),
+        ("approver_name_snapshot", "VARCHAR(100)", "approver_name_snapshot"),
+        ("submitted_at", "DATETIME", "submitted_at"),
+        ("approved_at", "DATETIME", "approved_at"),
+        ("rejection_reason", "TEXT", "rejection_reason"),
+        ("approval_comment", "TEXT", "approval_comment"),
+        ("approval_version", "INTEGER NOT NULL DEFAULT 0", "COALESCE(approval_version, 0)"),
+        ("approval_flow_type", "VARCHAR(40)", "approval_flow_type"),
+        ("converted_from_project_id", "INTEGER", "converted_from_project_id"),
+        ("converted_from_project_name", "VARCHAR(300)", "converted_from_project_name"),
+        ("converted_at", "DATETIME", "converted_at"),
+        ("converted_by", "INTEGER", "converted_by"),
+        ("conversion_reason", "TEXT", "conversion_reason"),
+        ("last_notified_at", "DATETIME", "last_notified_at"),
+        ("created_at", "DATETIME NOT NULL", "COALESCE(created_at, datetime('now', '+8 hours'))"),
+        ("updated_at", "DATETIME NOT NULL", "COALESCE(updated_at, datetime('now', '+8 hours'))"),
+    ]
+    existing = {column["name"] for column in columns}
+    column_definitions = ", ".join(f'"{name}" {definition}' for name, definition, _ in target_columns)
+    target_names = ", ".join(f'"{name}"' for name, _, _ in target_columns)
+    source_values = ", ".join(expression if name in existing else "NULL" for name, _, expression in target_columns)
+
+    connection.execute(text("PRAGMA foreign_keys=OFF"))
+    connection.execute(text("DROP TABLE IF EXISTS worklogs_nullable_migration"))
+    connection.execute(text(f"CREATE TABLE worklogs_nullable_migration ({column_definitions})"))
+    connection.execute(text(f"INSERT INTO worklogs_nullable_migration ({target_names}) SELECT {source_values} FROM worklogs"))
+    connection.execute(text("DROP TABLE worklogs"))
+    connection.execute(text("ALTER TABLE worklogs_nullable_migration RENAME TO worklogs"))
+    connection.execute(text("PRAGMA foreign_keys=ON"))
+
+
 def upgrade_schema() -> None:
     """为现有 SQLite 数据库增量补齐字段，所有操作均可重复执行。"""
     Base.metadata.create_all(bind=engine)
@@ -1384,8 +1557,19 @@ def upgrade_schema() -> None:
     }
     additions = {
         # daily_cost 等列已下线，见 retired_personnel_cost_columns。
-        "users": [("open_id", "VARCHAR(128)"), ("email", "VARCHAR(200)"), ("snapshot_at", "DATETIME")],
-        "departments": [("parent_feishu_department_id", "VARCHAR(64)")],
+        "users": [
+            ("open_id", "VARCHAR(128)"),
+            ("email", "VARCHAR(200)"),
+            ("snapshot_at", "DATETIME"),
+            ("supervisor_user_id", "INTEGER"),
+            ("supervisor_name", "VARCHAR(100)"),
+            ("supervisor_feishu_user_id", "VARCHAR(64)"),
+        ],
+        "departments": [
+            ("parent_feishu_department_id", "VARCHAR(64)"),
+            ("manager_user_id", "INTEGER"),
+            ("manager_name", "VARCHAR(100)"),
+        ],
         "projects": [
             ("project_type", "VARCHAR(80) NOT NULL DEFAULT 'RND_PROJECT'"),
             ("owner_user_id", "INTEGER"),
@@ -1521,8 +1705,21 @@ def upgrade_schema() -> None:
             ("rejection_reason", "TEXT"),
             ("approval_comment", "TEXT"),
             ("approval_version", "INTEGER NOT NULL DEFAULT 0"),
+            ("approval_flow_type", "VARCHAR(40)"),
+            ("converted_from_project_id", "INTEGER"),
+            ("converted_from_project_name", "VARCHAR(300)"),
+            ("converted_at", "DATETIME"),
+            ("converted_by", "INTEGER"),
+            ("conversion_reason", "TEXT"),
             # daily_cost_snapshot / cost_amount_snapshot 已下线，见 retired_personnel_cost_columns。
             ("last_notified_at", "DATETIME"),
+        ],
+        "approval_tasks": [
+            ("step_order", "INTEGER NOT NULL DEFAULT 1"),
+            ("step_name", "VARCHAR(100)"),
+            ("total_steps", "INTEGER NOT NULL DEFAULT 1"),
+            ("flow_type", "VARCHAR(40)"),
+            ("resolved_reason", "VARCHAR(200)"),
         ],
         "system_notifications": [
             ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
@@ -1579,6 +1776,7 @@ def upgrade_schema() -> None:
             for name, definition in columns:
                 if name not in existing:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+        ensure_worklogs_project_nullable(connection)
         for table in ("contracts", "contract_stages", "receipts", "payments", "project_expenses", "project_cost_entries"):
             if not inspect(engine).has_table(table):
                 continue
@@ -1743,6 +1941,7 @@ def seed_data() -> None:
     db = SessionLocal()
     try:
         seed_config_options(db)
+        seed_work_calendar(db)
         seed_classification_trees(db)
         seed_budget_item_templates(db)
         seed_notification_policies(db)
@@ -2142,6 +2341,51 @@ def project_scope_ids(db: Session, user: User, resource: str = "projects") -> se
         department_ids = index.descendants(int(department_id))
         return {project.id for project in db.scalars(select(Project).where(Project.department_id.in_(department_ids), Project.status != "DELETED")).all()}
     return set()
+
+
+def worklog_scope_sets(db: Session, user: User, resource: str = "worklogs") -> tuple[set[int] | None, set[int] | None]:
+    """返回工时数据范围：项目 ID 集合、非项目填报人 ID 集合；None 表示该维度不限制。"""
+    if user.id in system_admin_user_ids(db):
+        return None, None
+    details = effective_permission_details(db, user.id)
+    scope = details.get(resource) or details.get("projects")
+    scope_type = str(scope.get("scope_type")) if scope else "OWNED_PROJECTS"
+    if scope_type == "ALL":
+        return None, None
+    if scope_type == "SELF":
+        return set(), {user.id}
+    if scope_type == "OWNED_PROJECTS":
+        return project_scope_ids(db, user, resource), {user.id}
+    department_id = scope.get("scope_department_id") if scope else None
+    if department_id:
+        index = DepartmentIndex(db.scalars(select(Department)).all())
+        department_ids = index.descendants(int(department_id))
+        project_ids = {
+            project.id
+            for project in db.scalars(select(Project).where(Project.department_id.in_(department_ids), Project.status != "DELETED")).all()
+        }
+        user_ids = {
+            scoped_user.id
+            for scoped_user in db.scalars(select(User).where(User.department_id.in_(department_ids), User.employment_status == "ACTIVE")).all()
+        }
+        return project_ids, user_ids
+    return set(), {user.id}
+
+
+def worklog_in_scope(worklog: Worklog, project_ids: set[int] | None, user_ids: set[int] | None) -> bool:
+    """判断一条工时是否落在已计算好的数据范围内。"""
+    if project_ids is None and user_ids is None:
+        return True
+    if worklog.project_id:
+        return (project_ids is None or worklog.project_id in project_ids) or (user_ids is not None and worklog.user_id in user_ids)
+    return user_ids is None or worklog.user_id in user_ids
+
+
+def ensure_worklog_in_scope(db: Session, user: User, worklog: Worklog, resource: str = "worklogs") -> None:
+    """对单条工时执行数据范围校验，防止越权编辑/删除/下钻。"""
+    project_ids, user_ids = worklog_scope_sets(db, user, resource)
+    if not worklog_in_scope(worklog, project_ids, user_ids):
+        raise HTTPException(403, "WORKLOG_OUT_OF_SCOPE")
 
 
 def tax_amount_fields(amount: float | int | None, tax_rate: float | int | None = 0, amount_without_tax: float | int | None = None) -> dict[str, float]:
@@ -3152,6 +3396,20 @@ def next_document_no(db: Session, model: type, prefix: str) -> str:
     return f"{prefix}-{now_local():%Y%m%d}-{current + 1:04d}"
 
 
+def next_project_code(db: Session, project_type: str) -> str:
+    """新增项目未填写编码时，按项目大类生成唯一项目编号。"""
+    prefix = "RND" if project_budget_category(project_type) == "RND_PROJECT" else "BIZ"
+    date_part = f"{now_local():%Y%m%d}"
+    pattern = f"{prefix}-{date_part}-%"
+    existing_codes = set(db.scalars(select(Project.code).where(Project.code.like(pattern))).all())
+    sequence = 1
+    while True:
+        code = f"{prefix}-{date_part}-{sequence:04d}"
+        if code not in existing_codes and not db.scalar(select(Project.id).where(Project.code == code)):
+            return code
+        sequence += 1
+
+
 def ensure_project_in_scope(db: Session, user: User, project_id: int) -> Project:
     project = db.get(Project, project_id)
     if not project or project.status == "DELETED":
@@ -3714,6 +3972,17 @@ def cash_approver_users(db: Session) -> list[User]:
     return [user for user in users if "cash_approval" in user_admin_permissions(db, user.id)]
 
 
+def cash_approval_detail_url(source_type: str, source_id: int) -> str:
+    """生成收付款审批卡片的系统内直达地址，避免飞书按钮只打开首页。"""
+    base = os.getenv("SYSTEM_PUBLIC_URL", "http://192.168.112.188:8088").rstrip("/")
+    page_map = {
+        "receipt": "receiptDetail",
+        "payment": "paymentDetail",
+    }
+    page = page_map.get(source_type)
+    return f"{base}/?page={page}&id={source_id}" if page else base
+
+
 def send_cash_approval_notifications(
     db: Session,
     source_type: str,
@@ -3724,8 +3993,9 @@ def send_cash_approval_notifications(
     amount: float,
     submitter_name: str,
     recipient_user_id: int | None = None,
+    resend_sent: bool = False,
 ) -> int:
-    """向所有出纳审批人发送待审批提醒，并按单据和接收人幂等记录。"""
+    """向出纳审批人发送待审批提醒；正式重新提交时允许覆盖已发送记录再次推送。"""
     notification_type = "PENDING_RECEIPT" if source_type == "receipt" else "PENDING_PAYMENT"
     if not notification_policy_enabled(db, notification_type):
         return 0
@@ -3738,7 +4008,7 @@ def send_cash_approval_notifications(
         notification = db.scalar(
             select(SystemNotification).where(SystemNotification.idempotency_key == idempotency_key)
         )
-        if notification and notification.status == "SENT":
+        if notification and notification.status == "SENT" and not resend_sent:
             continue
         result = feishu.notify_cash_approval_submitted(
             recipient.name,
@@ -3747,7 +4017,7 @@ def send_cash_approval_notifications(
             serial_no,
             project_name,
             amount,
-            os.getenv("SYSTEM_PUBLIC_URL", "http://192.168.112.188:8088"),
+            cash_approval_detail_url(source_type, source_id),
             recipient.open_id,
             channel=channel,
         )
@@ -4041,9 +4311,110 @@ def parse_reminder_times(raw: str | None) -> list[str]:
     return slots
 
 
-def worklog_fill_reminder_due(policy: NotificationPolicy, now: datetime) -> str | None:
-    """判断当前时刻是否命中填报提醒，返回命中的时刻；周末或不在窗口内返回 None。"""
-    if now.weekday() not in WORKDAY_WEEKDAYS:
+def is_statutory_workday(db: Session, day: date) -> bool:
+    """判断指定日期是否国家法定工作日；日历覆盖优先，未配置时回退到周一至周五。"""
+    override = db.scalar(select(WorkCalendarDay).where(WorkCalendarDay.calendar_date == day))
+    if override:
+        return override.day_type == "WORKDAY"
+    return day.weekday() in WORKDAY_WEEKDAYS
+
+
+def worklog_workday_count(db: Session, start_date: date, end_date: date) -> int:
+    """计算包含首尾日期的国家法定工作日数量；调休上班日计入，法定假日排除。"""
+    if end_date < start_date:
+        return 0
+    return sum(
+        is_statutory_workday(db, start_date + timedelta(days=offset))
+        for offset in range((end_date - start_date).days + 1)
+    )
+
+
+@app.get("/api/v1/work-calendar", response_model=WorkCalendarList)
+def list_work_calendar(
+    start: date | None = None,
+    end: date | None = None,
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> WorkCalendarList:
+    """返回工作日历覆盖项；未返回的日期由前端按周一至周五兜底。"""
+    current_user(db, x_demo_user_id)
+    start_date = start or date(today_local().year, 1, 1)
+    end_date = end or date(today_local().year, 12, 31)
+    if start_date > end_date:
+        raise HTTPException(400, "INVALID_DATE_RANGE")
+    if (end_date - start_date).days > 1100:
+        raise HTTPException(400, "DATE_RANGE_TOO_LARGE")
+    rows = db.scalars(
+        select(WorkCalendarDay)
+        .where(WorkCalendarDay.calendar_date >= start_date, WorkCalendarDay.calendar_date <= end_date)
+        .order_by(WorkCalendarDay.calendar_date)
+    ).all()
+    return WorkCalendarList(items=[WorkCalendarDayView.model_validate(item) for item in rows])
+
+
+@app.get("/api/v1/admin/work-calendar", response_model=WorkCalendarList)
+def list_admin_work_calendar(
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> WorkCalendarList:
+    """基础配置中的工作日历覆盖项列表；未列出的日期按周一至周五默认规则处理。"""
+    require_access(db, "configuration", "VIEW", x_demo_user_id)
+    target_year = year or today_local().year
+    start_date = date(target_year, 1, 1)
+    end_date = date(target_year, 12, 31)
+    rows = db.scalars(
+        select(WorkCalendarDay)
+        .where(WorkCalendarDay.calendar_date >= start_date, WorkCalendarDay.calendar_date <= end_date)
+        .order_by(WorkCalendarDay.calendar_date)
+    ).all()
+    return WorkCalendarList(items=[WorkCalendarDayView.model_validate(item) for item in rows])
+
+
+@app.put("/api/v1/admin/work-calendar/{calendar_date}", response_model=WorkCalendarDayView)
+def upsert_admin_work_calendar_day(
+    calendar_date: date,
+    payload: WorkCalendarDayUpsert,
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> WorkCalendarDayView:
+    """新增或更新某一天的国家工作日历覆盖项。"""
+    require_access(db, "configuration", "EDIT", x_demo_user_id)
+    item = db.scalar(select(WorkCalendarDay).where(WorkCalendarDay.calendar_date == calendar_date))
+    if not item:
+        item = WorkCalendarDay(calendar_date=calendar_date, day_type=payload.day_type, name=payload.name.strip(), source=(payload.source or "").strip() or None, is_builtin=False)
+        db.add(item)
+    else:
+        item.day_type = payload.day_type
+        item.name = payload.name.strip()
+        item.source = (payload.source or "").strip() or None
+        item.is_builtin = False if not item.is_builtin else item.is_builtin
+    db.commit()
+    db.refresh(item)
+    return WorkCalendarDayView.model_validate(item)
+
+
+@app.delete("/api/v1/admin/work-calendar/{calendar_date}")
+def delete_admin_work_calendar_day(
+    calendar_date: date,
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """删除某一天的覆盖项；删除后该日期回退到默认周一至周五规则。"""
+    require_access(db, "configuration", "DELETE", x_demo_user_id)
+    item = db.scalar(select(WorkCalendarDay).where(WorkCalendarDay.calendar_date == calendar_date))
+    if not item:
+        raise HTTPException(404, "WORK_CALENDAR_DAY_NOT_FOUND")
+    if item.is_builtin:
+        raise HTTPException(400, "BUILTIN_WORK_CALENDAR_DELETE_FORBIDDEN")
+    db.delete(item)
+    db.commit()
+    return {"deleted": True, "calendar_date": calendar_date.isoformat()}
+
+
+def worklog_fill_reminder_due(db: Session, policy: NotificationPolicy, now: datetime) -> str | None:
+    """判断当前时刻是否命中填报提醒；非国家工作日不提醒。"""
+    if not is_statutory_workday(db, now.date()):
         return None
     slots = parse_reminder_times(policy.schedule_time) or parse_reminder_times(WORKLOG_FILL_REMINDER_DEFAULT_TIME)
     now_minutes = now.hour * 60 + now.minute
@@ -4110,10 +4481,10 @@ def worklog_reminder_recipients(db: Session, policy: NotificationPolicy) -> list
     return list(db.scalars(query.order_by(User.id)).all())
 
 
-def previous_workday(day: date) -> date:
-    """返回指定日期之前最近的一个工作日（周一至周五）。"""
+def previous_workday(db: Session, day: date) -> date:
+    """返回指定日期之前最近的一个国家法定工作日。"""
     cursor = day - timedelta(days=1)
-    while cursor.weekday() not in WORKDAY_WEEKDAYS:
+    while not is_statutory_workday(db, cursor):
         cursor -= timedelta(days=1)
     return cursor
 
@@ -4137,7 +4508,7 @@ def run_worklog_fill_reminder_scan_once(force: bool = False) -> dict[str, int]:
         if not policy or not policy.enabled:
             return {"scanned": 0, "sent": 0, "failed": 0, "skipped": 0}
         now = now_local()
-        slot = f"manual{now:%H%M}" if force else worklog_fill_reminder_due(policy, now)
+        slot = f"manual{now:%H%M}" if force else worklog_fill_reminder_due(db, policy, now)
         if slot is None:
             return {"scanned": 0, "sent": 0, "failed": 0, "skipped": 0}
         today = today_local()
@@ -4199,10 +4570,10 @@ def run_worklog_fill_reminder_t1_scan_once(force: bool = False) -> dict[str, int
         if not policy or not policy.enabled:
             return {"scanned": 0, "sent": 0, "failed": 0, "skipped": 0}
         now = now_local()
-        slot = f"manual{now:%H%M}" if force else worklog_fill_reminder_due(policy, now)
+        slot = f"manual{now:%H%M}" if force else worklog_fill_reminder_due(db, policy, now)
         if slot is None:
             return {"scanned": 0, "sent": 0, "failed": 0, "skipped": 0}
-        target_day = previous_workday(today_local())
+        target_day = previous_workday(db, today_local())
         recipients = worklog_reminder_recipients(db, policy)
         base = os.getenv("SYSTEM_PUBLIC_URL", "http://localhost:8088").rstrip("/")
         channel = notification_policy_channel(db, WORKLOG_FILL_REMINDER_T1_TYPE)
@@ -4319,6 +4690,162 @@ def resolve_approver(db: Session, project: Project, submitter: User) -> User:
     return leader
 
 
+def is_project_work_type(work_type: str) -> bool:
+    """判断工时类型是否必须关联项目；兼容旧 PROJECT 值。"""
+    return work_type in PROJECT_WORK_TYPES
+
+
+def project_category_for_work_type(work_type: str) -> str | None:
+    """项目类工时限定可选择的项目大类；旧 PROJECT 不额外限定。"""
+    return WORK_TYPE_PROJECT_CATEGORY.get(work_type)
+
+
+def active_user_or_none(db: Session, user_id: int | None) -> User | None:
+    """读取启用用户，避免审批任务派给离职/停用人员。"""
+    if not user_id:
+        return None
+    user = db.get(User, user_id)
+    return user if user and user.employment_status == "ACTIVE" else None
+
+
+def supervisor_for_user(db: Session, user: User) -> User | None:
+    """优先使用同步/手工维护的直属上级，其次按历史 manager_name 精确匹配。"""
+    supervisor = active_user_or_none(db, user.supervisor_user_id)
+    if supervisor and supervisor.id != user.id:
+        return supervisor
+    if user.supervisor_feishu_user_id:
+        supervisor = db.scalar(
+            select(User).where(
+                or_(User.feishu_user_id == user.supervisor_feishu_user_id, User.open_id == user.supervisor_feishu_user_id),
+                User.employment_status == "ACTIVE",
+            )
+        )
+        if supervisor and supervisor.id != user.id:
+            user.supervisor_user_id = supervisor.id
+            user.supervisor_name = supervisor.name
+            return supervisor
+    name = (user.supervisor_name or user.manager_name or "").strip()
+    if name:
+        matches = db.scalars(select(User).where(User.name == name, User.employment_status == "ACTIVE")).all()
+        if len(matches) == 1 and matches[0].id != user.id:
+            user.supervisor_user_id = matches[0].id
+            user.supervisor_name = matches[0].name
+            return matches[0]
+    return None
+
+
+def department_manager_for_user(db: Session, user: User, *, prefer_market: bool = False) -> User:
+    """解析非项目工时审批人：市场类优先市场部门负责人，其它按填报人部门负责人。"""
+    department: Department | None = None
+    if prefer_market:
+        setting = db.scalar(select(ConfigOption).where(ConfigOption.category == "approval_setting", ConfigOption.value == "MARKET_DEPARTMENT_ID"))
+        if setting and setting.label.strip().isdigit():
+            department = db.get(Department, int(setting.label.strip()))
+        configured = os.getenv("MARKET_DEPARTMENT_ID", "").strip()
+        if not department and configured.isdigit():
+            department = db.get(Department, int(configured))
+        if not department:
+            department = db.scalar(select(Department).where(Department.name.like("%市场%"), Department.is_active.is_(True)).order_by(Department.id))
+    if not department and user.department_id:
+        department = db.get(Department, user.department_id)
+    manager = None
+    while department and not manager:
+        manager = active_user_or_none(db, department.manager_user_id)
+        if not manager and department.manager_name:
+            matches = db.scalars(select(User).where(User.name == department.manager_name, User.employment_status == "ACTIVE")).all()
+            manager = matches[0] if len(matches) == 1 else None
+        if manager:
+            break
+        department = db.scalar(select(Department).where(Department.feishu_department_id == department.parent_feishu_department_id)) if department.parent_feishu_department_id else None
+    if not manager:
+        raise HTTPException(400, "DEPARTMENT_MANAGER_MISSING")
+    if manager.id == user.id:
+        manager = supervisor_for_user(db, user)
+        if not manager:
+            raise HTTPException(400, "DEPARTMENT_MANAGER_SELF_NO_SUPERVISOR")
+    return manager
+
+
+def reroute_project_self_approver(
+    db: Session,
+    project: Project,
+    submitter: User,
+    *,
+    self_role: str,
+    preferred_project_approver: User | None = None,
+) -> tuple[User, str]:
+    """项目工时审批节点命中提交人本人时，按项目审批人/直属上级兜底转派。"""
+    if preferred_project_approver and preferred_project_approver.id != submitter.id:
+        return preferred_project_approver, f"{self_role}为本人，转项目审批人"
+    rerouted = supervisor_for_user(db, submitter) or active_user_or_none(db, project.leader_user_id)
+    if not rerouted or rerouted.id == submitter.id:
+        raise HTTPException(400, "APPROVER_SELF_NO_LEADER")
+    return rerouted, f"{self_role}为本人，转直属上级"
+
+
+def worklog_project_for_payload(db: Session, work_type: str, project_id: int | None) -> Project | None:
+    """按工时类型校验项目是否必填、可填报和项目大类是否匹配。"""
+    if not is_project_work_type(work_type):
+        return None
+    if not project_id:
+        raise HTTPException(400, "PROJECT_REQUIRED")
+    project = db.get(Project, project_id)
+    if not project or project.status == "DELETED" or not project.allow_worklog or project.status not in {"ACTIVE", "PRE_APPROVAL"}:
+        raise HTTPException(400, "PROJECT_NOT_FILLABLE")
+    expected_category = project_category_for_work_type(work_type)
+    if expected_category and project.project_type != expected_category:
+        raise HTTPException(400, "PROJECT_TYPE_NOT_MATCH_WORK_TYPE")
+    return project
+
+
+def worklog_approval_chain(db: Session, item: Worklog, submitter: User) -> list[tuple[User, str, str]]:
+    """生成工时审批链；返回审批人、节点名称、解析原因。"""
+    chain: list[tuple[User, str, str]] = []
+    if is_project_work_type(item.work_type):
+        project = db.get(Project, item.project_id) if item.project_id else None
+        if not project:
+            raise HTTPException(400, "PROJECT_REQUIRED")
+        owner = active_user_or_none(db, project.owner_user_id)
+        if not owner:
+            raise HTTPException(400, "PROJECT_OWNER_MISSING")
+        project_approver = approver_for_project(db, project)
+        owner_reason = "项目负责人"
+        if owner.id == submitter.id:
+            owner, owner_reason = reroute_project_self_approver(
+                db,
+                project,
+                submitter,
+                self_role="项目负责人",
+                preferred_project_approver=project_approver,
+            )
+        if project_approver.id == submitter.id:
+            project_approver, reason = reroute_project_self_approver(
+                db,
+                project,
+                submitter,
+                self_role="项目审批人",
+            )
+        else:
+            reason = "项目审批人"
+        chain = [(owner, "项目负责人审批", owner_reason), (project_approver, "项目审批人审批", reason)]
+    else:
+        prefer_market = item.work_type in {"DEMO_PROMOTION_WORK", "MARKETING_WORK"}
+        manager = department_manager_for_user(db, submitter, prefer_market=prefer_market)
+        node_name = "市场部门负责人审批" if prefer_market else "部门负责人审批"
+        chain = [(manager, node_name, node_name)]
+
+    deduped: list[tuple[User, str, str]] = []
+    seen: set[int] = set()
+    for approver, step_name, reason in chain:
+        if approver.id in seen:
+            continue
+        seen.add(approver.id)
+        deduped.append((approver, step_name, reason))
+    if not deduped:
+        raise HTTPException(400, "APPROVER_MISSING")
+    return deduped
+
+
 def worklog_approval_detail_url(task_id: int) -> str:
     """生成工时审批任务详情深链，供飞书卡片在内置浏览器中直达单据。"""
     base = os.getenv("SYSTEM_PUBLIC_URL", "http://localhost:8088").rstrip("/")
@@ -4369,19 +4896,9 @@ def validate_worklog_dates(
         raise HTTPException(409, "WORKLOG_DATE_OVERLAP")
 
 
-def worklog_workday_count(start_date: date, end_date: date) -> int:
-    """计算包含首尾日期的工作日数量；当前工作日规则为周一至周五。"""
-    if end_date < start_date:
-        return 0
-    return sum(
-        (start_date + timedelta(days=offset)).weekday() < 5
-        for offset in range((end_date - start_date).days + 1)
-    )
-
-
-def validate_worklog_quantity(start_date: date, end_date: date, quantity: int) -> None:
-    """校验工时天数为日期区间内的工作日数量，禁止周末、小数或手工填写不一致的天数。"""
-    expected_days = worklog_workday_count(start_date, end_date)
+def validate_worklog_quantity(db: Session, start_date: date, end_date: date, quantity: int) -> None:
+    """校验工时天数为日期区间内的国家法定工作日数量，禁止手工填写不一致的天数。"""
+    expected_days = worklog_workday_count(db, start_date, end_date)
     if expected_days == 0:
         raise HTTPException(400, "WORKLOG_NO_WORKDAY")
     if quantity != expected_days:
@@ -4390,7 +4907,8 @@ def validate_worklog_quantity(start_date: date, end_date: date, quantity: int) -
 
 def validate_worklog_options(db: Session, stage: str, work_type: str, work_status: str) -> None:
     validate_config_option(db, "project_stage", stage)
-    validate_config_option(db, "work_type", work_type)
+    if work_type not in LEGACY_WORK_TYPE_VALUES:
+        validate_config_option(db, "work_type", work_type)
     validate_config_option(db, "work_status", work_status)
 
 
@@ -4398,7 +4916,7 @@ def task_view(db: Session, task: ApprovalTask) -> ApprovalTaskView:
     """组装审批任务、工时快照和最近通知。"""
     item = db.get(Worklog, task.worklog_id)
     notification = db.scalar(select(Notification).where(Notification.approval_task_id == task.id).order_by(Notification.id.desc()))
-    return ApprovalTaskView(id=task.id, worklog_id=task.worklog_id, version=task.version, serial_no=task.serial_no, submitter_user_id=task.submitter_user_id, approver_user_id=task.approver_user_id, status=task.status, comment=task.comment, submitted_at=task.submitted_at, processed_at=task.processed_at, processed_by=task.processed_by, worklog=worklog_view(item), notification=NotificationView.model_validate(notification) if notification else None)
+    return ApprovalTaskView(id=task.id, worklog_id=task.worklog_id, version=task.version, serial_no=task.serial_no, submitter_user_id=task.submitter_user_id, approver_user_id=task.approver_user_id, step_order=task.step_order, step_name=task.step_name, total_steps=task.total_steps, flow_type=task.flow_type, resolved_reason=task.resolved_reason, status=task.status, comment=task.comment, submitted_at=task.submitted_at, processed_at=task.processed_at, processed_by=task.processed_by, worklog=worklog_view(item), notification=NotificationView.model_validate(notification) if notification else None)
 
 
 def submit_item(db: Session, item: Worklog, user: User) -> ApprovalTaskView:
@@ -4408,22 +4926,22 @@ def submit_item(db: Session, item: Worklog, user: User) -> ApprovalTaskView:
     if item.status not in ["DRAFT", "REJECTED"]:
         raise HTTPException(409, "WORKLOG_READ_ONLY")
     validate_worklog_dates(db, item.user_id, item.start_date, item.end_date, item.id)
-    validate_worklog_quantity(item.start_date, item.end_date, item.quantity)
+    validate_worklog_quantity(db, item.start_date, item.end_date, item.quantity)
     validate_worklog_options(db, item.stage, item.work_type, item.work_status)
-    project = db.get(Project, item.project_id)
-    if not project or not project.allow_worklog or project.status != "ACTIVE":
-        raise HTTPException(400, "PROJECT_NOT_FILLABLE")
-    approver = resolve_approver(db, project, user)
+    project = worklog_project_for_payload(db, item.work_type, item.project_id)
+    chain = worklog_approval_chain(db, item, user)
+    approver, step_name, resolved_reason = chain[0]
     old_status = item.status
     item.status = "PENDING_APPROVAL"
     item.approver_user_id = approver.id
     item.approver_name_snapshot = approver.name
     item.approval_version = max(item.approval_version, 0) + 1
+    item.approval_flow_type = "PROJECT_TWO_STEP" if project else "DEPARTMENT_SINGLE"
     item.submitted_at = now_local()
     item.rejection_reason = None
     item.approval_comment = None
     db.flush()
-    task = ApprovalTask(worklog_id=item.id, version=item.approval_version, serial_no=f"WL-{item.submitted_at:%Y%m%d}-{item.id:04d}-V{item.approval_version}", submitter_user_id=item.user_id, approver_user_id=approver.id, status="PENDING", submitted_at=item.submitted_at)
+    task = ApprovalTask(worklog_id=item.id, version=item.approval_version, serial_no=f"WL-{item.submitted_at:%Y%m%d}-{item.id:04d}-V{item.approval_version}-S1", submitter_user_id=item.user_id, approver_user_id=approver.id, step_order=1, step_name=step_name, total_steps=len(chain), flow_type=item.approval_flow_type, resolved_reason=resolved_reason, status="PENDING", submitted_at=item.submitted_at)
     db.add(task)
     db.flush()
     audit(db, "approval_task", task.id, "SUBMIT", user.id, old_status, "PENDING_APPROVAL")
@@ -4431,6 +4949,42 @@ def submit_item(db: Session, item: Worklog, user: User) -> ApprovalTaskView:
     db.commit()
     db.refresh(task)
     return task_view(db, task)
+
+
+def create_next_worklog_task(db: Session, item: Worklog, current_task: ApprovalTask, actor: User, comment: str | None) -> ApprovalTask | None:
+    """当前节点通过后创建下一审批节点；没有下一节点时返回 None 表示流程结束。"""
+    submitter = db.get(User, item.user_id)
+    if not submitter:
+        raise HTTPException(400, "SUBMITTER_MISSING")
+    chain = worklog_approval_chain(db, item, submitter)
+    next_index = current_task.step_order
+    if next_index >= len(chain):
+        return None
+    approver, step_name, resolved_reason = chain[next_index]
+    submitted_at = now_local()
+    serial_date = item.submitted_at or submitted_at
+    item.approver_user_id = approver.id
+    item.approver_name_snapshot = approver.name
+    next_task = ApprovalTask(
+        worklog_id=item.id,
+        version=current_task.version,
+        serial_no=f"WL-{serial_date:%Y%m%d}-{item.id:04d}-V{current_task.version}-S{next_index + 1}",
+        submitter_user_id=item.user_id,
+        approver_user_id=approver.id,
+        step_order=next_index + 1,
+        step_name=step_name,
+        total_steps=len(chain),
+        flow_type=item.approval_flow_type,
+        resolved_reason=resolved_reason,
+        status="PENDING",
+        submitted_at=submitted_at,
+        comment=comment,
+    )
+    db.add(next_task)
+    db.flush()
+    notify_task(db, next_task, item, approver, submitter)
+    audit(db, "approval_task", next_task.id, "SUBMIT_NEXT", actor.id, "APPROVED", "PENDING_APPROVAL", step_name)
+    return next_task
 
 
 def withdraw_worklog_item(db: Session, item: Worklog, user: User) -> WorklogView:
@@ -4645,11 +5199,124 @@ def sync_org_users(x_demo_user_id: int | None = Header(default=None), db: Sessio
             user.email = record.email
             user.department_id = department.id if department else user.department_id
         user.employment_status = "ACTIVE" if record.is_active else "INACTIVE"
+        user.supervisor_feishu_user_id = record.leader_user_id or user.supervisor_feishu_user_id
+        user.supervisor_name = record.leader_name or user.supervisor_name
         user.snapshot_at = now_local()
+    db.flush()
+    users_by_feishu_id = {item.feishu_user_id: item for item in db.scalars(select(User)).all()}
+    users_by_open_id = {item.open_id: item for item in db.scalars(select(User).where(User.open_id.is_not(None))).all()}
+    users_by_name: dict[str, list[User]] = defaultdict(list)
+    for item in db.scalars(select(User)).all():
+        users_by_name[item.name].append(item)
+    for record in directory_users:
+        user = users_by_feishu_id.get(record.feishu_user_id) or (users_by_open_id.get(record.open_id) if record.open_id else None)
+        if not user:
+            continue
+        supervisor = None
+        if record.leader_user_id:
+            supervisor = users_by_feishu_id.get(record.leader_user_id) or users_by_open_id.get(record.leader_user_id)
+        if not supervisor and record.leader_name:
+            matches = [item for item in users_by_name.get(record.leader_name, []) if item.employment_status == "ACTIVE"]
+            supervisor = matches[0] if len(matches) == 1 else None
+        if supervisor and supervisor.id != user.id:
+            user.supervisor_user_id = supervisor.id
+            user.supervisor_name = supervisor.name
     synced_at = now_local()
     db.add(OrgSyncLog(status="SUCCESS", mode=feishu.mode, user_count=len(directory_users), department_count=len(directory_departments), added_user_count=added_user_count, updated_user_count=updated_user_count, added_department_count=added_department_count, updated_department_count=updated_department_count, duration_ms=round((time.perf_counter() - started_at) * 1000)))
     db.commit()
     return OrgSyncView(status="SUCCESS", mode=feishu.mode, user_count=len(directory_users), department_count=len(directory_departments), synced_at=synced_at)
+
+
+@app.get("/api/v1/admin/org-approval-config")
+def get_org_approval_config(x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
+    """后台维护部门负责人和人员直属上级，供非项目工时审批兜底。"""
+    require_access(db, "configuration", "VIEW", x_demo_user_id)
+    index = DepartmentIndex(db.scalars(select(Department)).all())
+    active_users = db.scalars(select(User).where(User.employment_status == "ACTIVE").order_by(User.name, User.id)).all()
+    users_by_id = {item.id: item for item in active_users}
+    departments = [
+        {
+            "id": item.id,
+            "name": item.name,
+            "path": index.path(item.id),
+            "manager_user_id": item.manager_user_id,
+            "manager_name": users_by_id.get(item.manager_user_id).name if item.manager_user_id in users_by_id else item.manager_name,
+            "is_active": item.is_active,
+        }
+        for item in sorted(index.departments, key=lambda row: (index.path(row.id), row.id))
+        if item.is_active
+    ]
+    market_setting = db.scalar(select(ConfigOption).where(ConfigOption.category == "approval_setting", ConfigOption.value == "MARKET_DEPARTMENT_ID"))
+    market_department_id = int(market_setting.label) if market_setting and market_setting.label.strip().isdigit() else None
+    users = [
+        {
+            "id": item.id,
+            "name": item.name,
+            "department_id": item.department_id,
+            "department_path": index.path(item.department_id) if item.department_id else "未分配部门",
+            "supervisor_user_id": item.supervisor_user_id,
+            "supervisor_name": users_by_id.get(item.supervisor_user_id).name if item.supervisor_user_id in users_by_id else item.supervisor_name,
+        }
+        for item in active_users
+    ]
+    return {"departments": departments, "users": users, "market_department_id": market_department_id}
+
+
+@app.patch("/api/v1/admin/org-approval-config/market-department")
+def update_market_department(payload: dict[str, int | None], x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
+    """设置观摩推广/市场营销工时的审批部门。"""
+    actor = require_access(db, "configuration", "EDIT", x_demo_user_id)
+    department_id = payload.get("department_id")
+    department = db.get(Department, int(department_id)) if department_id else None
+    if department_id and not department:
+        raise HTTPException(404, "DEPARTMENT_NOT_FOUND")
+    setting = db.scalar(select(ConfigOption).where(ConfigOption.category == "approval_setting", ConfigOption.value == "MARKET_DEPARTMENT_ID"))
+    if not setting:
+        setting = ConfigOption(category="approval_setting", value="MARKET_DEPARTMENT_ID", label=str(department.id if department else ""), sort_order=1, is_active=True, is_builtin=True)
+        db.add(setting)
+        db.flush()
+    old_value = setting.label
+    setting.label = str(department.id if department else "")
+    audit(db, "config_option", setting.id or 0, "SET_MARKET_DEPARTMENT", actor.id, old_value, setting.label, department.name if department else "未设置")
+    db.commit()
+    return {"market_department_id": department.id if department else None, "market_department_name": department.name if department else None}
+
+
+@app.patch("/api/v1/admin/departments/{department_id}/manager")
+def update_department_manager(department_id: int, payload: dict[str, int | None], x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
+    """设置部门负责人；负责人本人填报时会继续转直属上级审批。"""
+    actor = require_access(db, "configuration", "EDIT", x_demo_user_id)
+    department = db.get(Department, department_id)
+    if not department:
+        raise HTTPException(404, "DEPARTMENT_NOT_FOUND")
+    manager_user_id = payload.get("manager_user_id")
+    manager = active_user_or_none(db, int(manager_user_id)) if manager_user_id else None
+    old_name = department.manager_name
+    department.manager_user_id = manager.id if manager else None
+    department.manager_name = manager.name if manager else None
+    audit(db, "department", department.id, "SET_MANAGER", actor.id, old_name, department.manager_name, department.name)
+    db.commit()
+    return {"id": department.id, "manager_user_id": department.manager_user_id, "manager_name": department.manager_name}
+
+
+@app.patch("/api/v1/admin/users/{user_id}/supervisor")
+def update_user_supervisor(user_id: int, payload: dict[str, int | None], x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
+    """设置人员直属上级，作为本人就是审批人时的转交人。"""
+    actor = require_access(db, "configuration", "EDIT", x_demo_user_id)
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "USER_NOT_FOUND")
+    supervisor_user_id = payload.get("supervisor_user_id")
+    supervisor = active_user_or_none(db, int(supervisor_user_id)) if supervisor_user_id else None
+    if supervisor and supervisor.id == user.id:
+        raise HTTPException(400, "SUPERVISOR_CANNOT_BE_SELF")
+    old_name = user.supervisor_name
+    user.supervisor_user_id = supervisor.id if supervisor else None
+    user.supervisor_name = supervisor.name if supervisor else None
+    user.supervisor_feishu_user_id = supervisor.feishu_user_id if supervisor else None
+    audit(db, "user", user.id, "SET_SUPERVISOR", actor.id, old_name, user.supervisor_name, user.name)
+    db.commit()
+    return {"id": user.id, "supervisor_user_id": user.supervisor_user_id, "supervisor_name": user.supervisor_name}
 
 
 def role_view(db: Session, role: Role) -> RoleView:
@@ -5384,12 +6051,13 @@ def create_project(payload: ProjectCreate, x_demo_user_id: int | None = Header(d
     """新增项目；所有人员字段必须引用启用的组织用户。"""
     user = require_admin_permission(db, "projects", x_demo_user_id)
     require_access(db, "projects", "CREATE", x_demo_user_id)
-    if db.scalar(select(Project).where(Project.code == payload.code)):
-        raise HTTPException(409, "PROJECT_CODE_EXISTS")
     validate_config_option(db, "project_status", payload.status)
     major, sub_category = resolve_project_classification(db, payload.project_type, payload.project_sub_category)
+    code = (payload.code or "").strip() or next_project_code(db, major)
+    if db.scalar(select(Project).where(Project.code == code)):
+        raise HTTPException(409, "PROJECT_CODE_EXISTS")
     department = active_org_department(db, payload.department_id)
-    project = Project(code=payload.code, name=payload.name, project_type=major, project_sub_category=sub_category, owner_name="", department_id=department.id, department_name=department.name, budget_days=payload.budget_days, budget_cost=payload.budget_cost, expense_budget=0, status=payload.status, allow_worklog=payload.allow_worklog)
+    project = Project(code=code, name=payload.name, project_type=major, project_sub_category=sub_category, owner_name="", department_id=department.id, department_name=department.name, budget_days=payload.budget_days, budget_cost=payload.budget_cost, expense_budget=0, status=payload.status, allow_worklog=payload.allow_worklog)
     apply_project_master_fields(project, db, payload)
     apply_project_users(project, db, payload.owner_user_id, payload.approver_user_id, payload.leader_user_id)
     db.add(project)
@@ -6024,6 +6692,90 @@ def update_project(project_id: int, payload: ProjectUpdate, x_demo_user_id: int 
         # 项目大类切换后按新大类的模板补齐预算项，已有预算金额保持不变。
         ensure_project_budget_items(db, project)
     audit(db, "project", project.id, "UPDATE", user.id, old_status, project.status)
+    db.commit()
+    db.refresh(project)
+    return project_view(db, project)
+
+
+@app.get("/api/v1/projects/{project_id}/worklogs/convert-to-management/preview")
+def preview_pre_approval_worklog_conversion(project_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
+    """预览预立项项目可转换为管理工时的记录数量和人天。"""
+    user = require_access(db, "projects", "VIEW", x_demo_user_id)
+    project = ensure_project_in_scope(db, user, project_id)
+    rows = db.scalars(select(Worklog).where(Worklog.project_id == project.id, Worklog.work_type.in_(PRE_APPROVAL_CONVERTIBLE_WORK_TYPES))).all()
+    status_counts: dict[str, int] = defaultdict(int)
+    total_days = 0.0
+    for row in rows:
+        status_counts[row.status] += 1
+        total_days += float(row.quantity)
+    return {
+        "project_id": project.id,
+        "project_name": project.name,
+        "convertible_count": len(rows),
+        "total_days": round(total_days, 2),
+        "status_counts": dict(status_counts),
+    }
+
+
+@app.post("/api/v1/projects/{project_id}/worklogs/convert-to-management")
+def convert_pre_approval_worklogs_to_management(project_id: int, payload: dict[str, str] | None = None, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
+    """将预立项项目工时批量转为管理工时；可在任意项目状态执行，转换过程写入审计。"""
+    user = require_access(db, "projects", "EDIT", x_demo_user_id)
+    require_access(db, "worklogs", "EDIT", x_demo_user_id)
+    project = ensure_project_in_scope(db, user, project_id)
+    reason = ((payload or {}).get("reason") or "预立项未成功，转为管理工时").strip()
+    rows = db.scalars(select(Worklog).where(Worklog.project_id == project.id, Worklog.work_type.in_(PRE_APPROVAL_CONVERTIBLE_WORK_TYPES))).all()
+    converted = 0
+    closed_tasks = 0
+    now = now_local()
+    for item in rows:
+        old_status = item.status
+        pending_tasks = db.scalars(select(ApprovalTask).where(ApprovalTask.worklog_id == item.id, ApprovalTask.status == "PENDING")).all()
+        for task in pending_tasks:
+            task.status = "WITHDRAWN"
+            task.comment = "预立项工时转管理工时"
+            task.processed_at = now
+            task.processed_by = user.id
+            closed_tasks += 1
+        item.converted_from_project_id = item.project_id
+        item.converted_from_project_name = item.project_name_snapshot
+        item.converted_at = now
+        item.converted_by = user.id
+        item.conversion_reason = reason
+        item.project_id = None
+        item.project_name_snapshot = "管理工时"
+        item.work_type = "MANAGEMENT_WORK"
+        item.stage = "管理"
+        item.approval_flow_type = "DEPARTMENT_SINGLE" if item.status == "PENDING_APPROVAL" else item.approval_flow_type
+        if item.status in {"PENDING_APPROVAL", "REJECTED"}:
+            item.status = "DRAFT"
+            item.approver_user_id = None
+            item.approver_name_snapshot = None
+            item.submitted_at = None
+            item.rejection_reason = None
+            item.approval_comment = None
+            item.last_notified_at = None
+        audit(db, "worklog", item.id, "CONVERT_TO_MANAGEMENT", user.id, old_status, item.status, f"{project.name} -> 管理工时；{reason}")
+        converted += 1
+    old_project_status = project.status
+    if project.status == "PRE_APPROVAL":
+        project.status = "PRE_APPROVAL_FAILED"
+        project.allow_worklog = False
+        audit(db, "project", project.id, "PRE_APPROVAL_FAILED", user.id, old_project_status, project.status, reason)
+    db.commit()
+    return {"project_id": project.id, "converted_count": converted, "closed_pending_tasks": closed_tasks, "project_status": project.status}
+
+
+@app.post("/api/v1/projects/{project_id}/pre-approval/fail", response_model=ProjectView)
+def mark_project_pre_approval_failed(project_id: int, payload: dict[str, str] | None = None, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ProjectView:
+    """只标记预立项失败，不自动转换工时；转换由单独按钮显式执行。"""
+    user = require_access(db, "projects", "EDIT", x_demo_user_id)
+    project = ensure_project_in_scope(db, user, project_id)
+    old_status = project.status
+    project.status = "PRE_APPROVAL_FAILED"
+    project.allow_worklog = False
+    reason = ((payload or {}).get("reason") or "预立项未成功").strip()
+    audit(db, "project", project.id, "PRE_APPROVAL_FAILED", user.id, old_status, project.status, reason)
     db.commit()
     db.refresh(project)
     return project_view(db, project)
@@ -6671,6 +7423,7 @@ def create_receipt(payload: ReceiptCreate, x_demo_user_id: int | None = Header(d
         project.name if project else "",
         float(receipt.amount or 0),
         user.name,
+        resend_sent=True,
     )
     db.commit()
     db.refresh(receipt)
@@ -6760,6 +7513,7 @@ def submit_receipt(receipt_id: int, x_demo_user_id: int | None = Header(default=
         project.name if project else "",
         float(receipt.amount or 0),
         user.name,
+        resend_sent=True,
     )
     db.commit()
     db.refresh(receipt)
@@ -7376,6 +8130,449 @@ def reverse_payment(payment_id: int, x_demo_user_id: int | None = Header(default
     return payment_view(db, payment, user.id)
 
 
+def month_bounds(period_month: str) -> tuple[date, date]:
+    """把 YYYY-MM 转为该月首尾日期，供台账与经营分析统一口径使用。"""
+    if not re.match(r"^\d{4}-\d{2}$", period_month):
+        raise HTTPException(400, "PERIOD_MONTH_INVALID")
+    year, month = [int(part) for part in period_month.split("-")]
+    start = date(year, month, 1)
+    end = date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1) - timedelta(days=1)
+    return start, end
+
+
+def shift_month(period_month: str, offset: int) -> str:
+    """返回指定月份偏移后的 YYYY-MM 字符串。"""
+    year, month = [int(part) for part in period_month.split("-")]
+    zero_based = year * 12 + month - 1 + offset
+    return f"{zero_based // 12:04d}-{zero_based % 12 + 1:02d}"
+
+
+def receipt_ledger_rows(
+    db: Session,
+    user: User,
+    *,
+    period_month: str,
+    project_id: int | None = None,
+    owner_user_id: int | None = None,
+    customer_id: int | None = None,
+    keyword: str | None = None,
+    status: str | None = None,
+    limit_risk: int | None = None,
+) -> list[ReceiptPlanView]:
+    """生成回款台账行：收入合同是事实来源，计划表只补充月度计划字段。"""
+    start, end = month_bounds(period_month)
+    previous_month = shift_month(period_month, -1)
+    prev_start, prev_end = month_bounds(previous_month)
+    scope = project_scope_ids(db, user, "receipt_ledger")
+    query = select(Contract).where(Contract.contract_type == "INCOME", Contract.status != "TERMINATED").order_by(Contract.id.desc())
+    if scope is not None:
+        query = query.where(Contract.project_id.in_(scope))
+    if project_id:
+        query = query.where(Contract.project_id == project_id)
+    if customer_id:
+        query = query.where(Contract.counterparty_type == "CUSTOMER", Contract.counterparty_id == customer_id)
+    if owner_user_id:
+        query = query.where(Contract.project_id.in_(select(Project.id).where(Project.owner_user_id == owner_user_id)))
+    if keyword and keyword.strip():
+        value = keyword.strip()
+        query = query.where(
+            Contract.name.contains(value)
+            | Contract.contract_no.contains(value)
+            | Contract.counterparty_name.contains(value)
+            | Contract.project_id.in_(select(Project.id).where(Project.name.contains(value) | Project.code.contains(value)))
+        )
+    contracts = db.scalars(query).all()
+    contract_ids = [item.id for item in contracts]
+    plans = {item.contract_id: item for item in db.scalars(select(ReceiptPlan).where(ReceiptPlan.period_month == period_month, ReceiptPlan.contract_id.in_(contract_ids))).all()} if contract_ids else {}
+    prev_plans = {item.contract_id: item for item in db.scalars(select(ReceiptPlan).where(ReceiptPlan.period_month == previous_month, ReceiptPlan.contract_id.in_(contract_ids))).all()} if contract_ids else {}
+    rows: list[ReceiptPlanView] = []
+    for contract in contracts:
+        project = db.get(Project, contract.project_id)
+        customer = db.get(Customer, contract.counterparty_id) if contract.counterparty_type == "CUSTOMER" else None
+        stage_total = float(db.scalar(select(func.coalesce(func.sum(ContractStage.amount), 0)).where(ContractStage.contract_id == contract.id, ContractStage.status != "CANCELLED")) or 0)
+        receivable_amount = stage_total if stage_total > 0 else float(contract.amount or 0)
+        received_amount = float(db.scalar(select(func.coalesce(func.sum(Receipt.amount), 0)).where(Receipt.contract_id == contract.id, Receipt.status == "APPROVED")) or 0)
+        current_actual = float(db.scalar(select(func.coalesce(func.sum(Receipt.amount), 0)).where(Receipt.contract_id == contract.id, Receipt.status == "APPROVED", Receipt.receipt_date >= start, Receipt.receipt_date <= end)) or 0)
+        previous_actual = float(db.scalar(select(func.coalesce(func.sum(Receipt.amount), 0)).where(Receipt.contract_id == contract.id, Receipt.status == "APPROVED", Receipt.receipt_date >= prev_start, Receipt.receipt_date <= prev_end)) or 0)
+        overdue_stage_total = float(db.scalar(select(func.coalesce(func.sum(ContractStage.amount), 0)).where(ContractStage.contract_id == contract.id, ContractStage.status != "CANCELLED", ContractStage.planned_date.is_not(None), ContractStage.planned_date <= today_local())) or 0)
+        overdue_received = float(db.scalar(select(func.coalesce(func.sum(Receipt.amount), 0)).join(ContractStage, Receipt.stage_id == ContractStage.id).where(Receipt.contract_id == contract.id, Receipt.status == "APPROVED", ContractStage.planned_date.is_not(None), ContractStage.planned_date <= today_local())) or 0)
+        plan = plans.get(contract.id)
+        prev_plan = prev_plans.get(contract.id)
+        current_plan = float(plan.plan_amount or 0) if plan else 0
+        unreceived_amount = max(receivable_amount - received_amount, 0)
+        warning_tags: list[str] = []
+        if max(overdue_stage_total - overdue_received, 0) > 0:
+            warning_tags.append("逾期未收")
+        if current_plan > 0 and current_actual < current_plan and today_local() >= end - timedelta(days=5):
+            warning_tags.append("本月计划未完成")
+        if plan and plan.expected_finish_date and plan.expected_finish_date <= today_local() + timedelta(days=30) and unreceived_amount > 0:
+            warning_tags.append("临近完成未收")
+        if not plan and today_local().day >= 5:
+            warning_tags.append("本月计划未维护")
+        updater = db.get(User, plan.updated_by) if plan and plan.updated_by else None
+        row = ReceiptPlanView(
+            id=plan.id if plan else None,
+            period_month=period_month,
+            project_id=contract.project_id,
+            project_name=project.name if project else "",
+            project_code=project.code if project else None,
+            owner_name=project.owner_name if project else None,
+            department_name=project.department_name if project else None,
+            contract_id=contract.id,
+            contract_name=contract.name,
+            contract_no=contract.contract_no,
+            customer_name=customer.name if customer else contract.counterparty_name,
+            contract_amount=float(contract.amount or 0),
+            receivable_amount=round(receivable_amount, 2),
+            received_amount=round(received_amount, 2),
+            unreceived_amount=round(unreceived_amount, 2),
+            previous_plan_amount=round(float(prev_plan.plan_amount or 0), 2) if prev_plan else 0,
+            previous_actual_amount=round(previous_actual, 2),
+            current_plan_amount=round(current_plan, 2),
+            current_actual_amount=round(current_actual, 2),
+            completion_rate=round(current_actual / current_plan * 100, 1) if current_plan > 0 else None,
+            progress_note=plan.progress_note if plan else None,
+            expected_finish_date=plan.expected_finish_date if plan else None,
+            remark=plan.remark if plan else None,
+            updated_by_name=updater.name if updater else None,
+            updated_at=plan.updated_at if plan else None,
+            warning_tags=warning_tags,
+        )
+        if status == "UNRECEIVED" and row.unreceived_amount <= 0:
+            continue
+        if status == "COMPLETED" and row.unreceived_amount > 0:
+            continue
+        if status == "OVERDUE" and "逾期未收" not in warning_tags:
+            continue
+        rows.append(row)
+    if limit_risk:
+        rows = sorted(rows, key=lambda item: (0 if item.warning_tags else 1, -item.unreceived_amount))[:limit_risk]
+    return rows
+
+
+def receipt_ledger_summary(rows: list[ReceiptPlanView]) -> ReceiptLedgerSummary:
+    current_plan = round(sum(item.current_plan_amount for item in rows), 2)
+    current_actual = round(sum(item.current_actual_amount for item in rows), 2)
+    return ReceiptLedgerSummary(
+        contract_amount=round(sum(item.contract_amount for item in rows), 2),
+        receivable_amount=round(sum(item.receivable_amount for item in rows), 2),
+        received_amount=round(sum(item.received_amount for item in rows), 2),
+        unreceived_amount=round(sum(item.unreceived_amount for item in rows), 2),
+        current_plan_amount=current_plan,
+        current_actual_amount=current_actual,
+        completion_rate=round(current_actual / current_plan * 100, 1) if current_plan > 0 else None,
+        overdue_unreceived_amount=round(sum(item.unreceived_amount for item in rows if "逾期未收" in item.warning_tags), 2),
+    )
+
+
+def payment_plan_view(db: Session, plan: PaymentPlan) -> PaymentPlanView:
+    """返回付款计划展示对象，并对来源、收款方、状态做中文化。"""
+    project = db.get(Project, plan.project_id) if plan.project_id else None
+    contract = db.get(Contract, plan.contract_id) if plan.contract_id else None
+    stage = db.get(ContractStage, plan.contract_stage_id) if plan.contract_stage_id else None
+    department = db.get(Department, plan.department_id) if plan.department_id else None
+    handler = db.get(User, plan.handler_user_id) if plan.handler_user_id else None
+    creator = db.get(User, plan.created_by) if plan.created_by else None
+    source_labels = {"CONTRACT_STAGE": "支出合同阶段", "PROJECT_EXPENSE": "项目费用", "MANUAL": "手工计划"}
+    payee_labels = {"SUPPLIER": "供应商", "COMPANY": "公司", "EMPLOYEE": "员工", "EXTERNAL_PERSON": "外部个人", "OTHER": "其他"}
+    status_labels = {"DRAFT": "草稿", "SUBMITTED": "已列入计划", "CONVERTED": "已转付款", "CANCELLED": "已取消"}
+    return PaymentPlanView(
+        id=plan.id,
+        plan_no=plan.plan_no,
+        period_month=plan.period_month,
+        department_id=plan.department_id,
+        department_name=department.name if department else None,
+        handler_user_id=plan.handler_user_id,
+        handler_name=handler.name if handler else None,
+        payment_category=plan.payment_category,
+        source_type=plan.source_type,
+        source_label=source_labels.get(plan.source_type, plan.source_type),
+        project_id=plan.project_id,
+        project_name=project.name if project else None,
+        contract_id=plan.contract_id,
+        contract_name=contract.name if contract else None,
+        contract_stage_id=plan.contract_stage_id,
+        contract_stage_name=stage.name if stage else None,
+        payee_type=plan.payee_type,
+        payee_type_label=payee_labels.get(plan.payee_type, plan.payee_type),
+        payee_ref_id=plan.payee_ref_id,
+        payee_name_snapshot=plan.payee_name_snapshot,
+        payee_bank_snapshot=plan.payee_bank_snapshot,
+        payee_account_last4=plan.payee_account_last4,
+        planned_amount=float(plan.planned_amount or 0),
+        payment_method=plan.payment_method,
+        planned_pay_date=plan.planned_pay_date,
+        purpose=plan.purpose,
+        has_finance_material=plan.has_finance_material,
+        is_urgent=plan.is_urgent,
+        status=plan.status,
+        status_label=status_labels.get(plan.status, plan.status),
+        linked_document_type=plan.linked_document_type,
+        linked_document_id=plan.linked_document_id,
+        remark=plan.remark,
+        created_by_name=creator.name if creator else None,
+        created_at=plan.created_at,
+        updated_at=plan.updated_at,
+    )
+
+
+def payment_plan_summary(items: list[PaymentPlanView]) -> PaymentPlanSummary:
+    active = [item for item in items if item.status != "CANCELLED"]
+    return PaymentPlanSummary(
+        planned_amount=round(sum(item.planned_amount for item in active), 2),
+        current_month_amount=round(sum(item.planned_amount for item in active), 2),
+        urgent_amount=round(sum(item.planned_amount for item in active if item.is_urgent), 2),
+        contract_stage_amount=round(sum(item.planned_amount for item in active if item.source_type == "CONTRACT_STAGE"), 2),
+        project_expense_amount=round(sum(item.planned_amount for item in active if item.source_type == "PROJECT_EXPENSE"), 2),
+        personal_payee_amount=round(sum(item.planned_amount for item in active if item.payee_type in {"EMPLOYEE", "EXTERNAL_PERSON"}), 2),
+        converted_amount=round(sum(item.planned_amount for item in items if item.status == "CONVERTED"), 2),
+    )
+
+
+def apply_payment_plan_payload(db: Session, plan: PaymentPlan, payload: PaymentPlanCreate | PaymentPlanUpdate) -> None:
+    """写入付款计划并按来源执行必填/一致性校验；不创建审批或通知。"""
+    project_id = payload.project_id
+    contract_id = payload.contract_id
+    stage_id = payload.contract_stage_id
+    if payload.source_type == "CONTRACT_STAGE":
+        contract = resolve_contract(db, payload.contract_id or 0)
+        if contract.contract_type != "EXPENSE":
+            raise HTTPException(400, "PAYMENT_PLAN_CONTRACT_TYPE_MISMATCH")
+        stage = resolve_contract_stage(db, payload.contract_stage_id, contract.id)
+        project_id = contract.project_id
+        contract_id = contract.id
+        stage_id = stage.id if stage else None
+    elif payload.source_type == "PROJECT_EXPENSE":
+        contract_id = None
+        stage_id = None
+    else:
+        if contract_id:
+            contract = resolve_contract(db, contract_id)
+            project_id = project_id or contract.project_id
+            stage = resolve_contract_stage(db, stage_id, contract.id) if stage_id else None
+            stage_id = stage.id if stage else None
+    if project_id:
+        project = db.get(Project, project_id)
+        if not project or project.status == "DELETED":
+            raise HTTPException(404, "PROJECT_NOT_FOUND")
+    account = (payload.payee_account or "").strip()
+    plan.period_month = payload.period_month
+    plan.department_id = payload.department_id
+    plan.handler_user_id = payload.handler_user_id
+    plan.payment_category = payload.payment_category
+    plan.source_type = payload.source_type
+    plan.project_id = project_id
+    plan.contract_id = contract_id
+    plan.contract_stage_id = stage_id
+    plan.payee_type = payload.payee_type
+    plan.payee_ref_id = payload.payee_ref_id
+    plan.payee_name_snapshot = payload.payee_name_snapshot
+    plan.payee_bank_snapshot = payload.payee_bank_snapshot
+    plan.payee_account = account or None
+    plan.payee_account_last4 = account[-4:] if account else None
+    plan.planned_amount = payload.planned_amount
+    plan.payment_method = payload.payment_method or "银行转账"
+    plan.planned_pay_date = payload.planned_pay_date
+    plan.purpose = payload.purpose
+    plan.has_finance_material = payload.has_finance_material
+    plan.is_urgent = payload.is_urgent
+    plan.status = payload.status
+    plan.remark = payload.remark
+
+
+@app.get("/api/v1/receipt-ledger", response_model=ReceiptLedgerList)
+def list_receipt_ledger(
+    period_month: str = Query(default_factory=lambda: today_local().strftime("%Y-%m")),
+    project_id: int | None = Query(default=None, gt=0),
+    owner_user_id: int | None = Query(default=None, gt=0),
+    customer_id: int | None = Query(default=None, gt=0),
+    keyword: str | None = None,
+    status: str | None = None,
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> ReceiptLedgerList:
+    user = require_admin_permission(db, "receipt_ledger", x_demo_user_id)
+    rows = receipt_ledger_rows(db, user, period_month=period_month, project_id=project_id, owner_user_id=owner_user_id, customer_id=customer_id, keyword=keyword, status=status)
+    return ReceiptLedgerList(items=rows, summary=receipt_ledger_summary(rows))
+
+
+@app.post("/api/v1/receipt-ledger/plans", response_model=ReceiptPlanView)
+def upsert_receipt_plan(payload: ReceiptPlanUpsert, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ReceiptPlanView:
+    user = require_admin_permission(db, "receipt_ledger", x_demo_user_id)
+    contract = resolve_contract(db, payload.contract_id)
+    if contract.contract_type != "INCOME":
+        raise HTTPException(400, "RECEIPT_PLAN_CONTRACT_TYPE_MISMATCH")
+    scope = project_scope_ids(db, user, "receipt_ledger")
+    if scope is not None and contract.project_id not in scope:
+        raise HTTPException(403, "PROJECT_OUT_OF_SCOPE")
+    plan = db.scalar(select(ReceiptPlan).where(ReceiptPlan.period_month == payload.period_month, ReceiptPlan.contract_id == contract.id))
+    require_access(db, "receipt_ledger", "EDIT" if plan else "CREATE", x_demo_user_id)
+    is_new = plan is None
+    if not plan:
+        plan = ReceiptPlan(period_month=payload.period_month, project_id=contract.project_id, contract_id=contract.id)
+        db.add(plan)
+    plan.project_id = contract.project_id
+    plan.plan_amount = payload.plan_amount
+    plan.progress_note = payload.progress_note
+    plan.expected_finish_date = payload.expected_finish_date
+    plan.remark = payload.remark
+    plan.updated_by = user.id
+    db.flush()
+    audit(db, "receipt_plan", plan.id, "CREATE" if is_new else "UPDATE", user.id, None, "SAVED")
+    db.commit()
+    rows = receipt_ledger_rows(db, user, period_month=payload.period_month, project_id=contract.project_id)
+    return next(item for item in rows if item.contract_id == contract.id)
+
+
+@app.delete("/api/v1/receipt-ledger/plans/{plan_id}")
+def delete_receipt_plan(plan_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
+    user = require_admin_permission(db, "receipt_ledger", x_demo_user_id)
+    require_access(db, "receipt_ledger", "DELETE", x_demo_user_id)
+    plan = db.get(ReceiptPlan, plan_id)
+    if not plan:
+        raise HTTPException(404, "RECEIPT_PLAN_NOT_FOUND")
+    scope = project_scope_ids(db, user, "receipt_ledger")
+    if scope is not None and plan.project_id not in scope:
+        raise HTTPException(403, "PROJECT_OUT_OF_SCOPE")
+    db.delete(plan)
+    audit(db, "receipt_plan", plan.id, "DELETE", user.id, "SAVED", None)
+    db.commit()
+    return {"deleted": True, "plan_id": plan_id}
+
+def payment_plan_items(
+    db: Session,
+    user: User,
+    *,
+    period_month: str,
+    resource: str,
+    project_id: int | None = None,
+    source_type: str | None = None,
+    payee_type: str | None = None,
+    status: str | None = None,
+    keyword: str | None = None,
+) -> list[PaymentPlanView]:
+    """按指定资源的数据范围查询付款计划；供 HTTP 接口和经营分析内部复用。"""
+    scope = project_scope_ids(db, user, resource)
+    query = select(PaymentPlan).where(PaymentPlan.period_month == period_month).order_by(PaymentPlan.planned_pay_date.is_(None), PaymentPlan.planned_pay_date, PaymentPlan.id.desc())
+    if scope is not None:
+        query = query.where(or_(PaymentPlan.project_id.in_(scope), PaymentPlan.handler_user_id == user.id, PaymentPlan.created_by == user.id))
+    if project_id:
+        query = query.where(PaymentPlan.project_id == project_id)
+    if source_type:
+        query = query.where(PaymentPlan.source_type == source_type)
+    if payee_type:
+        query = query.where(PaymentPlan.payee_type == payee_type)
+    if status:
+        query = query.where(PaymentPlan.status == status)
+    if keyword and keyword.strip():
+        value = keyword.strip()
+        query = query.where(PaymentPlan.plan_no.contains(value) | PaymentPlan.payee_name_snapshot.contains(value) | PaymentPlan.purpose.contains(value) | PaymentPlan.payment_category.contains(value))
+    return [payment_plan_view(db, item) for item in db.scalars(query).all()]
+
+
+@app.get("/api/v1/payment-plans", response_model=PaymentPlanList)
+def list_payment_plans(
+    period_month: str = Query(default_factory=lambda: today_local().strftime("%Y-%m")),
+    project_id: int | None = Query(default=None, gt=0),
+    source_type: str | None = None,
+    payee_type: str | None = None,
+    status: str | None = None,
+    keyword: str | None = None,
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> PaymentPlanList:
+    user = require_admin_permission(db, "payment_plan", x_demo_user_id)
+    items = payment_plan_items(
+        db,
+        user,
+        period_month=period_month,
+        resource="payment_plan",
+        project_id=project_id,
+        source_type=source_type,
+        payee_type=payee_type,
+        status=status,
+        keyword=keyword,
+    )
+    return PaymentPlanList(items=items, summary=payment_plan_summary(items))
+
+
+@app.post("/api/v1/payment-plans", response_model=PaymentPlanView, status_code=201)
+def create_payment_plan(payload: PaymentPlanCreate, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> PaymentPlanView:
+    user = require_admin_permission(db, "payment_plan", x_demo_user_id)
+    require_access(db, "payment_plan", "CREATE", x_demo_user_id)
+    plan = PaymentPlan(plan_no=next_document_no(db, PaymentPlan, "PLAN"), period_month=payload.period_month, payment_category=payload.payment_category, source_type=payload.source_type, payee_type=payload.payee_type, payee_name_snapshot=payload.payee_name_snapshot, planned_amount=payload.planned_amount, purpose=payload.purpose, created_by=user.id)
+    apply_payment_plan_payload(db, plan, payload)
+    scope = project_scope_ids(db, user, "payment_plan")
+    if scope is not None and plan.project_id and plan.project_id not in scope:
+        raise HTTPException(403, "PROJECT_OUT_OF_SCOPE")
+    db.add(plan)
+    db.flush()
+    audit(db, "payment_plan", plan.id, "CREATE", user.id, None, plan.status)
+    db.commit()
+    db.refresh(plan)
+    return payment_plan_view(db, plan)
+
+
+@app.patch("/api/v1/payment-plans/{plan_id}", response_model=PaymentPlanView)
+def update_payment_plan(plan_id: int, payload: PaymentPlanUpdate, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> PaymentPlanView:
+    user = require_admin_permission(db, "payment_plan", x_demo_user_id)
+    require_access(db, "payment_plan", "EDIT", x_demo_user_id)
+    plan = db.get(PaymentPlan, plan_id)
+    if not plan:
+        raise HTTPException(404, "PAYMENT_PLAN_NOT_FOUND")
+    if plan.status == "CONVERTED":
+        raise HTTPException(409, "PAYMENT_PLAN_CONVERTED_READ_ONLY")
+    scope = project_scope_ids(db, user, "payment_plan")
+    if scope is not None and plan.project_id and plan.project_id not in scope and plan.created_by != user.id and plan.handler_user_id != user.id:
+        raise HTTPException(403, "PROJECT_OUT_OF_SCOPE")
+    old_status = plan.status
+    apply_payment_plan_payload(db, plan, payload)
+    if scope is not None and plan.project_id and plan.project_id not in scope and plan.created_by != user.id and plan.handler_user_id != user.id:
+        raise HTTPException(403, "PROJECT_OUT_OF_SCOPE")
+    audit(db, "payment_plan", plan.id, "UPDATE", user.id, old_status, plan.status)
+    db.commit()
+    db.refresh(plan)
+    return payment_plan_view(db, plan)
+
+
+@app.delete("/api/v1/payment-plans/{plan_id}")
+def delete_payment_plan(plan_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, object]:
+    user = require_admin_permission(db, "payment_plan", x_demo_user_id)
+    require_access(db, "payment_plan", "DELETE", x_demo_user_id)
+    plan = db.get(PaymentPlan, plan_id)
+    if not plan:
+        raise HTTPException(404, "PAYMENT_PLAN_NOT_FOUND")
+    scope = project_scope_ids(db, user, "payment_plan")
+    if scope is not None and plan.project_id and plan.project_id not in scope and plan.created_by != user.id:
+        raise HTTPException(403, "PROJECT_OUT_OF_SCOPE")
+    plan.status = "CANCELLED"
+    audit(db, "payment_plan", plan.id, "DELETE", user.id, None, "CANCELLED")
+    db.commit()
+    return {"deleted": True, "plan_id": plan_id}
+
+
+@app.get("/api/v1/business-analysis", response_model=BusinessAnalysisView)
+def get_business_analysis(
+    period_month: str = Query(default_factory=lambda: today_local().strftime("%Y-%m")),
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> BusinessAnalysisView:
+    user = require_admin_permission(db, "business_analysis", x_demo_user_id)
+    receipt_rows = receipt_ledger_rows(db, user, period_month=period_month)
+    payment_items = payment_plan_items(db, user, period_month=period_month, resource="business_analysis")
+    trend: list[BusinessAnalysisTrendItem] = []
+    for offset in range(-5, 1):
+        month = shift_month(period_month, offset)
+        month_receipts = receipt_ledger_rows(db, user, period_month=month)
+        month_payments = payment_plan_items(db, user, period_month=month, resource="business_analysis")
+        receipt_summary = receipt_ledger_summary(month_receipts)
+        payment_summary = payment_plan_summary(month_payments)
+        trend.append(BusinessAnalysisTrendItem(period_month=month, receipt_plan_amount=receipt_summary.current_plan_amount, actual_receipt_amount=receipt_summary.current_actual_amount, payment_plan_amount=payment_summary.planned_amount, net_cash_flow=round(receipt_summary.current_actual_amount - payment_summary.planned_amount, 2)))
+    receipt_summary = receipt_ledger_summary(receipt_rows)
+    payment_summary = payment_plan_summary(payment_items)
+    return BusinessAnalysisView(period_month=period_month, receipt_summary=receipt_summary, payment_summary=payment_summary, net_cash_flow=round(receipt_summary.current_actual_amount - payment_summary.planned_amount, 2), trend=trend, risk_projects=receipt_ledger_rows(db, user, period_month=period_month, limit_risk=8), urgent_payments=[item for item in payment_items if item.is_urgent][:8])
+
+
 @app.get("/api/v1/worklogs", response_model=WorklogList)
 def list_worklogs(status: str | None = None, period_start: date | None = None, period_end: date | None = None, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> WorklogList:
     user = current_user(db, x_demo_user_id)
@@ -7390,9 +8587,119 @@ def list_worklogs(status: str | None = None, period_start: date | None = None, p
     return WorklogList(items=[worklog_view(item) for item in items], summary={"quantity": sum(float(item.quantity) for item in items), "count": len(items)})
 
 
+WORKLOG_CALENDAR_STATUS_LABELS = {
+    "FILLED": "已填报",
+    "APPROVED": "已通过",
+    "PENDING_APPROVAL": "审批中",
+    "DRAFT": "草稿",
+    "REJECTED": "已驳回",
+    "MISSING": "已过未填",
+    "TODAY_MISSING": "今日未填",
+    "HOLIDAY": "非工作日",
+    "FUTURE": "待填报",
+}
+WORKLOG_CALENDAR_STATUS_PRIORITY = {
+    "REJECTED": 5,
+    "DRAFT": 4,
+    "PENDING_APPROVAL": 3,
+    "APPROVED": 2,
+    "LOCKED": 2,
+}
+
+
+def calendar_month_range(month: str) -> tuple[date, date]:
+    """把 YYYY-MM 转为本月首尾日期，供工时日历接口使用。"""
+    if not re.fullmatch(r"\d{4}-\d{2}", month or ""):
+        raise HTTPException(400, "MONTH_FORMAT_INVALID")
+    year, month_number = (int(part) for part in month.split("-"))
+    if not 1 <= month_number <= 12:
+        raise HTTPException(400, "MONTH_FORMAT_INVALID")
+    start = date(year, month_number, 1)
+    end = date(year + (1 if month_number == 12 else 0), 1 if month_number == 12 else month_number + 1, 1) - timedelta(days=1)
+    return start, end
+
+
+@app.get("/api/v1/worklogs/calendar", response_model=WorklogCalendar)
+def worklog_calendar(month: str = Query(..., pattern=r"^\d{4}-\d{2}$"), x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> WorklogCalendar:
+    """返回当前用户月度工时日历，标记已填、漏填、今日待填和非工作日。"""
+    user = current_user(db, x_demo_user_id)
+    start, end = calendar_month_range(month)
+    today = today_local()
+    overrides = {
+        item.calendar_date: item
+        for item in db.scalars(select(WorkCalendarDay).where(WorkCalendarDay.calendar_date >= start, WorkCalendarDay.calendar_date <= end)).all()
+    }
+    worklog_rows = list(db.scalars(
+        select(Worklog)
+        .where(Worklog.user_id == user.id, Worklog.start_date <= end, Worklog.end_date >= start)
+        .order_by(Worklog.start_date.asc(), Worklog.id.asc())
+    ).all())
+    by_day: dict[date, Worklog] = {}
+    for item in worklog_rows:
+        cursor = max(item.start_date, start)
+        last = min(item.end_date, end)
+        while cursor <= last:
+            if is_statutory_workday(db, cursor):
+                existing = by_day.get(cursor)
+                if not existing or WORKLOG_CALENDAR_STATUS_PRIORITY.get(item.status, 1) > WORKLOG_CALENDAR_STATUS_PRIORITY.get(existing.status, 1):
+                    by_day[cursor] = item
+            cursor += timedelta(days=1)
+
+    days: list[WorklogCalendarDay] = []
+    summary = WorklogCalendarSummary()
+    cursor = start
+    while cursor <= end:
+        item = by_day.get(cursor)
+        is_workday = is_statutory_workday(db, cursor)
+        override = overrides.get(cursor)
+        status = "HOLIDAY"
+        if item:
+            status = item.status if item.status in WORKLOG_CALENDAR_STATUS_LABELS else "FILLED"
+            if status == "LOCKED":
+                status = "APPROVED"
+        elif is_workday and cursor < today:
+            status = "MISSING"
+        elif is_workday and cursor == today:
+            status = "TODAY_MISSING"
+        elif is_workday:
+            status = "FUTURE"
+
+        if is_workday:
+            summary.required_workdays += 1
+        if item:
+            summary.filled_days += 1
+            if item.status == "PENDING_APPROVAL":
+                summary.pending_count += 1
+            elif item.status == "REJECTED":
+                summary.rejected_count += 1
+            elif item.status == "DRAFT":
+                summary.draft_count += 1
+        elif status == "MISSING":
+            summary.missing_days += 1
+        elif status == "TODAY_MISSING":
+            summary.today_missing += 1
+
+        days.append(WorklogCalendarDay(
+            date=cursor,
+            day=cursor.day,
+            is_workday=is_workday,
+            is_today=cursor == today,
+            is_past=cursor < today,
+            has_worklog=item is not None,
+            status=status,
+            status_label=WORKLOG_CALENDAR_STATUS_LABELS.get(status, status),
+            worklog_id=item.id if item else None,
+            quantity=float(item.quantity or 0) if item else 0,
+            holiday_name=override.name if override else None,
+        ))
+        cursor += timedelta(days=1)
+    return WorklogCalendar(month=month, summary=summary, days=days)
+
+
 def admin_worklog_dataset(
     db: Session,
     *,
+    viewer: User | None = None,
     period_start: date | None = None,
     period_end: date | None = None,
     department_id: int | None = None,
@@ -7415,10 +8722,9 @@ def admin_worklog_dataset(
     department_options = department_index.options(department_index.with_ancestors(option_department_ids), active_only=False)
     selected_department_id = department_index.resolve(department_id, department_name)
     selected_department_ids = department_index.descendants(selected_department_id) if selected_department_id else set()
-    user_departments = {
-        user.id: (department_index.path(user.department_id) if user.department_id else "未分配部门")
-        for user in db.scalars(select(User)).all()
-    }
+    users = db.scalars(select(User)).all()
+    user_departments = {user.id: (department_index.path(user.department_id) if user.department_id else "未分配部门") for user in users}
+    user_department_ids = {user.id: user.department_id for user in users}
     query = select(Worklog).order_by(Worklog.fill_date.desc(), Worklog.start_date.desc(), Worklog.id.desc())
     if period_start:
         query = query.where(Worklog.fill_date >= period_start)
@@ -7431,9 +8737,20 @@ def admin_worklog_dataset(
     if status:
         query = query.where(Worklog.status == status)
     items = list(db.scalars(query).all())
+    if viewer:
+        scoped_project_ids, scoped_user_ids = worklog_scope_sets(db, viewer, "worklogs")
+        items = [item for item in items if worklog_in_scope(item, scoped_project_ids, scoped_user_ids)]
     keyword_value = keyword.strip().casefold() if keyword and keyword.strip() else ""
     if selected_department_ids:
-        items = [item for item in items if project_department_ids.get(item.project_id) in selected_department_ids]
+        items = [
+            item
+            for item in items
+            if (
+                project_department_ids.get(item.project_id) in selected_department_ids
+                if item.project_id
+                else user_department_ids.get(item.user_id) in selected_department_ids
+            )
+        ]
     if keyword_value:
         items = [item for item in items if keyword_value in " ".join((item.user_name_snapshot, item.project_name_snapshot, item.description, item.stage)).casefold()]
 
@@ -7444,6 +8761,330 @@ def admin_worklog_dataset(
         for task in tasks:
             latest_tasks.setdefault(task.worklog_id, task)
     return items, latest_tasks, user_departments, project_department_labels, department_options
+
+
+def parse_month_range(month: str | None) -> tuple[str, date, date]:
+    """把 YYYY-MM 月份转换为本地自然月起止日期；未传时默认当前月。"""
+    if month and month.strip():
+        try:
+            year_text, month_text = month.strip().split("-", 1)
+            start = date(int(year_text), int(month_text), 1)
+        except Exception as exc:
+            raise HTTPException(400, "INVALID_MONTH") from exc
+    else:
+        today = today_local()
+        start = date(today.year, today.month, 1)
+    if start.month == 12:
+        end = date(start.year + 1, 1, 1) - timedelta(days=1)
+    else:
+        end = date(start.year, start.month + 1, 1) - timedelta(days=1)
+    return start.strftime("%Y-%m"), start, end
+
+
+def option_label_map(db: Session, category: str) -> dict[str, str]:
+    """返回基础配置的 value -> label 映射，包含停用项以便历史数据仍可展示中文。"""
+    return {item.value: item.label for item in config_option_rows(db, category, active_only=False)}
+
+
+def monthly_ledger_dataset(
+    db: Session,
+    *,
+    viewer: User | None = None,
+    month: str | None = None,
+    project_keyword: str | None = None,
+    project_type: str | None = None,
+    project_status: str | None = None,
+    department_id: int | None = None,
+    department_name: str | None = None,
+    owner_user_id: int | None = None,
+) -> tuple[str, date, date, list[WorklogMonthlyLedgerItem], list[str]]:
+    """按项目聚合某个月的项目类工时，供月度台账列表和导出共用。"""
+    month_label, period_start, period_end = parse_month_range(month)
+    departments = db.scalars(select(Department)).all()
+    department_index = DepartmentIndex(departments)
+    selected_department_id = department_index.resolve(department_id, department_name)
+    selected_department_ids = department_index.descendants(selected_department_id) if selected_department_id else set()
+    project_type_labels = option_label_map(db, "project_category") | PROJECT_CATEGORY_LABELS
+    project_status_labels = option_label_map(db, "project_status")
+    project_query = select(Project).where(Project.status != "DELETED")
+    if project_type:
+        project_query = project_query.where(Project.project_type == project_type)
+    if project_status:
+        project_query = project_query.where(Project.status == project_status)
+    if owner_user_id:
+        project_query = project_query.where(Project.owner_user_id == owner_user_id)
+    if project_keyword and project_keyword.strip():
+        keyword = f"%{project_keyword.strip()}%"
+        project_query = project_query.where(or_(Project.name.like(keyword), Project.code.like(keyword)))
+    projects = list(db.scalars(project_query.order_by(Project.code, Project.id)).all())
+    scoped_project_ids: set[int] | None = None
+    scoped_user_ids: set[int] | None = None
+    if viewer:
+        scoped_project_ids, scoped_user_ids = worklog_scope_sets(db, viewer, "worklogs")
+    if selected_department_ids:
+        projects = [project for project in projects if project.department_id in selected_department_ids]
+    option_department_ids = {project.department_id for project in projects if project.department_id}
+    department_options = department_index.options(department_index.with_ancestors(option_department_ids), active_only=False)
+    project_ids = [project.id for project in projects]
+    if not project_ids:
+        return month_label, period_start, period_end, [], department_options
+    rows = list(
+        db.scalars(
+            select(Worklog).where(
+                Worklog.project_id.in_(project_ids),
+                Worklog.fill_date >= period_start,
+                Worklog.fill_date <= period_end,
+            )
+        ).all()
+    )
+    rows_by_project: dict[int, list[Worklog]] = defaultdict(list)
+    for row in rows:
+        if viewer and not worklog_in_scope(row, scoped_project_ids, scoped_user_ids):
+            continue
+        rows_by_project[row.project_id].append(row)
+    items: list[WorklogMonthlyLedgerItem] = []
+    for project in projects:
+        project_rows = rows_by_project.get(project.id, [])
+        if not project_rows:
+            continue
+        approved_days = round(sum(float(row.quantity) for row in project_rows if row.status in {"APPROVED", "LOCKED"}), 2)
+        pending_days = round(sum(float(row.quantity) for row in project_rows if row.status == "PENDING_APPROVAL"), 2)
+        rejected_days = round(sum(float(row.quantity) for row in project_rows if row.status == "REJECTED"), 2)
+        total_days = round(sum(float(row.quantity) for row in project_rows), 2)
+        items.append(
+            WorklogMonthlyLedgerItem(
+                project_id=project.id,
+                project_code=project.code,
+                project_name=project.name,
+                project_type=project.project_type,
+                project_type_name=project_type_labels.get(project.project_type, project.project_type),
+                project_status=project.status,
+                project_status_name=project_status_labels.get(project.status, project.status),
+                department_id=project.department_id,
+                department_name=department_index.path(project.department_id) if project.department_id else (project.department_name or "未分配部门"),
+                owner_user_id=project.owner_user_id,
+                owner_name=project.owner_name or "未配置",
+                user_count=len({row.user_id for row in project_rows}),
+                approved_days=approved_days,
+                pending_days=pending_days,
+                rejected_days=rejected_days,
+                total_days=total_days,
+            )
+        )
+    items.sort(key=lambda item: (-item.total_days, item.project_code, item.project_id))
+    return month_label, period_start, period_end, items, department_options
+
+
+@app.get("/api/v1/worklogs/monthly-ledger", response_model=WorklogMonthlyLedgerList)
+def list_worklog_monthly_ledger(
+    month: str | None = None,
+    project_keyword: str | None = None,
+    project_type: str | None = None,
+    project_status: str | None = None,
+    department_id: int | None = Query(default=None, gt=0),
+    department_name: str | None = None,
+    owner_user_id: int | None = Query(default=None, gt=0),
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> WorklogMonthlyLedgerList:
+    """按项目汇总月度工时，默认当前月。"""
+    user = require_admin_permission(db, "worklogs", x_demo_user_id)
+    month_label, _, _, items, department_options = monthly_ledger_dataset(
+        db,
+        viewer=user,
+        month=month,
+        project_keyword=project_keyword,
+        project_type=project_type,
+        project_status=project_status,
+        department_id=department_id,
+        department_name=department_name,
+        owner_user_id=owner_user_id,
+    )
+    return WorklogMonthlyLedgerList(
+        month=month_label,
+        total_projects=len(items),
+        total_days=round(sum(item.total_days for item in items), 2),
+        approved_days=round(sum(item.approved_days for item in items), 2),
+        pending_days=round(sum(item.pending_days for item in items), 2),
+        rejected_days=round(sum(item.rejected_days for item in items), 2),
+        items=items,
+        department_options=department_options,
+    )
+
+
+@app.get("/api/v1/worklogs/monthly-ledger/{project_id}/print", response_model=WorklogMonthlyLedgerPrintView)
+def get_worklog_monthly_ledger_print(
+    project_id: int,
+    month: str | None = None,
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> WorklogMonthlyLedgerPrintView:
+    """生成某项目某月已审批工时的人员汇总打印视图。"""
+    user = require_admin_permission(db, "worklogs", x_demo_user_id)
+    month_label, period_start, period_end = parse_month_range(month)
+    project = db.get(Project, project_id)
+    if not project or project.status == "DELETED":
+        raise HTTPException(404, "PROJECT_NOT_FOUND")
+
+    scoped_project_ids, scoped_user_ids = worklog_scope_sets(db, user, "worklogs")
+    source_rows = list(
+        db.scalars(
+            select(Worklog).where(
+                Worklog.project_id == project_id,
+                Worklog.fill_date >= period_start,
+                Worklog.fill_date <= period_end,
+                Worklog.status.in_(["APPROVED", "LOCKED"]),
+            )
+        ).all()
+    )
+    grouped: dict[int, dict[str, object]] = {}
+    for row in source_rows:
+        if not worklog_in_scope(row, scoped_project_ids, scoped_user_ids):
+            continue
+        summary = grouped.setdefault(
+            row.user_id,
+            {"user_id": row.user_id, "user_name": row.user_name_snapshot or "未命名人员", "quantity": 0.0},
+        )
+        summary["quantity"] = round(float(summary["quantity"]) + float(row.quantity), 2)
+
+    sorted_rows = sorted(grouped.values(), key=lambda item: (str(item["user_name"]), int(item["user_id"])))
+    rows = [
+        WorklogMonthlyLedgerPrintRow(
+            index=index,
+            user_id=int(item["user_id"]),
+            user_name=str(item["user_name"]),
+            quantity=round(float(item["quantity"]), 2),
+        )
+        for index, item in enumerate(sorted_rows, start=1)
+    ]
+    return WorklogMonthlyLedgerPrintView(
+        month=month_label,
+        project_id=project.id,
+        project_name=project.name,
+        project_owner_name=project.owner_name or "未配置",
+        printed_by_name=user.name,
+        printed_at=now_local(),
+        rows=rows,
+        total_quantity=round(sum(item.quantity for item in rows), 2),
+    )
+
+
+@app.get("/api/v1/worklogs/monthly-ledger/{project_id}/details", response_model=WorklogMonthlyLedgerDetailList)
+def list_worklog_monthly_ledger_details(
+    project_id: int,
+    month: str | None = None,
+    status: str | None = None,
+    user_id: int | None = Query(default=None, gt=0),
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> WorklogMonthlyLedgerDetailList:
+    """查看某项目某月的工时明细，供月度台账下钻使用。"""
+    user = require_admin_permission(db, "worklogs", x_demo_user_id)
+    month_label, period_start, period_end = parse_month_range(month)
+    project = db.get(Project, project_id)
+    if not project or project.status == "DELETED":
+        raise HTTPException(404, "PROJECT_NOT_FOUND")
+    items, latest_tasks, user_departments, project_department_labels, _ = admin_worklog_dataset(
+        db,
+        viewer=user,
+        period_start=period_start,
+        period_end=period_end,
+        project_id=project_id,
+        status=status,
+        user_id=user_id,
+    )
+    view_items = [
+        admin_worklog_view(
+            item,
+            latest_tasks[item.id].serial_no if item.id in latest_tasks else None,
+            user_departments.get(item.user_id, "未分配部门"),
+            project_department_labels.get(item.project_id, "未分配部门"),
+        )
+        for item in items
+    ]
+    return WorklogMonthlyLedgerDetailList(
+        month=month_label,
+        project_id=project.id,
+        project_name=project.name,
+        items=view_items,
+        summary={
+            "quantity": round(sum(float(item.quantity) for item in items), 2),
+            "approved_quantity": round(sum(float(item.quantity) for item in items if item.status in {"APPROVED", "LOCKED"}), 2),
+            "pending_quantity": round(sum(float(item.quantity) for item in items if item.status == "PENDING_APPROVAL"), 2),
+            "rejected_quantity": round(sum(float(item.quantity) for item in items if item.status == "REJECTED"), 2),
+            "count": len(items),
+        },
+    )
+
+
+@app.get("/api/v1/worklogs/monthly-ledger/export")
+def export_worklog_monthly_ledger(
+    mode: str = Query(default="summary", pattern="^(summary|details)$"),
+    month: str | None = None,
+    project_id: int | None = Query(default=None, gt=0),
+    project_keyword: str | None = None,
+    project_type: str | None = None,
+    project_status: str | None = None,
+    department_id: int | None = Query(default=None, gt=0),
+    department_name: str | None = None,
+    owner_user_id: int | None = Query(default=None, gt=0),
+    status: str | None = None,
+    user_id: int | None = Query(default=None, gt=0),
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """导出工时月度台账汇总或某项目明细。"""
+    user = require_access(db, "worklogs", "EXPORT", x_demo_user_id)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    if mode == "details":
+        if not project_id:
+            raise HTTPException(400, "PROJECT_REQUIRED")
+        details = list_worklog_monthly_ledger_details(project_id, month, status, user_id, x_demo_user_id, db)
+        writer.writerow(["项目", "月份", "工时单号", "填报人", "填报人部门", "项目部门", "项目阶段", "工时类型", "工作状态", "填报日期", "开始日期", "结束日期", "工时天数", "审批人", "审批状态", "工作描述"])
+        status_names = {"DRAFT": "草稿", "PENDING_APPROVAL": "审批中", "APPROVED": "已通过", "REJECTED": "已驳回", "LOCKED": "已锁定"}
+        work_type_names = option_label_map(db, "work_type") | {"PROJECT": "项目工时", "MANAGEMENT": "管理工时", "OTHER": "其它工时"}
+        work_status_names = option_label_map(db, "work_status") | {"LOCAL": "本地", "BUSINESS_TRIP": "出差", "REMOTE": "异地办公", "LEAVE": "休假"}
+        for item in details.items:
+            writer.writerow([
+                details.project_name,
+                details.month,
+                item.serial_no or "",
+                item.user_name_snapshot,
+                item.user_department_name,
+                item.project_department_name,
+                item.stage,
+                work_type_names.get(item.work_type, item.work_type),
+                work_status_names.get(item.work_status, item.work_status),
+                item.fill_date,
+                item.start_date,
+                item.end_date,
+                f"{float(item.quantity):g}",
+                item.approver_name_snapshot or "",
+                status_names.get(item.status, item.status),
+                item.description,
+            ])
+        filename = f"xinye-worklog-monthly-ledger-details-{details.month}-{project_id}.csv"
+    else:
+        ledger = list_worklog_monthly_ledger(month, project_keyword, project_type, project_status, department_id, department_name, owner_user_id, x_demo_user_id, db)
+        writer.writerow(["月份", "项目编号", "项目名称", "项目类型", "项目状态", "所属部门", "项目负责人", "本月填报人数", "本月审批通过人天", "本月审批中人天", "本月驳回人天", "本月合计填报人天"])
+        for item in ledger.items:
+            writer.writerow([
+                ledger.month,
+                item.project_code,
+                item.project_name,
+                item.project_type_name,
+                item.project_status_name,
+                item.department_name,
+                item.owner_name,
+                item.user_count,
+                f"{item.approved_days:g}",
+                f"{item.pending_days:g}",
+                f"{item.rejected_days:g}",
+                f"{item.total_days:g}",
+            ])
+        filename = f"xinye-worklog-monthly-ledger-summary-{ledger.month}.csv"
+    return StreamingResponse(iter([output.getvalue().encode("utf-8-sig")]), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.get("/api/v1/admin/worklogs", response_model=AdminWorklogList)
@@ -7462,7 +9103,7 @@ def list_admin_worklogs(
     db: Session = Depends(get_db),
 ) -> AdminWorklogList:
     """管理员分页查询全部工时，按日期、一级部门、填报人、状态和关键词筛选。"""
-    require_admin_permission(db, "worklogs", x_demo_user_id)
+    user = require_admin_permission(db, "worklogs", x_demo_user_id)
     if page < 1:
         raise HTTPException(400, "INVALID_PAGE")
     if page_size < 1 or page_size > 200:
@@ -7471,6 +9112,7 @@ def list_admin_worklogs(
         raise HTTPException(400, "INVALID_DATE_RANGE")
     items, latest_tasks, user_departments, project_department_labels, department_options = admin_worklog_dataset(
         db,
+        viewer=user,
         period_start=period_start,
         period_end=period_end,
         department_id=department_id,
@@ -7519,11 +9161,12 @@ def export_admin_worklogs(
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
     """导出工时台账明细 CSV；筛选条件与后台工时台账列表完全一致。"""
-    require_access(db, "worklogs", "EXPORT", x_demo_user_id)
+    user = require_access(db, "worklogs", "EXPORT", x_demo_user_id)
     if period_start and period_end and period_start > period_end:
         raise HTTPException(400, "INVALID_DATE_RANGE")
     items, latest_tasks, user_departments, project_department_labels, _ = admin_worklog_dataset(
         db,
+        viewer=user,
         period_start=period_start,
         period_end=period_end,
         department_id=department_id,
@@ -7534,8 +9177,8 @@ def export_admin_worklogs(
         keyword=keyword,
     )
     status_names = {"DRAFT": "草稿", "PENDING_APPROVAL": "审批中", "APPROVED": "已通过", "REJECTED": "已驳回", "LOCKED": "已锁定"}
-    work_type_names = {"PROJECT": "项目工时", "MANAGEMENT": "管理工时", "OTHER": "其它工时"}
-    work_status_names = {"LOCAL": "本地", "BUSINESS_TRIP": "出差", "REMOTE": "异地办公", "LEAVE": "休假"}
+    work_type_names = option_label_map(db, "work_type") | {"PROJECT": "项目工时", "MANAGEMENT": "管理工时", "OTHER": "其它工时"}
+    work_status_names = option_label_map(db, "work_status") | {"LOCAL": "本地", "BUSINESS_TRIP": "出差", "REMOTE": "异地办公", "LEAVE": "休假"}
     output = io.StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow(["工时单号", "填报人", "填报人部门", "项目部门", "项目", "项目阶段", "工时类型", "工作状态", "填报日期", "开始日期", "结束日期", "工时天数", "审批人", "审批状态", "工作描述", "提交时间", "处理时间", "审批意见"])
@@ -7576,15 +9219,14 @@ def update_admin_worklog(worklog_id: int, payload: WorklogUpdate, x_demo_user_id
     item = db.get(Worklog, worklog_id)
     if not item:
         raise HTTPException(404, "WORKLOG_NOT_FOUND")
-    project = db.get(Project, payload.project_id)
-    if not project or project.status == "DELETED" or not project.allow_worklog:
-        raise HTTPException(400, "PROJECT_NOT_FILLABLE")
+    ensure_worklog_in_scope(db, admin, item, "worklogs")
+    project = worklog_project_for_payload(db, payload.work_type, payload.project_id)
     validate_worklog_dates(db, item.user_id, payload.start_date, payload.end_date, item.id)
-    validate_worklog_quantity(payload.start_date, payload.end_date, payload.quantity)
+    validate_worklog_quantity(db, payload.start_date, payload.end_date, payload.quantity)
     validate_worklog_options(db, payload.stage, payload.work_type, payload.work_status)
     old_value = f"{item.project_name_snapshot}|{item.stage}|{item.fill_date}|{item.start_date}|{item.end_date}|{item.quantity}|{item.description}"
-    item.project_id = project.id
-    item.project_name_snapshot = project.name
+    item.project_id = project.id if project else None
+    item.project_name_snapshot = project.name if project else "非项目工时"
     item.stage = payload.stage
     item.work_type = payload.work_type
     item.work_status = payload.work_status
@@ -7598,14 +9240,14 @@ def update_admin_worklog(worklog_id: int, payload: WorklogUpdate, x_demo_user_id
     audit(db, "worklog", item.id, "ADMIN_UPDATE", admin.id, item.status, item.status, f"{old_value} -> {new_value}")
     db.commit()
     db.refresh(item)
-    project_departments = {project.id: project.department_name or "未分配部门"}
-    department = db.get(Department, project.department_id) if project.department_id else None
-    if department and department.parent_name:
+    project_departments = {project.id: project.department_name or "未分配部门"} if project else {0: "非项目工时"}
+    department = db.get(Department, project.department_id) if project and project.department_id else None
+    if project and department and department.parent_name:
         project_departments[project.id] = department.parent_name
     user = db.get(User, item.user_id)
     user_department = db.get(Department, user.department_id).name if user and user.department_id and db.get(Department, user.department_id) else "未分配部门"
     task = db.scalar(select(ApprovalTask).where(ApprovalTask.worklog_id == item.id).order_by(ApprovalTask.version.desc(), ApprovalTask.id.desc()))
-    return admin_worklog_view(item, task.serial_no if task else None, user_department, project_departments[project.id])
+    return admin_worklog_view(item, task.serial_no if task else None, user_department, project_departments.get(project.id if project else 0, "非项目工时"))
 
 
 @app.delete("/api/v1/admin/worklogs/{worklog_id}")
@@ -7616,6 +9258,7 @@ def delete_admin_worklog(worklog_id: int, x_demo_user_id: int | None = Header(de
     item = db.get(Worklog, worklog_id)
     if not item:
         raise HTTPException(404, "WORKLOG_NOT_FOUND")
+    ensure_worklog_in_scope(db, admin, item, "worklogs")
     old_status = item.status
     task_ids = [task.id for task in db.scalars(select(ApprovalTask).where(ApprovalTask.worklog_id == item.id)).all()]
     if task_ids:
@@ -7646,7 +9289,7 @@ def get_worklog_approval(worklog_id: int, x_demo_user_id: int | None = Header(de
     item = db.get(Worklog, worklog_id)
     if not item or item.user_id != user.id:
         raise HTTPException(404, "WORKLOG_NOT_FOUND")
-    task = db.scalar(select(ApprovalTask).where(ApprovalTask.worklog_id == item.id).order_by(ApprovalTask.version.desc()))
+    task = db.scalar(select(ApprovalTask).where(ApprovalTask.worklog_id == item.id).order_by(ApprovalTask.version.desc(), ApprovalTask.id.desc()))
     if not task:
         if item.status not in {"APPROVED", "LOCKED"}:
             raise HTTPException(404, "APPROVAL_NOT_FOUND")
@@ -7673,12 +9316,10 @@ def get_worklog_approval(worklog_id: int, x_demo_user_id: int | None = Header(de
 def create_worklog(payload: WorklogCreate, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> WorklogView:
     user = current_user(db, x_demo_user_id)
     validate_worklog_dates(db, user.id, payload.start_date, payload.end_date)
-    validate_worklog_quantity(payload.start_date, payload.end_date, payload.quantity)
+    validate_worklog_quantity(db, payload.start_date, payload.end_date, payload.quantity)
     validate_worklog_options(db, payload.stage, payload.work_type, payload.work_status)
-    project = db.get(Project, payload.project_id)
-    if not project or not project.allow_worklog or project.status != "ACTIVE":
-        raise HTTPException(400, "PROJECT_NOT_FILLABLE")
-    item = Worklog(user_id=user.id, user_name_snapshot=user.name, project_id=project.id, project_name_snapshot=project.name, stage=payload.stage, work_type=payload.work_type, work_status=payload.work_status, fill_date=payload.fill_date or payload.start_date, start_date=payload.start_date, end_date=payload.end_date, quantity=payload.quantity, unit=payload.unit, description=payload.description, status="DRAFT")
+    project = worklog_project_for_payload(db, payload.work_type, payload.project_id)
+    item = Worklog(user_id=user.id, user_name_snapshot=user.name, project_id=project.id if project else None, project_name_snapshot=project.name if project else "非项目工时", stage=payload.stage, work_type=payload.work_type, work_status=payload.work_status, fill_date=payload.fill_date or payload.start_date, start_date=payload.start_date, end_date=payload.end_date, quantity=payload.quantity, unit=payload.unit, description=payload.description, status="DRAFT")
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -7697,16 +9338,14 @@ def update_worklog(worklog_id: int, payload: WorklogUpdate, x_demo_user_id: int 
     if item.status not in ["DRAFT", "REJECTED"]:
         raise HTTPException(409, "WORKLOG_READ_ONLY")
     validate_worklog_dates(db, user.id, payload.start_date, payload.end_date, item.id)
-    validate_worklog_quantity(payload.start_date, payload.end_date, payload.quantity)
+    validate_worklog_quantity(db, payload.start_date, payload.end_date, payload.quantity)
     validate_worklog_options(db, payload.stage, payload.work_type, payload.work_status)
-    project = db.get(Project, payload.project_id)
-    if not project or not project.allow_worklog or project.status != "ACTIVE":
-        raise HTTPException(400, "PROJECT_NOT_FILLABLE")
-    for key, value in payload.model_dump(exclude={"fill_date"}).items():
+    project = worklog_project_for_payload(db, payload.work_type, payload.project_id)
+    for key, value in payload.model_dump(exclude={"fill_date", "project_id"}).items():
         setattr(item, key, value)
     item.fill_date = payload.fill_date or payload.start_date
-    item.project_id = project.id
-    item.project_name_snapshot = project.name
+    item.project_id = project.id if project else None
+    item.project_name_snapshot = project.name if project else "非项目工时"
     db.commit()
     db.refresh(item)
     return worklog_view(item)
@@ -7765,6 +9404,54 @@ def processed_approvals(x_demo_user_id: int | None = Header(default=None), db: S
     return [task_view(db, task) for task in tasks]
 
 
+@app.post("/api/v1/approvals/batch-approve", response_model=BatchApprovalResult)
+def batch_approve_tasks(payload: BatchApprovalRequest, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> BatchApprovalResult:
+    """批量通过工时审批；逐条复用单条审批逻辑，保留二级流转、通知和审计。"""
+    current_user(db, x_demo_user_id)
+    require_access(db, "approvals", "APPROVE", x_demo_user_id)
+    results: list[BatchApprovalResultItem] = []
+    for task_id in dict.fromkeys(payload.task_ids):
+        try:
+            task = db.get(ApprovalTask, task_id)
+            if not task:
+                raise HTTPException(404, "APPROVAL_NOT_FOUND")
+            view = approve_task(task_id, ApprovalAction(version=task.version, comment=payload.comment), x_demo_user_id, db)
+            results.append(BatchApprovalResultItem(task_id=task_id, success=True, worklog_id=view.worklog_id, status=view.worklog.status))
+        except HTTPException as exc:
+            db.rollback()
+            results.append(BatchApprovalResultItem(task_id=task_id, success=False, message=str(exc.detail)))
+        except Exception as exc:
+            db.rollback()
+            logger.exception("batch approve task failed: %s", task_id)
+            results.append(BatchApprovalResultItem(task_id=task_id, success=False, message=str(exc)))
+    success_count = sum(1 for item in results if item.success)
+    return BatchApprovalResult(success_count=success_count, failed_count=len(results) - success_count, results=results)
+
+
+@app.post("/api/v1/approvals/batch-reject", response_model=BatchApprovalResult)
+def batch_reject_tasks(payload: BatchRejectionRequest, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> BatchApprovalResult:
+    """批量驳回工时审批；每条审批记录写入同一个驳回原因。"""
+    current_user(db, x_demo_user_id)
+    require_access(db, "approvals", "APPROVE", x_demo_user_id)
+    results: list[BatchApprovalResultItem] = []
+    for task_id in dict.fromkeys(payload.task_ids):
+        try:
+            task = db.get(ApprovalTask, task_id)
+            if not task:
+                raise HTTPException(404, "APPROVAL_NOT_FOUND")
+            view = reject_task(task_id, RejectionAction(version=task.version, reason=payload.reason), x_demo_user_id, db)
+            results.append(BatchApprovalResultItem(task_id=task_id, success=True, worklog_id=view.worklog_id, status=view.worklog.status))
+        except HTTPException as exc:
+            db.rollback()
+            results.append(BatchApprovalResultItem(task_id=task_id, success=False, message=str(exc.detail)))
+        except Exception as exc:
+            db.rollback()
+            logger.exception("batch reject task failed: %s", task_id)
+            results.append(BatchApprovalResultItem(task_id=task_id, success=False, message=str(exc)))
+    success_count = sum(1 for item in results if item.success)
+    return BatchApprovalResult(success_count=success_count, failed_count=len(results) - success_count, results=results)
+
+
 @app.get("/api/v1/approvals/{task_id}", response_model=ApprovalTaskView)
 def get_approval(task_id: int, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> ApprovalTaskView:
     user = current_user(db, x_demo_user_id)
@@ -7798,14 +9485,21 @@ def approve_task(task_id: int, payload: ApprovalAction, x_demo_user_id: int | No
     task.comment = payload.comment
     task.processed_at = now_local()
     task.processed_by = user.id
-    item.status = "APPROVED"
-    item.approved_at = task.processed_at
-    item.approval_comment = payload.comment
+    next_task = create_next_worklog_task(db, item, task, user, payload.comment)
+    if next_task:
+        item.status = "PENDING_APPROVAL"
+        item.approval_comment = payload.comment
+    else:
+        item.status = "APPROVED"
+        item.approved_at = task.processed_at
+        item.approver_user_id = user.id
+        item.approver_name_snapshot = user.name
+        item.approval_comment = payload.comment
     # v3.0.61 起工时审批只推进审批状态，不再折算人员成本、不再写 PERSONNEL_COST 流水；
     # 人工成本统一由财务按项目 + 核算月份录入并走一级费用复核。
     db.commit()
-    db.refresh(task)
-    return task_view(db, task)
+    db.refresh(next_task or task)
+    return task_view(db, next_task or task)
 
 
 @app.post("/api/v1/approvals/{task_id}/reject", response_model=ApprovalTaskView)
@@ -7868,9 +9562,13 @@ def workload_report(
     period_end: date | None = None,
     department_id: int | None = Query(default=None, gt=0),
     department_name: str | None = None,
+    user_id: int | None = None,
+    project_id: int | None = None,
+    work_type: str | None = None,
+    status: str | None = None,
     db: Session = Depends(get_db),
 ) -> ReportView:
-    """按日期和部门树汇总看板数据；选择部门会包含其全部下级部门。"""
+    """按日期、部门树、人员、项目、工时类型和审批状态汇总工时看板数据。"""
     start = period_start or today_local().replace(day=1)
     end = period_end or today_local()
     if start > end:
@@ -7879,19 +9577,71 @@ def workload_report(
     department_index = DepartmentIndex(db.scalars(select(Department)).all())
     projects = db.scalars(select(Project)).all()
     projects_by_id = {item.id: item for item in projects}
+    users = db.scalars(select(User)).all()
+    user_department_ids = {item.id: item.department_id for item in users}
 
     project_department = {project.id: department_index.root_name(project.department_id) if project.department_id else "未分配部门" for project in projects}
     project_department_ids = {project.id: project.department_id for project in projects}
-    project_ids_with_departments = {project.department_id for project in projects if project.status != "DELETED" and project.department_id}
-    department_options = department_index.options(department_index.with_ancestors(project_ids_with_departments), active_only=False)
+    user_department = {user.id: department_index.root_name(user.department_id) if user.department_id else "未分配部门" for user in users}
+    work_type_names = option_label_map(db, "work_type") | {"PROJECT": "项目工时", "MANAGEMENT": "管理工时", "OTHER": "其他工时"}
+    department_ids_with_data = {project.department_id for project in projects if project.status != "DELETED" and project.department_id} | {user.department_id for user in users if user.department_id}
+    department_options = department_index.options(department_index.with_ancestors(department_ids_with_data), active_only=False)
     selected_department_id = department_index.resolve(department_id, department_name)
     selected_department_ids = department_index.descendants(selected_department_id) if selected_department_id else set()
 
-    all_rows = db.scalars(select(Worklog).where(Worklog.start_date >= start, Worklog.end_date <= end)).all()
-    scoped_rows = [item for item in all_rows if item.unit == "DAY" and (not selected_department_ids or project_department_ids.get(item.project_id) in selected_department_ids)]
+    all_rows = db.scalars(select(Worklog).where(Worklog.start_date <= end, Worklog.end_date >= start)).all()
+    def worklog_department_id(item: Worklog) -> int | None:
+        return project_department_ids.get(item.project_id) if item.project_id else user_department_ids.get(item.user_id)
+
+    def worklog_department_name(item: Worklog) -> str:
+        return project_department.get(item.project_id) if item.project_id else user_department.get(item.user_id, "未分配部门")
+
+    scoped_rows_before_status = [
+        item for item in all_rows
+        if item.unit == "DAY"
+        and (not selected_department_ids or worklog_department_id(item) in selected_department_ids)
+        and (not user_id or item.user_id == user_id)
+        and (not project_id or item.project_id == project_id)
+        and (not work_type or item.work_type == work_type)
+    ]
+    scoped_rows = [item for item in scoped_rows_before_status if not status or item.status == status]
     approved_rows = [item for item in scoped_rows if item.status in {"APPROVED", "LOCKED"}]
-    scoped_projects = [project for project in projects if project.status != "DELETED" and (not selected_department_ids or project.department_id in selected_department_ids)]
+    scoped_projects = [project for project in projects if project.status != "DELETED" and (not selected_department_ids or project.department_id in selected_department_ids) and (not project_id or project.id == project_id)]
     scoped_project_ids = {project.id for project in scoped_projects}
+    eligible_users = [
+        item for item in users
+        if item.employment_status == "ACTIVE"
+        and (not selected_department_ids or item.department_id in selected_department_ids)
+        and (not user_id or item.id == user_id)
+    ]
+    if (project_id or work_type) and not user_id:
+        scoped_user_ids_before_status = {item.user_id for item in scoped_rows_before_status}
+        eligible_users = [item for item in eligible_users if item.id in scoped_user_ids_before_status]
+    eligible_user_ids = {item.id for item in eligible_users}
+    completion_end = min(end, today_local())
+    required_workdays: list[date] = []
+    if start <= completion_end:
+        cursor = start
+        while cursor <= completion_end:
+            if is_statutory_workday(db, cursor):
+                required_workdays.append(cursor)
+            cursor += timedelta(days=1)
+    required_user_days = len(required_workdays) * len(eligible_user_ids)
+    completion_statuses = {status} if status else {"PENDING_APPROVAL", "APPROVED", "LOCKED"}
+    filled_user_day_keys: set[tuple[int, date]] = set()
+    required_workday_set = set(required_workdays)
+    for item in scoped_rows:
+        if item.user_id not in eligible_user_ids or item.status not in completion_statuses:
+            continue
+        cursor = max(item.start_date, start)
+        last = min(item.end_date, completion_end)
+        while cursor <= last:
+            if cursor in required_workday_set and is_statutory_workday(db, cursor):
+                filled_user_day_keys.add((item.user_id, cursor))
+            cursor += timedelta(days=1)
+    filled_user_days = len(filled_user_day_keys)
+    missing_user_days = max(required_user_days - filled_user_days, 0)
+    fill_completion_rate = round(filled_user_days / required_user_days * 100, 1) if required_user_days else 0
     project_actual_days: dict[int, float] = defaultdict(float)
     department_actual_cost: dict[str, float] = defaultdict(float)
     pending_count = sum(1 for item in scoped_rows if item.status == "PENDING_APPROVAL")
@@ -7913,6 +9663,7 @@ def workload_report(
     by_work_type: dict[str, float] = {}
     by_work_type_unit: dict[tuple[str, str], float] = {}
     by_department: dict[str, float] = {}
+    by_project_kind: dict[str, float] = {}
     by_unit: dict[str, float] = {}
     by_project_unit: dict[tuple[str, str], float] = {}
     by_department_unit: dict[tuple[str, str], float] = {}
@@ -7920,21 +9671,25 @@ def workload_report(
     for item in approved_rows:
         quantity = float(item.quantity)
         unit = "DAY"
-        department = project_department.get(item.project_id, "未分配部门")
-        project_actual_days[item.project_id] += quantity
-        by_project[item.project_name_snapshot] = by_project.get(item.project_name_snapshot, 0) + quantity
-        project_stage_key = (item.project_name_snapshot, item.stage)
-        by_project_stage[project_stage_key] = by_project_stage.get(project_stage_key, 0) + quantity
-        project_stage_unit_key = (item.project_name_snapshot, item.stage, unit)
-        by_project_stage_unit[project_stage_unit_key] = by_project_stage_unit.get(project_stage_unit_key, 0) + quantity
-        by_stage[item.stage] = by_stage.get(item.stage, 0) + quantity
-        by_stage_unit[(item.stage, unit)] = by_stage_unit.get((item.stage, unit), 0) + quantity
+        department = worklog_department_name(item)
+        is_project_work = item.work_type in PROJECT_WORK_TYPES and item.project_id is not None
+        by_project_kind["项目类工时" if is_project_work else "非项目类工时"] = by_project_kind.get("项目类工时" if is_project_work else "非项目类工时", 0) + quantity
+        if is_project_work:
+            project_actual_days[item.project_id] += quantity
+            by_project[item.project_name_snapshot] = by_project.get(item.project_name_snapshot, 0) + quantity
+            project_stage_key = (item.project_name_snapshot, item.stage)
+            by_project_stage[project_stage_key] = by_project_stage.get(project_stage_key, 0) + quantity
+            project_stage_unit_key = (item.project_name_snapshot, item.stage, unit)
+            by_project_stage_unit[project_stage_unit_key] = by_project_stage_unit.get(project_stage_unit_key, 0) + quantity
+            by_stage[item.stage] = by_stage.get(item.stage, 0) + quantity
+            by_stage_unit[(item.stage, unit)] = by_stage_unit.get((item.stage, unit), 0) + quantity
         by_user[item.user_name_snapshot] = by_user.get(item.user_name_snapshot, 0) + quantity
         by_user_unit[(item.user_name_snapshot, unit)] = by_user_unit.get((item.user_name_snapshot, unit), 0) + quantity
         by_status[item.status] = by_status.get(item.status, 0) + quantity
         by_status_unit[(item.status, unit)] = by_status_unit.get((item.status, unit), 0) + quantity
-        by_work_type[item.work_type] = by_work_type.get(item.work_type, 0) + quantity
-        by_work_type_unit[(item.work_type, unit)] = by_work_type_unit.get((item.work_type, unit), 0) + quantity
+        work_type_label = work_type_names.get(item.work_type, item.work_type)
+        by_work_type[work_type_label] = by_work_type.get(work_type_label, 0) + quantity
+        by_work_type_unit[(work_type_label, unit)] = by_work_type_unit.get((work_type_label, unit), 0) + quantity
         by_department[department] = by_department.get(department, 0) + quantity
         by_unit[unit] = by_unit.get(unit, 0) + quantity
         by_project_unit[(item.project_name_snapshot, unit)] = by_project_unit.get((item.project_name_snapshot, unit), 0) + quantity
@@ -7980,10 +9735,24 @@ def workload_report(
     department_cost_rows = [{"name": name, "unit": "COST", "quantity": round(quantity, 2)} for name, quantity in sorted(department_actual_cost.items(), key=lambda pair: pair[1], reverse=True)]
     over_budget_project_count = sum(1 for row in project_budget_actual if row["budget_days"] > 0 and row["actual_days"] > row["budget_days"])
     over_budget_cost_project_count = sum(1 for row in project_budget_actual if row["budget_cost"] > 0 and row["actual_cost"] > row["budget_cost"])
+    approval_node_counts: dict[str, int] = {}
+    pending_worklog_ids = [item.id for item in scoped_rows if item.status == "PENDING_APPROVAL"]
+    if pending_worklog_ids:
+        tasks = db.scalars(
+            select(ApprovalTask)
+            .where(ApprovalTask.worklog_id.in_(pending_worklog_ids), ApprovalTask.status == "PENDING")
+            .order_by(ApprovalTask.version.desc(), ApprovalTask.step_order.desc(), ApprovalTask.id.desc())
+        ).all()
+        latest_pending_tasks: dict[int, ApprovalTask] = {}
+        for task in tasks:
+            latest_pending_tasks.setdefault(task.worklog_id, task)
+        for task in latest_pending_tasks.values():
+            node_name = task.step_name or "待审批"
+            approval_node_counts[node_name] = approval_node_counts.get(node_name, 0) + 1
     return ReportView(
         scope={"period_start": str(start), "period_end": str(end), "department_name": department_index.path(selected_department_id) if selected_department_id else "全部部门", "department_options": department_options, "status": ["APPROVED", "LOCKED"]},
-        metrics={"total_quantity": round(sum(by_project.values()), 2), "total_days": round(by_unit.get("DAY", 0), 2), "budget_days": round(budget_days, 2), "actual_cost": round(sum(project_actual_cost.values()), 2), "budget_cost": round(budget_cost, 2), "budget_usage_rate": round(actual_days / budget_days * 100, 1) if budget_days else 0, "cost_usage_rate": round(sum(project_actual_cost.values()) / budget_cost * 100, 1) if budget_cost else 0, "over_budget_project_count": over_budget_project_count, "over_budget_cost_project_count": over_budget_cost_project_count, "user_count": len(user_ids), "project_count": len(project_ids), "execution_project_count": sum(1 for project_id in project_ids if projects_by_id.get(project_id) and projects_by_id[project_id].status == "ACTIVE"), "pending_count": pending_count, "approved_count": len(approved_rows), "submitted_count": len(scoped_rows), "rejected_count": status_counts.get("REJECTED", 0), "approval_rate": round((len(approved_rows) / (len(approved_rows) + status_counts.get("REJECTED", 0)) * 100), 1) if len(approved_rows) + status_counts.get("REJECTED", 0) else 0, "overdue_pending_count": overdue_pending_count},
-        breakdowns={"by_project": breakdown(by_project), "by_project_unit": unit_breakdown(by_project_unit), "by_project_budget_actual": project_budget_actual, "by_project_cost": project_cost_rows, "by_department_cost": department_cost_rows, "by_project_stage": [{"name": project, "stage": stage, "quantity": round(quantity, 2)} for (project, stage), quantity in sorted(by_project_stage.items(), key=lambda pair: pair[1], reverse=True)], "by_project_stage_unit": project_stage_unit_breakdown(by_project_stage_unit), "by_stage": breakdown(by_stage), "by_stage_unit": unit_breakdown(by_stage_unit), "by_user": breakdown(by_user), "by_user_unit": unit_breakdown(by_user_unit), "by_status": breakdown(by_status), "by_status_unit": unit_breakdown(by_status_unit), "approval_status": [{"name": name, "quantity": quantity} for name, quantity in sorted(status_counts.items(), key=lambda pair: pair[1], reverse=True)], "by_work_type": breakdown(by_work_type), "by_work_type_unit": unit_breakdown(by_work_type_unit), "by_department": breakdown(by_department), "by_department_unit": unit_breakdown(by_department_unit), "by_day_unit": unit_breakdown(by_day_unit), "by_unit": breakdown(by_unit)},
+        metrics={"total_quantity": round(sum(by_project.values()), 2), "total_days": round(by_unit.get("DAY", 0), 2), "budget_days": round(budget_days, 2), "actual_cost": round(sum(project_actual_cost.values()), 2), "budget_cost": round(budget_cost, 2), "budget_usage_rate": round(actual_days / budget_days * 100, 1) if budget_days else 0, "cost_usage_rate": round(sum(project_actual_cost.values()) / budget_cost * 100, 1) if budget_cost else 0, "over_budget_project_count": over_budget_project_count, "over_budget_cost_project_count": over_budget_cost_project_count, "user_count": len(user_ids), "project_count": len(project_ids), "execution_project_count": sum(1 for project_id in project_ids if projects_by_id.get(project_id) and projects_by_id[project_id].status == "ACTIVE"), "pending_count": pending_count, "approved_count": len(approved_rows), "submitted_count": len(scoped_rows), "rejected_count": status_counts.get("REJECTED", 0), "approval_rate": round((len(approved_rows) / (len(approved_rows) + status_counts.get("REJECTED", 0)) * 100), 1) if len(approved_rows) + status_counts.get("REJECTED", 0) else 0, "overdue_pending_count": overdue_pending_count, "fill_completion_rate": fill_completion_rate, "required_user_days": required_user_days, "filled_user_days": filled_user_days, "missing_user_days": missing_user_days, "active_user_count": len(eligible_user_ids)},
+        breakdowns={"by_project": breakdown(by_project), "by_project_unit": unit_breakdown(by_project_unit), "by_project_budget_actual": project_budget_actual, "by_project_cost": project_cost_rows, "by_department_cost": department_cost_rows, "by_project_stage": [{"name": project, "stage": stage, "quantity": round(quantity, 2)} for (project, stage), quantity in sorted(by_project_stage.items(), key=lambda pair: pair[1], reverse=True)], "by_project_stage_unit": project_stage_unit_breakdown(by_project_stage_unit), "by_stage": breakdown(by_stage), "by_stage_unit": unit_breakdown(by_stage_unit), "by_user": breakdown(by_user), "by_user_unit": unit_breakdown(by_user_unit), "by_status": breakdown(by_status), "by_status_unit": unit_breakdown(by_status_unit), "approval_status": [{"name": name, "quantity": quantity} for name, quantity in sorted(status_counts.items(), key=lambda pair: pair[1], reverse=True)], "by_approval_node": [{"name": name, "quantity": quantity} for name, quantity in sorted(approval_node_counts.items(), key=lambda pair: pair[1], reverse=True)], "by_work_type": breakdown(by_work_type), "by_work_type_unit": unit_breakdown(by_work_type_unit), "by_project_kind": breakdown(by_project_kind), "by_project_kind_unit": unit_breakdown({(name, "DAY"): quantity for name, quantity in by_project_kind.items()}), "by_department": breakdown(by_department), "by_department_unit": unit_breakdown(by_department_unit), "by_day_unit": unit_breakdown(by_day_unit), "by_unit": breakdown(by_unit)},
         generated_at=now_local(),
     )
 
@@ -7994,9 +9763,13 @@ def export_workload(
     period_end: date | None = None,
     department_id: int | None = Query(default=None, gt=0),
     department_name: str | None = None,
+    user_id: int | None = None,
+    project_id: int | None = None,
+    work_type: str | None = None,
+    status: str | None = None,
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
-    """按看板日期和部门树条件导出天数工时明细 CSV。"""
+    """按看板筛选条件导出天数工时明细 CSV。"""
     user = require_access(db, "reports", "EXPORT")
     start = period_start or today_local().replace(day=1)
     end = period_end or today_local()
@@ -8006,14 +9779,31 @@ def export_workload(
     department_index = DepartmentIndex(db.scalars(select(Department)).all())
     projects = db.scalars(select(Project)).all()
     projects_by_id = {item.id: item for item in projects}
+    users = db.scalars(select(User)).all()
+    user_department_ids = {item.id: item.department_id for item in users}
+    user_department = {user.id: department_index.root_name(user.department_id) if user.department_id else "未分配部门" for user in users}
     project_department = {project.id: department_index.root_name(project.department_id) if project.department_id else "未分配部门" for project in projects}
     project_department_ids = {project.id: project.department_id for project in projects}
     selected_department_id = department_index.resolve(department_id, department_name)
     selected_department_ids = department_index.descendants(selected_department_id) if selected_department_id else set()
     visible_project_ids = project_scope_ids(db, user, "reports")
 
-    items = db.scalars(select(Worklog).where(Worklog.start_date >= start, Worklog.end_date <= end, Worklog.unit == "DAY").order_by(Worklog.start_date, Worklog.id)).all()
-    items = [item for item in items if (visible_project_ids is None or item.project_id in visible_project_ids) and (not selected_department_ids or project_department_ids.get(item.project_id) in selected_department_ids)]
+    def worklog_department_id(item: Worklog) -> int | None:
+        return project_department_ids.get(item.project_id) if item.project_id else user_department_ids.get(item.user_id)
+
+    def worklog_department_name(item: Worklog) -> str:
+        return project_department.get(item.project_id) if item.project_id else user_department.get(item.user_id, "未分配部门")
+
+    items = db.scalars(select(Worklog).where(Worklog.start_date <= end, Worklog.end_date >= start, Worklog.unit == "DAY").order_by(Worklog.start_date, Worklog.id)).all()
+    items = [
+        item for item in items
+        if (visible_project_ids is None or item.project_id is None or item.project_id in visible_project_ids)
+        and (not selected_department_ids or worklog_department_id(item) in selected_department_ids)
+        and (not user_id or item.user_id == user_id)
+        and (not project_id or item.project_id == project_id)
+        and (not work_type or item.work_type == work_type)
+        and (not status or item.status == status)
+    ]
     worklog_ids = [item.id for item in items]
     latest_tasks: dict[int, ApprovalTask] = {}
     if worklog_ids:
@@ -8022,8 +9812,8 @@ def export_workload(
             latest_tasks.setdefault(task.worklog_id, task)
 
     status_names = {"DRAFT": "草稿", "PENDING_APPROVAL": "审批中", "APPROVED": "已通过", "REJECTED": "已驳回", "LOCKED": "已锁定"}
-    work_type_names = {"PROJECT": "项目工时", "MANAGEMENT": "管理工时", "OTHER": "其它工时"}
-    work_status_names = {"LOCAL": "本地", "BUSINESS_TRIP": "出差", "REMOTE": "异地办公", "LEAVE": "休假"}
+    work_type_names = option_label_map(db, "work_type") | {"PROJECT": "项目工时", "MANAGEMENT": "管理工时", "OTHER": "其它工时"}
+    work_status_names = option_label_map(db, "work_status") | {"LOCAL": "本地", "BUSINESS_TRIP": "出差", "REMOTE": "异地办公", "LEAVE": "休假"}
     output = io.StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow(["工时单号", "提交人", "一级部门", "项目", "项目阶段", "工时类型", "工作状态", "开始日期", "结束日期", "工时天数", "审批人", "审批状态", "工作描述", "提交时间", "处理时间", "审批意见"])
@@ -8032,7 +9822,7 @@ def export_workload(
         writer.writerow([
             task.serial_no if task else "",
             item.user_name_snapshot,
-            project_department.get(item.project_id, "未分配部门"),
+            worklog_department_name(item),
             item.project_name_snapshot,
             item.stage,
             work_type_names.get(item.work_type, item.work_type),
@@ -8691,6 +10481,9 @@ def expense_document_type(expense: ProjectExpense) -> str:
 
 def direct_manager_for(db: Session, applicant: User, project: Project) -> User | None:
     """优先解析飞书直属上级，组织快照不足时回退项目配置的上级领导。"""
+    supervisor = supervisor_for_user(db, applicant)
+    if supervisor:
+        return supervisor
     manager_name = (applicant.manager_name or "").strip()
     if manager_name:
         managers = list(db.scalars(select(User).where(User.name == manager_name, User.employment_status == "ACTIVE")).all())
@@ -10225,6 +12018,8 @@ def approve_project_cost_entry(entry_id: int, payload: ProjectCostReviewAction, 
     entry = db.get(ProjectCostEntry, entry_id)
     if not entry:
         raise HTTPException(404, "PROJECT_COST_ENTRY_NOT_FOUND")
+    if entry.status == "APPROVED":
+        return cost_entry_view(db, entry, user)
     if entry.status != "PENDING_REVIEW":
         raise HTTPException(409, "PROJECT_COST_ENTRY_NOT_PENDING_REVIEW")
     entry.status = "APPROVED"

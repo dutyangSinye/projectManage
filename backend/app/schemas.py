@@ -499,6 +499,168 @@ class PaymentView(BaseModel):
     can_withdraw: bool = False
 
 
+class ReceiptPlanUpsert(BaseModel):
+    period_month: str = Field(pattern=r"^\d{4}-\d{2}$")
+    contract_id: int = Field(gt=0)
+    plan_amount: float = Field(default=0, ge=0)
+    progress_note: str | None = Field(default=None, max_length=4000)
+    expected_finish_date: date | None = None
+    remark: str | None = Field(default=None, max_length=2000)
+
+
+class ReceiptPlanView(BaseModel):
+    id: int | None = None
+    period_month: str
+    project_id: int
+    project_name: str
+    project_code: str | None = None
+    owner_name: str | None = None
+    department_name: str | None = None
+    contract_id: int
+    contract_name: str
+    contract_no: str | None = None
+    customer_name: str | None = None
+    contract_amount: float = 0
+    receivable_amount: float = 0
+    received_amount: float = 0
+    unreceived_amount: float = 0
+    previous_plan_amount: float = 0
+    previous_actual_amount: float = 0
+    current_plan_amount: float = 0
+    current_actual_amount: float = 0
+    completion_rate: float | None = None
+    progress_note: str | None = None
+    expected_finish_date: date | None = None
+    remark: str | None = None
+    updated_by_name: str | None = None
+    updated_at: datetime | None = None
+    warning_tags: list[str] = []
+
+
+class ReceiptLedgerSummary(BaseModel):
+    contract_amount: float = 0
+    receivable_amount: float = 0
+    received_amount: float = 0
+    unreceived_amount: float = 0
+    current_plan_amount: float = 0
+    current_actual_amount: float = 0
+    completion_rate: float | None = None
+    overdue_unreceived_amount: float = 0
+
+
+class ReceiptLedgerList(BaseModel):
+    items: list[ReceiptPlanView]
+    summary: ReceiptLedgerSummary
+
+
+class PaymentPlanCreate(BaseModel):
+    period_month: str = Field(pattern=r"^\d{4}-\d{2}$")
+    department_id: int | None = Field(default=None, gt=0)
+    handler_user_id: int | None = Field(default=None, gt=0)
+    payment_category: str = Field(min_length=1, max_length=80)
+    source_type: Literal["CONTRACT_STAGE", "PROJECT_EXPENSE", "MANUAL"] = "MANUAL"
+    project_id: int | None = Field(default=None, gt=0)
+    contract_id: int | None = Field(default=None, gt=0)
+    contract_stage_id: int | None = Field(default=None, gt=0)
+    payee_type: Literal["SUPPLIER", "COMPANY", "EMPLOYEE", "EXTERNAL_PERSON", "OTHER"] = "SUPPLIER"
+    payee_ref_id: int | None = Field(default=None, gt=0)
+    payee_name_snapshot: str = Field(min_length=1, max_length=300)
+    payee_bank_snapshot: str | None = Field(default=None, max_length=200)
+    payee_account: str | None = Field(default=None, max_length=100)
+    planned_amount: float = Field(gt=0)
+    payment_method: str = Field(default="银行转账", max_length=60)
+    planned_pay_date: date | None = None
+    purpose: str = Field(min_length=1, max_length=4000)
+    has_finance_material: bool = False
+    is_urgent: bool = False
+    status: Literal["DRAFT", "SUBMITTED"] = "SUBMITTED"
+    remark: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_source_required(self):
+        if self.source_type == "CONTRACT_STAGE" and (not self.contract_id or not self.contract_stage_id):
+            raise ValueError("PAYMENT_PLAN_CONTRACT_STAGE_REQUIRED")
+        if self.source_type == "PROJECT_EXPENSE" and not self.project_id:
+            raise ValueError("PAYMENT_PLAN_PROJECT_REQUIRED")
+        return self
+
+
+class PaymentPlanUpdate(PaymentPlanCreate):
+    status: Literal["DRAFT", "SUBMITTED", "CANCELLED"] = "SUBMITTED"
+
+
+class PaymentPlanView(BaseModel):
+    id: int
+    plan_no: str
+    period_month: str
+    department_id: int | None = None
+    department_name: str | None = None
+    handler_user_id: int | None = None
+    handler_name: str | None = None
+    payment_category: str
+    source_type: str
+    source_label: str
+    project_id: int | None = None
+    project_name: str | None = None
+    contract_id: int | None = None
+    contract_name: str | None = None
+    contract_stage_id: int | None = None
+    contract_stage_name: str | None = None
+    payee_type: str
+    payee_type_label: str
+    payee_ref_id: int | None = None
+    payee_name_snapshot: str
+    payee_bank_snapshot: str | None = None
+    payee_account_last4: str | None = None
+    planned_amount: float = 0
+    payment_method: str
+    planned_pay_date: date | None = None
+    purpose: str
+    has_finance_material: bool = False
+    is_urgent: bool = False
+    status: str
+    status_label: str
+    linked_document_type: str | None = None
+    linked_document_id: int | None = None
+    remark: str | None = None
+    created_by_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PaymentPlanSummary(BaseModel):
+    planned_amount: float = 0
+    current_month_amount: float = 0
+    urgent_amount: float = 0
+    contract_stage_amount: float = 0
+    project_expense_amount: float = 0
+    personal_payee_amount: float = 0
+    converted_amount: float = 0
+
+
+class PaymentPlanList(BaseModel):
+    items: list[PaymentPlanView]
+    summary: PaymentPlanSummary
+
+
+class BusinessAnalysisTrendItem(BaseModel):
+    period_month: str
+    receipt_plan_amount: float = 0
+    actual_receipt_amount: float = 0
+    payment_plan_amount: float = 0
+    net_cash_flow: float = 0
+
+
+class BusinessAnalysisView(BaseModel):
+    period_month: str
+    receipt_summary: ReceiptLedgerSummary
+    payment_summary: PaymentPlanSummary
+    net_cash_flow: float = 0
+    trend: list[BusinessAnalysisTrendItem] = []
+    risk_projects: list[ReceiptPlanView] = []
+    urgent_payments: list[PaymentPlanView] = []
+
+
 class ProjectView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -845,7 +1007,7 @@ class AuditEntryView(BaseModel):
 
 
 class ProjectCreate(BaseModel):
-    code: str = Field(min_length=1, max_length=64)
+    code: str | None = Field(default=None, max_length=64)
     name: str = Field(min_length=1, max_length=300)
     project_type: str = Field(min_length=1, max_length=80)
     project_sub_category: str | None = Field(default=None, max_length=80)
@@ -860,7 +1022,7 @@ class ProjectCreate(BaseModel):
     budget_days: float = Field(default=0, ge=0)
     budget_cost: float = Field(default=0, ge=0)
     expense_budget: float = Field(default=0, ge=0)
-    status: Literal["ACTIVE", "PAUSED", "ACCEPTANCE", "COMPLETED"] = "ACTIVE"
+    status: Literal["PRE_APPROVAL", "ACTIVE", "PAUSED", "ACCEPTANCE", "COMPLETED", "PRE_APPROVAL_FAILED"] = "ACTIVE"
     allow_worklog: bool = True
 
     @model_validator(mode="after")
@@ -886,7 +1048,7 @@ class ProjectUpdate(BaseModel):
     budget_days: float = Field(default=0, ge=0)
     budget_cost: float = Field(default=0, ge=0)
     expense_budget: float = Field(default=0, ge=0)
-    status: Literal["ACTIVE", "PAUSED", "ACCEPTANCE", "COMPLETED"]
+    status: Literal["PRE_APPROVAL", "ACTIVE", "PAUSED", "ACCEPTANCE", "COMPLETED", "PRE_APPROVAL_FAILED"]
     allow_worklog: bool
 
     @model_validator(mode="after")
@@ -1085,9 +1247,9 @@ class WorkflowTaskList(BaseModel):
 
 
 class WorklogCreate(BaseModel):
-    project_id: int
+    project_id: int | None = None
     stage: str = Field(min_length=1, max_length=40)
-    work_type: str = "PROJECT"
+    work_type: str = "RND_PROJECT_WORK"
     work_status: str = "LOCAL"
     fill_date: date | None = None
     start_date: date
@@ -1099,9 +1261,9 @@ class WorklogCreate(BaseModel):
 
 
 class WorklogUpdate(BaseModel):
-    project_id: int
+    project_id: int | None = None
     stage: str = Field(min_length=1, max_length=40)
-    work_type: str = "PROJECT"
+    work_type: str = "RND_PROJECT_WORK"
     work_status: str = "LOCAL"
     fill_date: date | None = None
     start_date: date
@@ -1111,10 +1273,29 @@ class WorklogUpdate(BaseModel):
     description: str = Field(min_length=2, max_length=2000)
 
 
+class WorkCalendarDayView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    calendar_date: date
+    day_type: Literal["WORKDAY", "HOLIDAY"]
+    name: str
+    source: str | None = None
+    is_builtin: bool = False
+
+
+class WorkCalendarList(BaseModel):
+    items: list[WorkCalendarDayView] = []
+
+
+class WorkCalendarDayUpsert(BaseModel):
+    day_type: Literal["WORKDAY", "HOLIDAY"]
+    name: str = Field(min_length=1, max_length=120)
+    source: str | None = Field(default=None, max_length=200)
+
+
 class WorklogView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    project_id: int
+    project_id: int | None
     project_name_snapshot: str
     stage: str
     work_type: str
@@ -1134,6 +1315,12 @@ class WorklogView(BaseModel):
     rejection_reason: str | None
     approval_comment: str | None
     approval_version: int
+    approval_flow_type: str | None = None
+    converted_from_project_id: int | None = None
+    converted_from_project_name: str | None = None
+    converted_at: datetime | None = None
+    converted_by: int | None = None
+    conversion_reason: str | None = None
     last_notified_at: datetime | None
     updated_at: datetime
 
@@ -1141,6 +1328,36 @@ class WorklogView(BaseModel):
 class WorklogList(BaseModel):
     items: list[WorklogView]
     summary: dict[str, float | int]
+
+
+class WorklogCalendarSummary(BaseModel):
+    required_workdays: int = 0
+    filled_days: int = 0
+    missing_days: int = 0
+    today_missing: int = 0
+    pending_count: int = 0
+    rejected_count: int = 0
+    draft_count: int = 0
+
+
+class WorklogCalendarDay(BaseModel):
+    date: date
+    day: int
+    is_workday: bool
+    is_today: bool
+    is_past: bool
+    has_worklog: bool
+    status: str
+    status_label: str
+    worklog_id: int | None = None
+    quantity: float = 0
+    holiday_name: str | None = None
+
+
+class WorklogCalendar(BaseModel):
+    month: str
+    summary: WorklogCalendarSummary
+    days: list[WorklogCalendarDay]
 
 
 class AdminWorklogView(WorklogView):
@@ -1162,6 +1379,73 @@ class AdminWorklogList(BaseModel):
     page_count: int
     summary: dict[str, float | int]
     department_options: list[str]
+
+
+class WorklogMonthlyLedgerItem(BaseModel):
+    """工时月度台账项目汇总行。"""
+
+    project_id: int
+    project_code: str
+    project_name: str
+    project_type: str
+    project_type_name: str
+    project_status: str
+    project_status_name: str
+    department_id: int | None = None
+    department_name: str
+    owner_user_id: int | None = None
+    owner_name: str
+    user_count: int
+    approved_days: float
+    pending_days: float
+    rejected_days: float
+    total_days: float
+
+
+class WorklogMonthlyLedgerList(BaseModel):
+    """工时月度台账汇总列表。"""
+
+    month: str
+    total_projects: int
+    total_days: float
+    approved_days: float
+    pending_days: float
+    rejected_days: float
+    items: list[WorklogMonthlyLedgerItem]
+    department_options: list[str] = []
+
+
+class WorklogMonthlyLedgerDetailList(BaseModel):
+    """某项目某月工时明细。"""
+
+    month: str
+    project_id: int
+    project_name: str
+    items: list[AdminWorklogView]
+    summary: dict[str, float | int]
+
+
+class WorklogMonthlyLedgerPrintRow(BaseModel):
+    """工时月度台账打印表的人员汇总行。"""
+
+    index: int
+    user_id: int
+    user_name: str
+    quantity: float
+
+
+class WorklogMonthlyLedgerPrintView(BaseModel):
+    """工时月度台账项目打印视图。"""
+
+    month: str
+    project_id: int
+    project_name: str
+    project_owner_name: str
+    printed_by_name: str
+    printed_at: datetime
+    rows: list[WorklogMonthlyLedgerPrintRow]
+    total_quantity: float
+
 
 class ConfigOptionView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -1238,6 +1522,30 @@ class ApprovalAction(BaseModel):
 class RejectionAction(BaseModel):
     reason: str = Field(min_length=2, max_length=2000)
     version: int = Field(ge=1)
+
+
+class BatchApprovalRequest(BaseModel):
+    task_ids: list[int] = Field(min_length=1, max_length=200)
+    comment: str | None = Field(default=None, max_length=2000)
+
+
+class BatchRejectionRequest(BaseModel):
+    task_ids: list[int] = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=2, max_length=2000)
+
+
+class BatchApprovalResultItem(BaseModel):
+    task_id: int
+    success: bool
+    message: str | None = None
+    worklog_id: int | None = None
+    status: str | None = None
+
+
+class BatchApprovalResult(BaseModel):
+    success_count: int
+    failed_count: int
+    results: list[BatchApprovalResultItem]
 
 
 class ProjectApproverUpdate(BaseModel):
@@ -1395,6 +1703,11 @@ class ApprovalTaskView(BaseModel):
     serial_no: str
     submitter_user_id: int
     approver_user_id: int
+    step_order: int = 1
+    step_name: str | None = None
+    total_steps: int = 1
+    flow_type: str | None = None
+    resolved_reason: str | None = None
     status: str
     comment: str | None
     submitted_at: datetime

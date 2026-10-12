@@ -31,6 +31,8 @@ class DirectoryUser:
     department_id: str | None
     department_name: str | None
     is_active: bool
+    leader_user_id: str | None = None
+    leader_name: str | None = None
 
 
 @dataclass
@@ -234,6 +236,9 @@ class FeishuAdapter:
                 department_id = str(row_department_ids[0]) if row_department_ids else current_department_id
                 status = row.get("status")
                 is_active = status.get("is_active", True) if isinstance(status, dict) else row.get("is_active", True)
+                leader_user_id = row.get("leader_user_id") or row.get("leader_user") or row.get("manager_user_id")
+                if isinstance(leader_user_id, dict):
+                    leader_user_id = leader_user_id.get("user_id") or leader_user_id.get("open_id")
                 users_by_id[str(user_id)] = DirectoryUser(
                     feishu_user_id=str(user_id),
                     open_id=row.get("open_id"),
@@ -242,6 +247,8 @@ class FeishuAdapter:
                     department_id=department_id,
                     department_name=department_names.get(department_id),
                     is_active=bool(is_active),
+                    leader_user_id=str(leader_user_id) if leader_user_id else None,
+                    leader_name=str(row.get("leader_name") or row.get("manager_name") or "") or None,
                 )
         return departments, list(users_by_id.values())
 

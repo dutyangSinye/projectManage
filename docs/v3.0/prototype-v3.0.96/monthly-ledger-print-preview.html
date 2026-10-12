@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>项目月度工时汇总表 · 打印预览</title>
+  <style>
+    :root {
+      --ink: #1c2522;
+      --muted: #6c7a75;
+      --line: #c9d4d0;
+      --soft: #f3f7f5;
+      --brand: #2b8067;
+      --brand-soft: #e8f5ef;
+      --paper: #ffffff;
+      --screen-bg: #eef4f2;
+      --danger: #9a3d32;
+      --shadow: 0 24px 70px rgba(18, 46, 39, 0.18);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top left, rgba(43, 128, 103, 0.13), transparent 34rem),
+        linear-gradient(180deg, #f7fbf9 0%, var(--screen-bg) 100%);
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", "Source Han Sans SC", Arial, sans-serif;
+    }
+
+    .screen {
+      min-height: 100vh;
+      padding: 28px;
+    }
+
+    .modal {
+      max-width: 1120px;
+      margin: 0 auto;
+      overflow: hidden;
+      border: 1px solid #dce6e2;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+
+    .modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 22px;
+      border-bottom: 1px solid #e4ece8;
+      background: linear-gradient(90deg, #ffffff 0%, #f3faf7 100%);
+    }
+
+    .eyebrow {
+      margin-bottom: 4px;
+      color: var(--brand);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.25;
+    }
+
+    .muted {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      white-space: nowrap;
+    }
+
+    button {
+      height: 36px;
+      padding: 0 14px;
+      border: 1px solid #cbd8d4;
+      border-radius: 10px;
+      background: #fff;
+      color: var(--ink);
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .primary {
+      border-color: var(--brand);
+      background: var(--brand);
+      color: #fff;
+    }
+
+    .preview-area {
+      padding: 24px;
+      background:
+        linear-gradient(90deg, rgba(43, 128, 103, 0.06) 0 1px, transparent 1px 40px),
+        linear-gradient(180deg, rgba(43, 128, 103, 0.05) 0 1px, transparent 1px 40px),
+        #eef4f2;
+    }
+
+    .paper {
+      position: relative;
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto;
+      padding: 17mm 16mm 16mm;
+      background: var(--paper);
+      box-shadow: 0 16px 42px rgba(32, 58, 51, 0.18);
+    }
+
+    .paper::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 6mm;
+      background: linear-gradient(180deg, var(--brand), #1e5f4c);
+    }
+
+    .print-title {
+      margin: 0;
+      text-align: center;
+      font-family: "SimSun", "Microsoft YaHei", serif;
+      font-size: 22px;
+      letter-spacing: 0.08em;
+    }
+
+    .doc-code {
+      margin-top: 6px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1.35fr 0.8fr 0.8fr;
+      gap: 0;
+      margin-top: 18px;
+      border-top: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+    }
+
+    .info-grid div {
+      display: grid;
+      grid-template-columns: 86px 1fr;
+      min-height: 36px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+    }
+
+    .info-grid span {
+      display: flex;
+      align-items: center;
+      padding: 8px 10px;
+      background: var(--soft);
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .info-grid strong {
+      display: flex;
+      align-items: center;
+      padding: 8px 10px;
+      font-weight: 700;
+    }
+
+    table {
+      width: 100%;
+      margin-top: 16px;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      height: 38px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      text-align: center;
+    }
+
+    th {
+      background: var(--brand-soft);
+      color: #244d41;
+      font-weight: 800;
+    }
+
+    td:nth-child(2) {
+      text-align: left;
+      font-weight: 700;
+    }
+
+    tfoot td {
+      background: #f8faf9;
+      font-weight: 800;
+    }
+
+    .note {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.8;
+    }
+
+    .footer {
+      position: absolute;
+      right: 16mm;
+      bottom: 10mm;
+      left: 16mm;
+      display: flex;
+      justify-content: space-between;
+      color: #8a9692;
+      font-size: 11px;
+    }
+
+    @media (max-width: 980px) {
+      .screen {
+        padding: 12px;
+      }
+
+      .preview-area {
+        overflow-x: auto;
+        padding: 14px;
+      }
+
+      .paper {
+        transform-origin: top left;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .screen {
+        padding: 0;
+      }
+
+      .modal {
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      .modal-head {
+        display: none;
+      }
+
+      .preview-area {
+        padding: 0;
+        background: #fff;
+      }
+
+      .paper {
+        width: auto;
+        min-height: auto;
+        margin: 0;
+        box-shadow: none;
+      }
+
+      .paper::before {
+        background: #222;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="screen">
+    <section class="modal">
+      <header class="modal-head">
+        <div>
+          <div class="eyebrow">打印预览 / 工时月度台账</div>
+          <h1>项目月度工时汇总表</h1>
+          <p class="muted">预览当前项目在当前月份的已审批工时汇总，打印时只输出 A4 表单。</p>
+        </div>
+        <div class="actions">
+          <button>关闭</button>
+          <button class="primary" onclick="window.print()">打印</button>
+        </div>
+      </header>
+
+      <div class="preview-area">
+        <article class="paper">
+          <h2 class="print-title">项目月度工时汇总表</h2>
+          <div class="doc-code">WORKLOG-MONTHLY-SUMMARY · 2026-09</div>
+
+          <section class="info-grid">
+            <div><span>项目名称</span><strong>中国五冶（第一批）智能建造设备采购</strong></div>
+            <div><span>年月</span><strong>2026年09月</strong></div>
+            <div><span>项目负责人</span><strong>杨阳</strong></div>
+            <div><span>打印人</span><strong>樊公海</strong></div>
+            <div><span>打印时间</span><strong>2026-10-10 15:30</strong></div>
+            <div><span>统计口径</span><strong>已审批工时</strong></div>
+          </section>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 72px;">序号</th>
+                <th>人员</th>
+                <th style="width: 160px;">工时合计</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>樊公海</td>
+                <td>5 天</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>甘琴</td>
+                <td>1 天</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>杨阳</td>
+                <td>3 天</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="2">合计</td>
+                <td>9 天</td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <p class="note">
+            说明：本表按所选项目与月份统计已审批工时；草稿、驳回、审批中工时不计入正式打印口径。
+          </p>
+
+          <footer class="footer">
+            <span>综合项目管理系统</span>
+            <span>第 1 页 / 共 1 页</span>
+          </footer>
+        </article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

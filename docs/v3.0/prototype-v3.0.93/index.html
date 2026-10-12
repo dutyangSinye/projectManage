@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>v3.0.93 回款台账、付款计划与经营分析原型</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">S</span>
+          <div>
+            <strong>综合项目管理系统</strong>
+            <small>v3.0.93 原型</small>
+          </div>
+        </div>
+        <nav>
+          <button>工作台</button>
+          <button>工时管理</button>
+          <button class="active">项目管理</button>
+          <button>系统管理</button>
+        </nav>
+        <div class="nav-group">
+          <span>项目管理</span>
+          <a>项目管理</a>
+          <a>项目合同</a>
+          <a class="selected">回款台账</a>
+          <a>付款计划</a>
+          <a>经营分析</a>
+          <a>合同收款</a>
+          <a>合同付款</a>
+          <a>项目费用</a>
+        </div>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">经营资金 · 台账分离</p>
+            <h1>回款台账、付款计划与经营分析</h1>
+          </div>
+          <div class="top-actions">
+            <button class="ghost">导出当前视图</button>
+            <button class="primary" data-open-payment>新增付款计划</button>
+          </div>
+        </header>
+
+        <div class="page-tabs" role="tablist">
+          <button class="active" data-page="receipt">回款台账</button>
+          <button data-page="payment">付款计划</button>
+          <button data-page="analysis">经营分析</button>
+        </div>
+
+        <section class="page-panel active" id="receipt-page">
+          <div class="filter-card">
+            <div class="filter-grid">
+              <label>
+                统计月份
+                <input value="2026-10" />
+              </label>
+              <label>
+                部门
+                <select>
+                  <option>全部部门（含下级）</option>
+                  <option>产品研发部</option>
+                  <option>技术服务部</option>
+                  <option>市场管理部</option>
+                </select>
+              </label>
+              <label>
+                项目负责人
+                <select>
+                  <option>全部</option>
+                  <option>李晓天</option>
+                  <option>余程倩</option>
+                  <option>杨阳</option>
+                </select>
+              </label>
+              <label>
+                客户 / 项目 / 合同
+                <input placeholder="输入关键词" value="中科五行" />
+              </label>
+              <label>
+                回款状态
+                <select>
+                  <option>全部状态</option>
+                  <option>部分回款</option>
+                  <option>逾期未收</option>
+                  <option>已完成</option>
+                </select>
+              </label>
+              <div class="filter-actions">
+                <button class="primary">查询</button>
+                <button class="ghost">重置</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="metric-row">
+            <article>
+              <span>合同总额</span>
+              <strong>¥ 16,744,260</strong>
+              <small>当前筛选范围</small>
+            </article>
+            <article>
+              <span>合同应收</span>
+              <strong>¥ 12,656,480</strong>
+              <small>阶段金额汇总</small>
+            </article>
+            <article>
+              <span>累计已收</span>
+              <strong>¥ 10,518,640</strong>
+              <small>审批通过收款单</small>
+            </article>
+            <article class="danger">
+              <span>实际未收</span>
+              <strong>¥ 2,137,840</strong>
+              <small>含逾期 ¥760,000</small>
+            </article>
+          </div>
+
+          <div class="table-card">
+            <div class="table-title">
+              <div>
+                <h2>回款台账</h2>
+                <p>自动汇总合同、阶段和收款单；只维护本月计划、进展和预计完成时间。</p>
+              </div>
+              <div class="table-actions">
+                <button class="ghost">导入本月计划</button>
+                <button class="ghost">导出台账</button>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>项目名称</th>
+                    <th>合同名称</th>
+                    <th>客户全称</th>
+                    <th>合同总额</th>
+                    <th>合同应收</th>
+                    <th>累计已收</th>
+                    <th>实际未收</th>
+                    <th>本月计划</th>
+                    <th>本月实际</th>
+                    <th>项目进展及计划</th>
+                    <th>预计完成</th>
+                    <th>负责人</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>智能焊接辅助机器人项目课题研发</td>
+                    <td>技术开发（委托）合同</td>
+                    <td>中科五行集团有限公司</td>
+                    <td>2,200,000</td>
+                    <td>2,200,000</td>
+                    <td>440,000</td>
+                    <td><b class="money-warn">1,760,000</b></td>
+                    <td>990,000</td>
+                    <td>0</td>
+                    <td>已完成样机联调；9 月底提交技术方案结项材料</td>
+                    <td><span class="tag warn">11/30 前</span></td>
+                    <td>李晓天</td>
+                    <td><button class="link" data-open-receipt>编辑计划</button></td>
+                  </tr>
+                  <tr>
+                    <td>中国五行（第二批）智能建造设备采购</td>
+                    <td>智能建造设备采购合同</td>
+                    <td>中国五行集团有限公司</td>
+                    <td>10,257,000</td>
+                    <td>8,451,840</td>
+                    <td>8,451,840</td>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>已完成到货验收，等待尾款资料归档</td>
+                    <td><span class="tag ok">已完成</span></td>
+                    <td>余程倩</td>
+                    <td><button class="link">查看明细</button></td>
+                  </tr>
+                  <tr>
+                    <td>室内智能建造喷涂机器人研发</td>
+                    <td>技术开发及服务合同</td>
+                    <td>中科五行集团有限公司</td>
+                    <td>760,000</td>
+                    <td>228,000</td>
+                    <td>228,000</td>
+                    <td>0</td>
+                    <td>120,000</td>
+                    <td>120,000</td>
+                    <td>合同阶段完成，按计划提交验收单</td>
+                    <td><span class="tag ok">10/30</span></td>
+                    <td>李晓天</td>
+                    <td><button class="link">查看合同</button></td>
+                  </tr>
+                  <tr>
+                    <td>激光焊接机器人设备销售</td>
+                    <td>设备销售合同</td>
+                    <td>中国五行集团有限公司</td>
+                    <td>775,000</td>
+                    <td>310,000</td>
+                    <td>0</td>
+                    <td><b class="money-risk">310,000</b></td>
+                    <td>310,000</td>
+                    <td>0</td>
+                    <td>验收材料待客户确认</td>
+                    <td><span class="tag risk">逾期 8 天</span></td>
+                    <td>李晓天</td>
+                    <td><button class="link" data-open-receipt>编辑计划</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="page-panel" id="payment-page">
+          <div class="filter-card">
+            <div class="filter-grid payment-filters">
+              <label>
+                资金计划周期
+                <input value="2026-10" />
+              </label>
+              <label>
+                部门
+                <select>
+                  <option>全部部门（含下级）</option>
+                  <option>产品研发部</option>
+                  <option>技术服务部</option>
+                </select>
+              </label>
+              <label>
+                经办人
+                <select>
+                  <option>全部</option>
+                  <option>杜连腾</option>
+                  <option>李晓天</option>
+                  <option>杨阳</option>
+                </select>
+              </label>
+              <label>
+                收款方类型
+                <select>
+                  <option>全部</option>
+                  <option>供应商</option>
+                  <option>员工</option>
+                  <option>外部个人</option>
+                </select>
+              </label>
+              <label>
+                是否加急
+                <select>
+                  <option>全部</option>
+                  <option>是</option>
+                  <option>否</option>
+                </select>
+              </label>
+              <div class="filter-actions">
+                <button class="primary">查询</button>
+                <button class="ghost">重置</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="metric-row payment-metrics">
+            <article>
+              <span>计划付款总额</span>
+              <strong>¥ 2,881,600</strong>
+              <small>13 条计划</small>
+            </article>
+            <article>
+              <span>合同付款</span>
+              <strong>¥ 2,250,800</strong>
+              <small>支出合同阶段</small>
+            </article>
+            <article>
+              <span>个人收款</span>
+              <strong>¥ 86,500</strong>
+              <small>员工/外部个人</small>
+            </article>
+            <article class="danger">
+              <span>加急付款</span>
+              <strong>¥ 405,000</strong>
+              <small>3 笔待处理</small>
+            </article>
+          </div>
+
+          <div class="table-card">
+            <div class="table-title">
+              <div>
+                <h2>付款计划</h2>
+                <p>计划层不直接记成本或已付；转成付款单或费用单后进入审批。</p>
+              </div>
+              <div class="table-actions">
+                <button class="ghost">导入计划</button>
+                <button class="primary" data-open-payment>新增付款计划</button>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>周期</th>
+                    <th>部门</th>
+                    <th>经办人</th>
+                    <th>付款类别</th>
+                    <th>来源</th>
+                    <th>项目/合同</th>
+                    <th>收款方类型</th>
+                    <th>收款方</th>
+                    <th>计划金额</th>
+                    <th>计划日期</th>
+                    <th>资金用途说明</th>
+                    <th>加急</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>2026-10</td>
+                    <td>产品研发部</td>
+                    <td>杜连腾</td>
+                    <td><span class="pill blue">采购货款</span></td>
+                    <td>支出合同阶段</td>
+                    <td>爬壁焊接辅助机器人设备采购</td>
+                    <td>供应商</td>
+                    <td>沈阳新松机器人自动化股份有限公司</td>
+                    <td>405,000</td>
+                    <td>10-18</td>
+                    <td>自动化钢筋加工机器人第四笔付款</td>
+                    <td><span class="tag risk">是</span></td>
+                    <td><span class="tag warn">待转付款</span></td>
+                    <td><button class="link">转付款单</button></td>
+                  </tr>
+                  <tr>
+                    <td>2026-10</td>
+                    <td>技术服务部</td>
+                    <td>余程倩</td>
+                    <td><span class="pill purple">服务费</span></td>
+                    <td>手工计划</td>
+                    <td>集成调试服务</td>
+                    <td>外部个人</td>
+                    <td>王立强（尾号 6621）</td>
+                    <td>18,500</td>
+                    <td>10-22</td>
+                    <td>专家现场调试服务劳务费</td>
+                    <td><span class="tag muted">否</span></td>
+                    <td><span class="tag ok">已提交计划</span></td>
+                    <td><button class="link">生成费用单</button></td>
+                  </tr>
+                  <tr>
+                    <td>2026-10</td>
+                    <td>产品研发部</td>
+                    <td>李晓天</td>
+                    <td><span class="pill green">差旅费</span></td>
+                    <td>项目费用</td>
+                    <td>智能建造施工调度系统</td>
+                    <td>员工</td>
+                    <td>李晓天（尾号 0918）</td>
+                    <td>12,800</td>
+                    <td>10-25</td>
+                    <td>项目验收差旅报销款</td>
+                    <td><span class="tag muted">否</span></td>
+                    <td><span class="tag warn">审批中</span></td>
+                    <td><button class="link">查看费用单</button></td>
+                  </tr>
+                  <tr>
+                    <td>2026-10</td>
+                    <td>产品研发部</td>
+                    <td>杨阳</td>
+                    <td><span class="pill blue">研发费用</span></td>
+                    <td>支出合同阶段</td>
+                    <td>第三方测试尾款</td>
+                    <td>公司</td>
+                    <td>深圳市一航网络信息技术有限公司</td>
+                    <td>125,000</td>
+                    <td>10-30</td>
+                    <td>第三方测试尾款</td>
+                    <td><span class="tag muted">否</span></td>
+                    <td><span class="tag ok">已转付款</span></td>
+                    <td><button class="link">查看付款单</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="page-panel" id="analysis-page">
+          <div class="filter-card">
+            <div class="filter-grid analysis-filters">
+              <label>
+                分析月份
+                <input value="2026-10" />
+              </label>
+              <label>
+                部门
+                <select>
+                  <option>全部部门（含下级）</option>
+                  <option>产品研发部</option>
+                  <option>技术服务部</option>
+                  <option>市场管理部</option>
+                </select>
+              </label>
+              <label>
+                项目负责人
+                <select>
+                  <option>全部</option>
+                  <option>李晓天</option>
+                  <option>余程倩</option>
+                  <option>杜连腾</option>
+                </select>
+              </label>
+              <label>
+                项目状态
+                <select>
+                  <option>全部状态</option>
+                  <option>在研</option>
+                  <option>实施中</option>
+                  <option>预立项</option>
+                </select>
+              </label>
+              <div class="filter-actions">
+                <button class="primary">查询</button>
+                <button class="ghost">导出分析</button>
+              </div>
+            </div>
+          </div>
+
+          <section class="cash-ribbon analysis-ribbon" aria-label="经营资金流时间带">
+            <div class="ribbon-head">
+              <span>2026 年 10 月经营资金流</span>
+              <strong>独立分析页：不混入台账录入</strong>
+            </div>
+            <div class="ribbon-track">
+              <div class="ribbon-item income">
+                <small>本月计划回款</small>
+                <strong>¥ 3,978,000</strong>
+                <span>8 个收入合同</span>
+              </div>
+              <div class="ribbon-item done">
+                <small>本月实际回款</small>
+                <strong>¥ 1,420,000</strong>
+                <span>完成率 35.7%</span>
+              </div>
+              <div class="ribbon-item warn">
+                <small>本月计划付款</small>
+                <strong>¥ 2,881,600</strong>
+                <span>3 笔加急</span>
+              </div>
+              <div class="ribbon-item risk">
+                <small>逾期未收</small>
+                <strong>¥ 760,000</strong>
+                <span>2 个风险项目</span>
+              </div>
+            </div>
+          </section>
+
+          <div class="analysis-grid">
+            <article class="analysis-card wide">
+              <div class="analysis-head">
+                <div>
+                  <h2>月度收付趋势</h2>
+                  <p>只做经营分析，不在这里编辑计划或新增单据。</p>
+                </div>
+                <span class="tag ok">近 6 个月</span>
+              </div>
+              <div class="bar-chart" aria-label="月度收付趋势示意图">
+                <div style="--in: 72%; --out: 42%"><span>5月</span></div>
+                <div style="--in: 46%; --out: 58%"><span>6月</span></div>
+                <div style="--in: 64%; --out: 48%"><span>7月</span></div>
+                <div style="--in: 81%; --out: 52%"><span>8月</span></div>
+                <div style="--in: 38%; --out: 67%"><span>9月</span></div>
+                <div style="--in: 54%; --out: 76%"><span>10月</span></div>
+              </div>
+              <div class="legend">
+                <span><i class="in"></i> 实际回款</span>
+                <span><i class="out"></i> 计划付款</span>
+              </div>
+            </article>
+
+            <article class="analysis-card">
+              <div class="analysis-head">
+                <h2>回款完成率</h2>
+                <span class="tag warn">35.7%</span>
+              </div>
+              <div class="donut" style="--value: 35.7%">
+                <strong>35.7%</strong>
+                <span>本月计划完成</span>
+              </div>
+              <p class="analysis-note">本月计划 ¥397.8 万，实际回款 ¥142 万。</p>
+            </article>
+
+            <article class="analysis-card">
+              <div class="analysis-head">
+                <h2>资金净流入</h2>
+                <span class="tag risk">-146.2 万</span>
+              </div>
+              <div class="net-flow">
+                <div>
+                  <span>实际回款</span>
+                  <strong>¥ 1,420,000</strong>
+                </div>
+                <div>
+                  <span>计划付款</span>
+                  <strong>¥ 2,881,600</strong>
+                </div>
+              </div>
+              <p class="analysis-note">若付款计划全部执行，本月经营现金流为负。</p>
+            </article>
+
+            <article class="analysis-card wide">
+              <div class="analysis-head">
+                <div>
+                  <h2>风险项目排行</h2>
+                  <p>按逾期未收、预计完成临近、加急付款综合排序。</p>
+                </div>
+              </div>
+              <div class="risk-list">
+                <div>
+                  <strong>智能焊接辅助机器人项目课题研发</strong>
+                  <span>实际未收 ¥1,760,000 · 预计 11/30 完成</span>
+                  <em>回款风险</em>
+                </div>
+                <div>
+                  <strong>激光焊接机器人设备销售</strong>
+                  <span>逾期未收 ¥310,000 · 验收资料待确认</span>
+                  <em>逾期 8 天</em>
+                </div>
+                <div>
+                  <strong>爬壁焊接辅助机器人设备采购</strong>
+                  <span>计划付款 ¥405,000 · 第四笔合同款</span>
+                  <em>加急付款</em>
+                </div>
+              </div>
+            </article>
+
+            <article class="analysis-card">
+              <div class="analysis-head">
+                <h2>收款责任部门</h2>
+              </div>
+              <div class="rank-list">
+                <div><span>产品研发部</span><strong>¥ 1,890,000</strong></div>
+                <div><span>市场管理部</span><strong>¥ 5,374,800</strong></div>
+                <div><span>技术服务部</span><strong>¥ 67,840</strong></div>
+              </div>
+            </article>
+
+            <article class="analysis-card">
+              <div class="analysis-head">
+                <h2>付款结构</h2>
+              </div>
+              <div class="rank-list">
+                <div><span>采购货款</span><strong>¥ 2,250,800</strong></div>
+                <div><span>研发费用</span><strong>¥ 525,000</strong></div>
+                <div><span>个人收款</span><strong>¥ 86,500</strong></div>
+              </div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <aside class="drawer" id="receipt-drawer" aria-hidden="true">
+      <div class="drawer-panel">
+        <div class="drawer-head">
+          <div>
+            <p class="eyebrow">编辑本月回款计划</p>
+            <h2>智能焊接辅助机器人项目课题研发</h2>
+          </div>
+          <button class="icon" data-close>×</button>
+        </div>
+        <div class="drawer-body">
+          <div class="summary-box">
+            <span>实际未收</span>
+            <strong>¥ 1,760,000</strong>
+            <small>累计已收 ¥440,000 / 合同应收 ¥2,200,000</small>
+          </div>
+          <label>
+            本月收款计划
+            <input value="990000" />
+          </label>
+          <label>
+            预计完成时间
+            <input value="2026-11-30" />
+          </label>
+          <label>
+            项目进展及计划
+            <textarea>已完成样机联调；9 月底提交技术方案结项材料，预计 11 月前完成验收。</textarea>
+          </label>
+          <label>
+            备注
+            <textarea placeholder="补充客户沟通、验收资料、特殊风险等"></textarea>
+          </label>
+        </div>
+        <div class="drawer-actions">
+          <button class="ghost" data-close>取消</button>
+          <button class="primary" data-close>保存计划</button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="modal-mask" id="payment-modal" aria-hidden="true">
+      <section class="modal">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">新增付款计划</p>
+            <h2>先做资金计划，后续再转付款审批</h2>
+          </div>
+          <button class="icon" data-close>×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-section">
+            <h3>计划基础信息</h3>
+            <div class="form-grid">
+              <label>资金计划周期<input value="2026-10" /></label>
+              <label>部门<select><option>产品研发部</option><option>技术服务部</option></select></label>
+              <label>经办人<select><option>杜连腾</option><option>李晓天</option><option>余程倩</option></select></label>
+              <label>付款类别<select><option>采购货款</option><option>研发费用</option><option>服务费</option><option>差旅费</option><option>劳务费</option></select></label>
+              <label>计划付款日期<input value="2026-10-22" /></label>
+              <label>是否加急<select><option>否</option><option>是</option></select></label>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <h3>业务来源</h3>
+            <div class="source-cards">
+              <button class="source-card active">
+                <strong>支出合同阶段</strong>
+                <span>从合同和阶段带出剩余应付</span>
+              </button>
+              <button class="source-card">
+                <strong>项目费用</strong>
+                <span>用于报销、差旅、无合同费用</span>
+              </button>
+              <button class="source-card">
+                <strong>手工计划</strong>
+                <span>先列计划，后续再归类转单</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <div class="section-row">
+              <h3>收款方与金额</h3>
+              <div class="segmented" data-payee-tabs>
+                <button class="active" data-payee="supplier">供应商</button>
+                <button data-payee="employee">员工</button>
+                <button data-payee="person">外部个人</button>
+              </div>
+            </div>
+
+            <div class="payee-pane active" id="payee-supplier">
+              <div class="form-grid">
+                <label>供应商<select><option>沈阳新松机器人自动化股份有限公司</option></select></label>
+                <label>收款户名<input value="沈阳新松机器人自动化股份有限公司" /></label>
+                <label>开户银行<input value="招商银行沈阳分行" /></label>
+                <label>银行账号<input value="**** **** **** 8721" /></label>
+                <label>计划付款金额<input value="405000" /></label>
+                <label>付款方式<select><option>银行转账</option></select></label>
+              </div>
+            </div>
+
+            <div class="payee-pane" id="payee-employee">
+              <div class="form-grid">
+                <label>员工<select><option>李晓天 / 产品研发部</option><option>余程倩 / 技术服务部</option></select></label>
+                <label>收款人<input value="李晓天" /></label>
+                <label>开户银行<input placeholder="填写员工收款银行" /></label>
+                <label>银行账号<input placeholder="填写后保存为本计划快照" /></label>
+                <label>计划付款金额<input value="12800" /></label>
+                <label>付款方式<select><option>银行转账</option></select></label>
+              </div>
+            </div>
+
+            <div class="payee-pane" id="payee-person">
+              <div class="form-grid">
+                <label>外部个人姓名<input value="王立强" /></label>
+                <label>证件后四位（可选）<input placeholder="例如 6621" /></label>
+                <label>开户银行<input value="中国建设银行深圳科技园支行" /></label>
+                <label>银行账号<input value="**** **** **** 6621" /></label>
+                <label>计划付款金额<input value="18500" /></label>
+                <label>联系方式（可选）<input placeholder="手机号或微信备注" /></label>
+              </div>
+              <p class="notice">个人收款方不会自动进入供应商库；账号和证件信息列表脱敏，按权限查看完整值。</p>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <h3>用途与备注</h3>
+            <div class="form-grid single">
+              <label>资金用途说明<textarea>专家现场调试服务劳务费，完成设备联调后支付。</textarea></label>
+              <label>备注<textarea placeholder="特殊事项、资料缺口、付款前置条件等"></textarea></label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="ghost" data-close>保存草稿</button>
+          <button class="primary" data-close>提交计划</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

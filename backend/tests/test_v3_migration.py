@@ -18,11 +18,14 @@ from sqlalchemy import func, inspect, select
 from app.db.session import SessionLocal, engine
 from fastapi import HTTPException
 
-from app.db.models import AdminPermission, ApprovalPosition, ApprovalPositionMember, ApprovalTask, ConfigOption, Department, Notification, NotificationPolicy, Payment, Project, ProjectBudgetItem, ProjectCostEntry, ProjectExpense, ProjectExpenseAttachment, ProjectExpensePayment, ProjectLedgerEntry, Role, RoleDataScope, RolePermission, SystemNotification, User, UserRole, UserRoleScope, WorkflowTask, Worklog
+from app.db.models import AdminPermission, ApprovalPosition, ApprovalPositionMember, ApprovalTask, ConfigOption, Department, Notification, NotificationPolicy, Payment, Project, ProjectBudgetItem, ProjectCostEntry, ProjectExpense, ProjectExpenseAttachment, ProjectExpensePayment, ProjectLedgerEntry, Role, RoleDataScope, RolePermission, SystemNotification, User, UserRole, UserRoleScope, WorkCalendarDay, WorkflowTask, Worklog
 from app.main import (
     activate_contract,
     approve_payment,
+    approve_project_cost_entry,
     approve_receipt,
+    approve_task,
+    convert_pre_approval_worklogs_to_management,
     create_contract,
     create_contract_stage,
     create_payment,
@@ -36,13 +39,18 @@ from app.main import (
     demo_seed_enabled,
     get_role_permissions,
     get_effective_permissions,
+    list_admin_work_calendar,
     list_project_board,
     list_project_board_options,
+    list_admin_worklogs,
+    list_worklog_monthly_ledger,
+    list_worklog_monthly_ledger_details,
     list_payment_attachments,
     list_projects_page,
     project_finance_summary,
     project_view,
     project_expense_view,
+    preview_pre_approval_worklog_conversion,
     approve_workflow_task,
     confirm_expense_payment,
     list_workflow_tasks,
@@ -52,12 +60,15 @@ from app.main import (
     submit_payment,
     run_stage_reminder_scan_once,
     send_cash_approval_notifications,
+    cash_approval_detail_url,
     seed_data,
     update_user_roles,
     create_role,
     FIRST_FEISHU_ADMIN_MARKER,
     initialize_first_feishu_admin,
+    is_statutory_workday,
     ensure_oauth_user,
+    previous_workday,
     system_admin_user_ids,
     reset_rbac_configuration,
     reject_payment,
@@ -66,11 +77,16 @@ from app.main import (
     update_notification_policies,
     update_project,
     update_payment,
+    update_market_department,
     withdraw_worklog,
+    upsert_admin_work_calendar_day,
+    delete_admin_work_calendar_day,
+    worklog_workday_count,
+    workload_report,
     upgrade_schema,
     workbench_overview,
 )
-from app.schemas import CashRejectAction, ContractCreate, ContractStageCreate, DataScopeInput, NotificationPolicyBatchItem, NotificationPolicyBatchUpdate, PaymentCreate, PaymentUpdate, ProjectCreate, ProjectCostEntryCreate, ProjectExpenseCreate, ProjectExpensePaymentAction, ProjectUpdate, ReceiptCreate, RoleCreate, RolePermissionInput, RolePermissionsUpdate, SupplierCreate, UserRoleUpdate, WorkflowTaskAction, WorklogCreate
+from app.schemas import ApprovalAction, CashRejectAction, ContractCreate, ContractStageCreate, DataScopeInput, NotificationPolicyBatchItem, NotificationPolicyBatchUpdate, PaymentCreate, PaymentUpdate, ProjectCreate, ProjectCostEntryCreate, ProjectCostReviewAction, ProjectExpenseCreate, ProjectExpensePaymentAction, ProjectUpdate, ReceiptCreate, RoleCreate, RolePermissionInput, RolePermissionsUpdate, SupplierCreate, UserRoleUpdate, WorkCalendarDayUpsert, WorkflowTaskAction, WorklogCreate
 
 
 class V3MigrationIntegrationTest(unittest.TestCase):
@@ -105,7 +121,7 @@ class V3MigrationIntegrationTest(unittest.TestCase):
         db = SessionLocal()
         created_ids: list[int] = []
         try:
-            project = db.scalar(select(Project).where(Project.status == "ACTIVE", Project.allow_worklog == True).order_by(Project.id))
+            project = db.scalar(select(Project).where(Project.status == "ACTIVE", Project.allow_worklog == True, Project.project_type == "RND_PROJECT").order_by(Project.id))
             self.assertIsNotNone(project)
             start = date(date.today().year + 5, 1, 6)
             while start.weekday() >= 5:
@@ -150,6 +166,252 @@ class V3MigrationIntegrationTest(unittest.TestCase):
             )
             created_ids.append(created_default.id)
             self.assertEqual(created_default.fill_date, default_start)
+        finally:
+            if created_ids:
+                db.query(Worklog).filter(Worklog.id.in_(created_ids)).delete(synchronize_session=False)
+                db.commit()
+            db.close()
+
+    def test_non_project_worklog_can_be_saved_without_project_id(self):
+        inspector = inspect(engine)
+        project_column = next(column for column in inspector.get_columns("worklogs") if column["name"] == "project_id")
+        self.assertTrue(project_column["nullable"])
+
+        db = SessionLocal()
+        created_ids: list[int] = []
+        try:
+            day = date(date.today().year + 5, 2, 3)
+            while day.weekday() >= 5:
+                day += timedelta(days=1)
+            created = create_worklog(
+                WorklogCreate(
+                    project_id=None,
+                    stage="管理",
+                    work_type="MARKETING_WORK",
+                    work_status="LOCAL",
+                    fill_date=day,
+                    start_date=day,
+                    end_date=day,
+                    quantity=1,
+                    unit="DAY",
+                    description="非项目市场营销工时不关联项目回归测试",
+                    submit=False,
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            created_ids.append(created.id)
+            self.assertIsNone(created.project_id)
+            self.assertEqual(created.project_name_snapshot, "非项目工时")
+        finally:
+            if created_ids:
+                db.query(Worklog).filter(Worklog.id.in_(created_ids)).delete(synchronize_session=False)
+                db.commit()
+            db.close()
+
+    def test_statutory_work_calendar_counts_adjusted_workdays_and_holidays(self):
+        db = SessionLocal()
+        try:
+            self.assertTrue(is_statutory_workday(db, date(2026, 1, 4)))  # 周日调休上班
+            self.assertFalse(is_statutory_workday(db, date(2026, 1, 1)))  # 元旦法定假日
+            self.assertEqual(worklog_workday_count(db, date(2026, 1, 1), date(2026, 1, 4)), 1)
+            self.assertEqual(previous_workday(db, date(2026, 2, 24)), date(2026, 2, 14))
+            self.assertEqual(previous_workday(db, date(2026, 2, 15)), date(2026, 2, 14))
+        finally:
+            db.close()
+
+    def test_worklog_quantity_uses_statutory_work_calendar(self):
+        db = SessionLocal()
+        created_ids: list[int] = []
+        try:
+            project = db.scalar(select(Project).where(Project.status == "ACTIVE", Project.allow_worklog == True).order_by(Project.id))
+            self.assertIsNotNone(project)
+            adjusted_workday = create_worklog(
+                WorklogCreate(
+                    project_id=project.id,
+                    stage="开发",
+                    work_type="RND_PROJECT_WORK",
+                    work_status="LOCAL",
+                    fill_date=date(2026, 1, 4),
+                    start_date=date(2026, 1, 4),
+                    end_date=date(2026, 1, 4),
+                    quantity=1,
+                    unit="DAY",
+                    description="调休周末可填报回归测试",
+                    submit=False,
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            created_ids.append(adjusted_workday.id)
+
+            with self.assertRaises(HTTPException) as error:
+                create_worklog(
+                    WorklogCreate(
+                        project_id=project.id,
+                        stage="开发",
+                        work_type="RND_PROJECT_WORK",
+                        work_status="LOCAL",
+                        fill_date=date(2026, 1, 1),
+                        start_date=date(2026, 1, 1),
+                        end_date=date(2026, 1, 1),
+                        quantity=1,
+                        unit="DAY",
+                        description="法定假日不可填报回归测试",
+                        submit=False,
+                    ),
+                    x_demo_user_id=1,
+                    db=db,
+                )
+            self.assertEqual(error.exception.detail, "WORKLOG_NO_WORKDAY")
+        finally:
+            if created_ids:
+                db.query(Worklog).filter(Worklog.id.in_(created_ids)).delete(synchronize_session=False)
+                db.commit()
+            db.close()
+
+    def test_admin_work_calendar_crud_and_builtin_delete_guard(self):
+        db = SessionLocal()
+        custom_day = date(2036, 9, 1)
+        while custom_day.weekday() < 5:
+            custom_day += timedelta(days=1)
+        try:
+            saved = upsert_admin_work_calendar_day(
+                custom_day,
+                WorkCalendarDayUpsert(day_type="WORKDAY", name="临时调休上班", source="回归测试"),
+                1,
+                db,
+            )
+            self.assertEqual(saved.day_type, "WORKDAY")
+            self.assertTrue(is_statutory_workday(db, custom_day))
+            listed = list_admin_work_calendar(2036, 1, db)
+            self.assertIn(custom_day, {item.calendar_date for item in listed.items})
+
+            deleted = delete_admin_work_calendar_day(custom_day, 1, db)
+            self.assertTrue(deleted["deleted"])
+            self.assertFalse(is_statutory_workday(db, custom_day))
+
+            with self.assertRaises(HTTPException) as error:
+                delete_admin_work_calendar_day(date(2026, 1, 1), 1, db)
+            self.assertEqual(error.exception.detail, "BUILTIN_WORK_CALENDAR_DELETE_FORBIDDEN")
+        finally:
+            row = db.scalar(select(WorkCalendarDay).where(WorkCalendarDay.calendar_date == custom_day))
+            if row:
+                db.delete(row)
+                db.commit()
+            db.close()
+
+    def test_workload_report_work_type_distribution_uses_chinese_labels(self):
+        db = SessionLocal()
+        created_ids: list[int] = []
+        try:
+            project = db.scalar(select(Project).where(Project.status == "ACTIVE", Project.allow_worklog == True, Project.project_type == "RND_PROJECT").order_by(Project.id))
+            self.assertIsNotNone(project)
+            day = date(2035, 6, 1)
+            while day.weekday() >= 5:
+                day += timedelta(days=1)
+            item = create_worklog(
+                WorklogCreate(
+                    project_id=project.id,
+                    stage="开发",
+                    work_type="RND_PROJECT_WORK",
+                    work_status="LOCAL",
+                    fill_date=day,
+                    start_date=day,
+                    end_date=day,
+                    quantity=1,
+                    unit="DAY",
+                    description="工时类型分布中文标签回归测试",
+                    submit=False,
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            created_ids.append(item.id)
+            row = db.get(Worklog, item.id)
+            row.status = "APPROVED"
+            db.commit()
+
+            report = workload_report(
+                period_start=day,
+                period_end=day,
+                department_id=None,
+                department_name=None,
+                db=db,
+            )
+            work_type_names = {row["name"] for row in report.breakdowns["by_work_type_unit"]}
+            self.assertIn("研发项目工时", work_type_names)
+            self.assertNotIn("RND_PROJECT_WORK", work_type_names)
+        finally:
+            if created_ids:
+                db.query(Worklog).filter(Worklog.id.in_(created_ids)).delete(synchronize_session=False)
+                db.commit()
+            db.close()
+
+    def test_worklog_monthly_ledger_summary_has_no_draft_days_and_drills_down(self):
+        db = SessionLocal()
+        created_ids: list[int] = []
+        try:
+            project = db.scalar(select(Project).where(Project.status == "ACTIVE", Project.allow_worklog == True).order_by(Project.id))
+            self.assertIsNotNone(project)
+            month_start = date(2032, 3, 1)
+            statuses = ["APPROVED", "PENDING_APPROVAL", "REJECTED", "DRAFT"]
+            for offset, status in enumerate(statuses):
+                day = month_start + timedelta(days=offset)
+                while day.weekday() >= 5:
+                    day += timedelta(days=1)
+                created = create_worklog(
+                    WorklogCreate(
+                        project_id=project.id,
+                        stage="开发",
+                        work_type="PROJECT",
+                        work_status="LOCAL",
+                        fill_date=day,
+                        start_date=day,
+                        end_date=day,
+                        quantity=1,
+                        unit="DAY",
+                        description=f"月度台账{status}回归测试",
+                        submit=False,
+                    ),
+                    x_demo_user_id=1,
+                    db=db,
+                )
+                created_ids.append(created.id)
+                row = db.get(Worklog, created.id)
+                row.status = status
+            db.commit()
+
+            ledger = list_worklog_monthly_ledger(
+                month="2032-03",
+                project_keyword=None,
+                project_type=None,
+                project_status=None,
+                department_id=None,
+                department_name=None,
+                owner_user_id=None,
+                x_demo_user_id=1,
+                db=db,
+            )
+            payload = ledger.model_dump()
+            self.assertNotIn("draft_days", payload)
+            self.assertNotIn("draft_days", payload["items"][0])
+            target = next(item for item in ledger.items if item.project_id == project.id)
+            self.assertEqual(target.approved_days, 1)
+            self.assertEqual(target.pending_days, 1)
+            self.assertEqual(target.rejected_days, 1)
+            self.assertEqual(target.total_days, 4)
+
+            details = list_worklog_monthly_ledger_details(
+                project.id,
+                month="2032-03",
+                status=None,
+                user_id=None,
+                x_demo_user_id=1,
+                db=db,
+            )
+            self.assertEqual(details.project_id, project.id)
+            self.assertGreaterEqual(len(details.items), 4)
         finally:
             if created_ids:
                 db.query(Worklog).filter(Worklog.id.in_(created_ids)).delete(synchronize_session=False)
@@ -265,6 +527,17 @@ class V3MigrationIntegrationTest(unittest.TestCase):
                 SystemNotification.source_id == entry.id,
             ))
             self.assertIsNotNone(task)
+            approved = approve_project_cost_entry(entry.id, ProjectCostReviewAction(comment="复核通过"), x_demo_user_id=2, db=db)
+            self.assertEqual(approved.status, "APPROVED")
+            duplicate = approve_project_cost_entry(entry.id, ProjectCostReviewAction(comment="重复点击"), x_demo_user_id=2, db=db)
+            self.assertEqual(duplicate.status, "APPROVED")
+            ledger_count = db.scalar(
+                select(func.count()).select_from(ProjectLedgerEntry).where(
+                    ProjectLedgerEntry.source_type == "PROJECT_COST_ENTRY",
+                    ProjectLedgerEntry.source_id == entry.id,
+                )
+            )
+            self.assertEqual(ledger_count, 1)
         finally:
             db.close()
 
@@ -487,6 +760,152 @@ class V3MigrationIntegrationTest(unittest.TestCase):
             db.commit()
             db.close()
 
+    def test_worklog_admin_and_monthly_ledger_respect_department_data_scope(self):
+        db = SessionLocal()
+        suffix = uuid.uuid4().hex[:8]
+        role = None
+        worklog_ids: list[int] = []
+        project_ids: list[int] = []
+        user_ids: list[int] = []
+        department_ids: list[int] = []
+        try:
+            root = Department(feishu_department_id=f"scope-root-{suffix}", name=f"范围部门{suffix}", parent_feishu_department_id=None, parent_name=None, is_active=True)
+            child = Department(feishu_department_id=f"scope-child-{suffix}", name=f"范围子部门{suffix}", parent_feishu_department_id=root.feishu_department_id, parent_name=root.name, is_active=True)
+            outside = Department(feishu_department_id=f"scope-out-{suffix}", name=f"范围外部门{suffix}", parent_feishu_department_id=None, parent_name=None, is_active=True)
+            db.add_all([root, child, outside])
+            db.flush()
+            department_ids.extend([root.id, child.id, outside.id])
+            viewer = User(feishu_user_id=f"viewer-{suffix}", open_id=f"viewer-open-{suffix}", name=f"范围查看人{suffix}", department_id=root.id, employment_status="ACTIVE")
+            scoped_user = User(feishu_user_id=f"scoped-{suffix}", open_id=f"scoped-open-{suffix}", name=f"范围内员工{suffix}", department_id=child.id, employment_status="ACTIVE")
+            outside_user = User(feishu_user_id=f"outside-{suffix}", open_id=f"outside-open-{suffix}", name=f"范围外员工{suffix}", department_id=outside.id, employment_status="ACTIVE")
+            db.add_all([viewer, scoped_user, outside_user])
+            db.flush()
+            user_ids.extend([viewer.id, scoped_user.id, outside_user.id])
+            scoped_project = Project(code=f"SCOPE-IN-{suffix}", name=f"范围内项目{suffix}", project_type="RND_PROJECT", owner_name=scoped_user.name, owner_user_id=scoped_user.id, department_id=child.id, department_name=child.name, status="ACTIVE", allow_worklog=True)
+            outside_project = Project(code=f"SCOPE-OUT-{suffix}", name=f"范围外项目{suffix}", project_type="RND_PROJECT", owner_name=outside_user.name, owner_user_id=outside_user.id, department_id=outside.id, department_name=outside.name, status="ACTIVE", allow_worklog=True)
+            db.add_all([scoped_project, outside_project])
+            db.flush()
+            project_ids.extend([scoped_project.id, outside_project.id])
+            rows = [
+                Worklog(user_id=scoped_user.id, user_name_snapshot=scoped_user.name, project_id=scoped_project.id, project_name_snapshot=scoped_project.name, stage="开发", work_type="RND_PROJECT_WORK", work_status="LOCAL", fill_date=date(2034, 4, 1), start_date=date(2034, 4, 1), end_date=date(2034, 4, 1), quantity=1, unit="DAY", description=f"范围内项目工时{suffix}", status="APPROVED"),
+                Worklog(user_id=scoped_user.id, user_name_snapshot=scoped_user.name, project_id=None, project_name_snapshot="管理工时", stage="管理", work_type="MANAGEMENT_WORK", work_status="LOCAL", fill_date=date(2034, 4, 2), start_date=date(2034, 4, 2), end_date=date(2034, 4, 2), quantity=1, unit="DAY", description=f"范围内非项目工时{suffix}", status="APPROVED"),
+                Worklog(user_id=outside_user.id, user_name_snapshot=outside_user.name, project_id=outside_project.id, project_name_snapshot=outside_project.name, stage="开发", work_type="RND_PROJECT_WORK", work_status="LOCAL", fill_date=date(2034, 4, 3), start_date=date(2034, 4, 3), end_date=date(2034, 4, 3), quantity=1, unit="DAY", description=f"范围外项目工时{suffix}", status="APPROVED"),
+            ]
+            db.add_all(rows)
+            db.flush()
+            worklog_ids.extend([row.id for row in rows])
+            role = create_role(RoleCreate(code=f"scope_worklog_{suffix}", name=f"工时范围角色{suffix}"), 1, db)
+            update_role_permissions(
+                role.id,
+                RolePermissionsUpdate(
+                    permissions=[RolePermissionInput(menu_code="worklogs", actions=["VIEW", "EXPORT", "EDIT", "DELETE"])],
+                    scopes=[DataScopeInput(resource="worklogs", scope_type="DEPARTMENT_AND_CHILDREN", department_id=root.id)],
+                ),
+                1,
+                db,
+            )
+            db.add(UserRole(user_id=viewer.id, role_id=role.id, is_active=True))
+            db.commit()
+
+            ledger = list_admin_worklogs(
+                period_start=date(2034, 4, 1),
+                period_end=date(2034, 4, 30),
+                department_id=None,
+                department_name=None,
+                user_id=None,
+                project_id=None,
+                status=None,
+                keyword=suffix,
+                page=1,
+                page_size=20,
+                x_demo_user_id=viewer.id,
+                db=db,
+            )
+            descriptions = {item.description for item in ledger.items}
+            self.assertIn(f"范围内项目工时{suffix}", descriptions)
+            self.assertIn(f"范围内非项目工时{suffix}", descriptions)
+            self.assertNotIn(f"范围外项目工时{suffix}", descriptions)
+
+            monthly = list_worklog_monthly_ledger(
+                month="2034-04",
+                project_keyword=suffix,
+                project_type=None,
+                project_status=None,
+                department_id=None,
+                department_name=None,
+                owner_user_id=None,
+                x_demo_user_id=viewer.id,
+                db=db,
+            )
+            monthly_project_names = {item.project_name for item in monthly.items}
+            self.assertIn(scoped_project.name, monthly_project_names)
+            self.assertNotIn(outside_project.name, monthly_project_names)
+        finally:
+            if worklog_ids:
+                db.query(Worklog).filter(Worklog.id.in_(worklog_ids)).delete(synchronize_session=False)
+            if role:
+                db.query(UserRoleScope).filter(UserRoleScope.role_id == role.id).delete(synchronize_session=False)
+                db.query(UserRole).filter(UserRole.role_id == role.id).delete(synchronize_session=False)
+                db.query(RolePermission).filter(RolePermission.role_id == role.id).delete(synchronize_session=False)
+                db.query(RoleDataScope).filter(RoleDataScope.role_id == role.id).delete(synchronize_session=False)
+                db.delete(db.get(Role, role.id))
+            if project_ids:
+                db.query(Project).filter(Project.id.in_(project_ids)).delete(synchronize_session=False)
+            if user_ids:
+                db.query(User).filter(User.id.in_(user_ids)).delete(synchronize_session=False)
+            if department_ids:
+                db.query(Department).filter(Department.id.in_(department_ids)).delete(synchronize_session=False)
+            db.commit()
+            db.close()
+
+    def test_pre_approval_conversion_requires_worklog_edit_permission(self):
+        db = SessionLocal()
+        suffix = uuid.uuid4().hex[:8]
+        role = None
+        project = None
+        worklog = None
+        user = None
+        try:
+            user = User(feishu_user_id=f"convert-user-{suffix}", open_id=f"convert-open-{suffix}", name=f"转换用户{suffix}", employment_status="ACTIVE")
+            db.add(user)
+            db.flush()
+            project = Project(code=f"CONVERT-{suffix}", name=f"转换项目{suffix}", project_type="RND_PROJECT", owner_name=user.name, owner_user_id=user.id, status="PRE_APPROVAL", allow_worklog=True)
+            db.add(project)
+            db.flush()
+            worklog = Worklog(user_id=user.id, user_name_snapshot=user.name, project_id=project.id, project_name_snapshot=project.name, stage="开发", work_type="RND_PROJECT_WORK", work_status="LOCAL", fill_date=date(2034, 5, 6), start_date=date(2034, 5, 6), end_date=date(2034, 5, 6), quantity=1, unit="DAY", description=f"转换权限工时{suffix}", status="APPROVED")
+            db.add(worklog)
+            role = create_role(RoleCreate(code=f"convert_project_only_{suffix}", name=f"仅项目编辑角色{suffix}"), 1, db)
+            update_role_permissions(
+                role.id,
+                RolePermissionsUpdate(
+                    permissions=[RolePermissionInput(menu_code="projects", actions=["VIEW", "EDIT"])],
+                    scopes=[DataScopeInput(resource="projects", scope_type="OWNED_PROJECTS")],
+                ),
+                1,
+                db,
+            )
+            db.add(UserRole(user_id=user.id, role_id=role.id, is_active=True))
+            db.commit()
+
+            with self.assertRaises(HTTPException) as error:
+                convert_pre_approval_worklogs_to_management(project.id, {"reason": "权限回归"}, user.id, db)
+            self.assertEqual(error.exception.status_code, 403)
+        finally:
+            if worklog:
+                db.delete(db.get(Worklog, worklog.id))
+            if project:
+                db.delete(db.get(Project, project.id))
+            if role:
+                db.query(UserRoleScope).filter(UserRoleScope.role_id == role.id).delete(synchronize_session=False)
+                db.query(UserRole).filter(UserRole.role_id == role.id).delete(synchronize_session=False)
+                db.query(RolePermission).filter(RolePermission.role_id == role.id).delete(synchronize_session=False)
+                db.query(RoleDataScope).filter(RoleDataScope.role_id == role.id).delete(synchronize_session=False)
+                db.delete(db.get(Role, role.id))
+            if user:
+                db.delete(db.get(User, user.id))
+            db.commit()
+            db.close()
+
     def test_rbac_reset_keeps_only_system_admin_for_reconfiguration(self):
         db = SessionLocal()
         extra_role = Role(code="extra_role_for_reset", name="待清理角色", is_builtin=False, is_active=True)
@@ -530,16 +949,24 @@ class V3MigrationIntegrationTest(unittest.TestCase):
             policy = db.scalar(select(NotificationPolicy).where(NotificationPolicy.notification_type == "PENDING_RECEIPT"))
             policy.send_channel = "mock"
             db.commit()
-            sent = send_cash_approval_notifications(
-                db,
-                "receipt",
-                900001,
-                "收款单",
-                "RC-TEST-900001",
-                "出纳通知测试项目",
-                12345,
-                "杨阳",
-            )
+            with patch("app.main.feishu.notify_cash_approval_submitted", return_value=SimpleNamespace(status="SENT", message_id="msg-cash-approval-url", error_message=None)) as notify_mock:
+                sent = send_cash_approval_notifications(
+                    db,
+                    "receipt",
+                    900001,
+                    "收款单",
+                    "RC-TEST-900001",
+                    "出纳通知测试项目",
+                    12345,
+                    "杨阳",
+                )
+                self.assertTrue(notify_mock.called)
+                self.assertTrue(
+                    all(
+                        call.args[6].endswith("/?page=receiptDetail&id=900001")
+                        for call in notify_mock.call_args_list
+                    )
+                )
             db.commit()
             rows = db.scalars(
                 select(SystemNotification).where(
@@ -563,6 +990,7 @@ class V3MigrationIntegrationTest(unittest.TestCase):
                 ),
                 0,
             )
+            self.assertTrue(cash_approval_detail_url("payment", 900002).endswith("/?page=paymentDetail&id=900002"))
         finally:
             if candidate:
                 db.query(UserRole).filter(UserRole.user_id == candidate.id).delete(synchronize_session=False)
@@ -793,6 +1221,42 @@ class V3MigrationIntegrationTest(unittest.TestCase):
             )
             self.assertEqual(page_after_delete.total, 0)
         finally:
+            db.close()
+
+    def test_project_create_auto_generates_code_when_blank(self):
+        db = SessionLocal()
+        created_id = None
+        try:
+            department = db.execute(
+                select(Department).where(Department.name == "研发中心")
+            ).scalar_one()
+            created = create_project(
+                ProjectCreate(
+                    code="",
+                    name=f"自动编号项目-{uuid.uuid4().hex[:8]}",
+                    project_type="RND_PROJECT",
+                    owner_user_id=1,
+                    department_id=department.id,
+                    approver_user_id=2,
+                    leader_user_id=3,
+                    customer_id=None,
+                    start_date="2026-10-01",
+                    planned_end_date="2026-12-31",
+                    description="验证新增项目未填编码时自动生成。",
+                    budget_days=0,
+                    budget_cost=0,
+                    status="PRE_APPROVAL",
+                    allow_worklog=True,
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            created_id = created.id
+            self.assertTrue(created.code.startswith("RND-"))
+            self.assertGreaterEqual(len(created.code), 17)
+        finally:
+            if created_id:
+                delete_project(created_id, x_demo_user_id=1, db=db)
             db.close()
 
     def test_contract_receipt_payment_approval_flow(self):
@@ -1527,6 +1991,290 @@ class V3MigrationIntegrationTest(unittest.TestCase):
             self.assertEqual(payment.payee_bank_name, supplier.bank_branch or supplier.bank_name)
             self.assertEqual(payment.payee_bank_account, supplier.bank_account)
         finally:
+            db.close()
+
+    def test_v3088_non_project_worklog_uses_department_manager(self):
+        db = SessionLocal()
+        worklog_id = None
+        try:
+            submitter = db.get(User, 1)
+            manager = db.scalar(select(User).where(User.id != submitter.id, User.employment_status == "ACTIVE").order_by(User.id))
+            self.assertIsNotNone(submitter)
+            self.assertIsNotNone(manager)
+            department = db.get(Department, submitter.department_id) if submitter.department_id else db.scalar(select(Department).order_by(Department.id))
+            self.assertIsNotNone(department)
+            submitter.department_id = department.id
+            department.manager_user_id = manager.id
+            department.manager_name = manager.name
+            db.commit()
+
+            start = date(date.today().year + 6, 3, 2)
+            while start.weekday() >= 5:
+                start += timedelta(days=1)
+            with patch("app.main.feishu.notify_approval_submitted", return_value=SimpleNamespace(status="SENT", message_id="msg-non-project", error_message=None)):
+                item = create_worklog(
+                    WorklogCreate(
+                        project_id=None,
+                        stage="管理",
+                        work_type="MANAGEMENT_WORK",
+                        work_status="LOCAL",
+                        start_date=start,
+                        end_date=start,
+                        quantity=1,
+                        unit="DAY",
+                        description="非项目工时由部门负责人审批",
+                        submit=True,
+                    ),
+                    x_demo_user_id=submitter.id,
+                    db=db,
+                )
+            worklog_id = item.id
+            row = db.get(Worklog, worklog_id)
+            self.assertIsNone(row.project_id)
+            self.assertEqual(row.project_name_snapshot, "非项目工时")
+            self.assertEqual(row.approver_user_id, manager.id)
+            task = db.scalar(select(ApprovalTask).where(ApprovalTask.worklog_id == worklog_id, ApprovalTask.status == "PENDING"))
+            self.assertIsNotNone(task)
+            self.assertEqual(task.step_name, "部门负责人审批")
+        finally:
+            if worklog_id:
+                task_ids = [item.id for item in db.scalars(select(ApprovalTask).where(ApprovalTask.worklog_id == worklog_id)).all()]
+                if task_ids:
+                    db.query(Notification).filter(Notification.approval_task_id.in_(task_ids)).delete(synchronize_session=False)
+                    db.query(ApprovalTask).filter(ApprovalTask.id.in_(task_ids)).delete(synchronize_session=False)
+                db.query(Worklog).filter(Worklog.id == worklog_id).delete(synchronize_session=False)
+                db.commit()
+            db.close()
+
+    def test_v3088_market_worklog_uses_configured_market_department_manager(self):
+        db = SessionLocal()
+        worklog_id = None
+        try:
+            submitter = db.get(User, 1)
+            manager = db.scalar(select(User).where(User.id != submitter.id, User.employment_status == "ACTIVE").order_by(User.id))
+            department = db.scalar(select(Department).order_by(Department.id))
+            self.assertIsNotNone(submitter)
+            self.assertIsNotNone(manager)
+            self.assertIsNotNone(department)
+            department.manager_user_id = manager.id
+            department.manager_name = manager.name
+            db.commit()
+            update_market_department({"department_id": department.id}, x_demo_user_id=1, db=db)
+
+            start = date(date.today().year + 6, 3, 9)
+            while start.weekday() >= 5:
+                start += timedelta(days=1)
+            with patch("app.main.feishu.notify_approval_submitted", return_value=SimpleNamespace(status="SENT", message_id="msg-market-work", error_message=None)):
+                item = create_worklog(
+                    WorklogCreate(
+                        project_id=None,
+                        stage="管理",
+                        work_type="MARKETING_WORK",
+                        work_status="LOCAL",
+                        start_date=start,
+                        end_date=start,
+                        quantity=1,
+                        unit="DAY",
+                        description="市场营销工时按市场部门负责人审批",
+                        submit=True,
+                    ),
+                    x_demo_user_id=submitter.id,
+                    db=db,
+                )
+            worklog_id = item.id
+            task = db.scalar(select(ApprovalTask).where(ApprovalTask.worklog_id == worklog_id, ApprovalTask.status == "PENDING"))
+            self.assertIsNotNone(task)
+            self.assertEqual(task.approver_user_id, manager.id)
+            self.assertEqual(task.step_name, "市场部门负责人审批")
+        finally:
+            if worklog_id:
+                task_ids = [item.id for item in db.scalars(select(ApprovalTask).where(ApprovalTask.worklog_id == worklog_id)).all()]
+                if task_ids:
+                    db.query(Notification).filter(Notification.approval_task_id.in_(task_ids)).delete(synchronize_session=False)
+                    db.query(ApprovalTask).filter(ApprovalTask.id.in_(task_ids)).delete(synchronize_session=False)
+                db.query(Worklog).filter(Worklog.id == worklog_id).delete(synchronize_session=False)
+                db.commit()
+            db.close()
+
+    def test_v3088_project_worklog_two_step_approval(self):
+        db = SessionLocal()
+        worklog_id = None
+        try:
+            submitter = db.get(User, 1)
+            owner = db.scalar(select(User).where(User.id != submitter.id, User.employment_status == "ACTIVE").order_by(User.id))
+            approver = db.scalar(select(User).where(User.id.not_in([submitter.id, owner.id]), User.employment_status == "ACTIVE").order_by(User.id))
+            self.assertIsNotNone(owner)
+            self.assertIsNotNone(approver)
+            project = db.scalar(select(Project).where(Project.status == "ACTIVE", Project.allow_worklog == True, Project.project_type == "RND_PROJECT").order_by(Project.id))
+            self.assertIsNotNone(project)
+            project.owner_user_id = owner.id
+            project.owner_name = owner.name
+            project.approver_user_id = approver.id
+            project.approver_name = approver.name
+            db.commit()
+
+            start = date(date.today().year + 6, 4, 6)
+            while start.weekday() >= 5:
+                start += timedelta(days=1)
+            with patch("app.main.feishu.notify_approval_submitted", return_value=SimpleNamespace(status="SENT", message_id="msg-two-step", error_message=None)):
+                item = create_worklog(
+                    WorklogCreate(
+                        project_id=project.id,
+                        stage="开发",
+                        work_type="RND_PROJECT_WORK",
+                        work_status="LOCAL",
+                        start_date=start,
+                        end_date=start,
+                        quantity=1,
+                        unit="DAY",
+                        description="项目类工时两级审批",
+                        submit=True,
+                    ),
+                    x_demo_user_id=submitter.id,
+                    db=db,
+                )
+                worklog_id = item.id
+                first = db.scalar(select(ApprovalTask).where(ApprovalTask.worklog_id == worklog_id, ApprovalTask.status == "PENDING"))
+                self.assertEqual(first.approver_user_id, owner.id)
+                self.assertEqual(first.step_order, 1)
+                with patch.dict(os.environ, {"SYSTEM_ADMIN_USER_IDS": f"1,{owner.id},{approver.id}"}):
+                    second = approve_task(first.id, ApprovalAction(version=first.version, comment="负责人同意"), x_demo_user_id=owner.id, db=db)
+            self.assertEqual(second.approver_user_id, approver.id)
+            self.assertEqual(second.step_order, 2)
+            self.assertEqual(db.get(Worklog, worklog_id).status, "PENDING_APPROVAL")
+            with patch.dict(os.environ, {"SYSTEM_ADMIN_USER_IDS": f"1,{owner.id},{approver.id}"}):
+                final = approve_task(second.id, ApprovalAction(version=second.version, comment="审批人同意"), x_demo_user_id=approver.id, db=db)
+            self.assertEqual(final.status, "APPROVED")
+            self.assertEqual(db.get(Worklog, worklog_id).status, "APPROVED")
+        finally:
+            if worklog_id:
+                task_ids = [item.id for item in db.scalars(select(ApprovalTask).where(ApprovalTask.worklog_id == worklog_id)).all()]
+                if task_ids:
+                    db.query(Notification).filter(Notification.approval_task_id.in_(task_ids)).delete(synchronize_session=False)
+                    db.query(ApprovalTask).filter(ApprovalTask.id.in_(task_ids)).delete(synchronize_session=False)
+                db.query(Worklog).filter(Worklog.id == worklog_id).delete(synchronize_session=False)
+                db.commit()
+            db.close()
+
+    def test_v3088_project_owner_self_submission_reroutes_to_project_approver(self):
+        db = SessionLocal()
+        worklog_id = None
+        try:
+            submitter = db.get(User, 1)
+            approver = db.scalar(select(User).where(User.id != submitter.id, User.employment_status == "ACTIVE").order_by(User.id))
+            self.assertIsNotNone(submitter)
+            self.assertIsNotNone(approver)
+            project = db.scalar(select(Project).where(Project.status == "ACTIVE", Project.allow_worklog == True, Project.project_type == "RND_PROJECT").order_by(Project.id))
+            self.assertIsNotNone(project)
+            project.owner_user_id = submitter.id
+            project.owner_name = submitter.name
+            project.approver_user_id = approver.id
+            project.approver_name = approver.name
+            project.leader_user_id = approver.id
+            db.commit()
+
+            start = date(date.today().year + 6, 4, 13)
+            while start.weekday() >= 5:
+                start += timedelta(days=1)
+            with patch("app.main.feishu.notify_approval_submitted", return_value=SimpleNamespace(status="SENT", message_id="msg-owner-self", error_message=None)):
+                item = create_worklog(
+                    WorklogCreate(
+                        project_id=project.id,
+                        stage="开发",
+                        work_type="RND_PROJECT_WORK",
+                        work_status="LOCAL",
+                        start_date=start,
+                        end_date=start,
+                        quantity=1,
+                        unit="DAY",
+                        description="项目负责人本人提交时转项目审批人",
+                        submit=True,
+                    ),
+                    x_demo_user_id=submitter.id,
+                    db=db,
+                )
+            worklog_id = item.id
+            tasks = db.scalars(select(ApprovalTask).where(ApprovalTask.worklog_id == worklog_id).order_by(ApprovalTask.step_order)).all()
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0].approver_user_id, approver.id)
+            self.assertEqual(tasks[0].step_order, 1)
+            self.assertEqual(tasks[0].resolved_reason, "项目负责人为本人，转项目审批人")
+            self.assertNotEqual(tasks[0].approver_user_id, submitter.id)
+            self.assertEqual(db.get(Worklog, worklog_id).approver_user_id, approver.id)
+        finally:
+            if worklog_id:
+                task_ids = [item.id for item in db.scalars(select(ApprovalTask).where(ApprovalTask.worklog_id == worklog_id)).all()]
+                if task_ids:
+                    db.query(Notification).filter(Notification.approval_task_id.in_(task_ids)).delete(synchronize_session=False)
+                    db.query(ApprovalTask).filter(ApprovalTask.id.in_(task_ids)).delete(synchronize_session=False)
+                db.query(Worklog).filter(Worklog.id == worklog_id).delete(synchronize_session=False)
+                db.commit()
+            db.close()
+
+    def test_v3088_pre_approval_project_worklogs_can_convert_to_management(self):
+        db = SessionLocal()
+        worklog_id = None
+        project_id = None
+        try:
+            owner = db.get(User, 1)
+            approver = db.scalar(select(User).where(User.id != owner.id, User.employment_status == "ACTIVE").order_by(User.id))
+            department = db.scalar(select(Department).order_by(Department.id))
+            self.assertIsNotNone(approver)
+            self.assertIsNotNone(department)
+            suffix = uuid.uuid4().hex[:8]
+            project = create_project(
+                ProjectCreate(
+                    code=f"PRE-{suffix}",
+                    name=f"预立项转换测试-{suffix}",
+                    project_type="RND_PROJECT",
+                    project_sub_category="SELF_DEVELOPED_RND",
+                    owner_user_id=owner.id,
+                    department_id=department.id,
+                    approver_user_id=approver.id,
+                    leader_user_id=approver.id,
+                    status="PRE_APPROVAL",
+                    allow_worklog=True,
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            project_id = project.id
+            start = date(date.today().year + 6, 5, 4)
+            while start.weekday() >= 5:
+                start += timedelta(days=1)
+            item = create_worklog(
+                WorklogCreate(
+                    project_id=project.id,
+                    stage="需求",
+                    work_type="RND_PROJECT_WORK",
+                    work_status="LOCAL",
+                    start_date=start,
+                    end_date=start,
+                    quantity=1,
+                    unit="DAY",
+                    description="预立项失败后转管理工时",
+                    submit=False,
+                ),
+                x_demo_user_id=1,
+                db=db,
+            )
+            worklog_id = item.id
+            preview = preview_pre_approval_worklog_conversion(project.id, x_demo_user_id=1, db=db)
+            self.assertEqual(preview["convertible_count"], 1)
+            result = convert_pre_approval_worklogs_to_management(project.id, {"reason": "测试预立项失败"}, x_demo_user_id=1, db=db)
+            self.assertEqual(result["converted_count"], 1)
+            row = db.get(Worklog, worklog_id)
+            self.assertIsNone(row.project_id)
+            self.assertEqual(row.work_type, "MANAGEMENT_WORK")
+            self.assertEqual(row.converted_from_project_id, project.id)
+            self.assertEqual(row.conversion_reason, "测试预立项失败")
+            self.assertEqual(db.get(Project, project.id).status, "PRE_APPROVAL_FAILED")
+        finally:
+            if worklog_id:
+                db.query(Worklog).filter(Worklog.id == worklog_id).delete(synchronize_session=False)
+            if project_id:
+                db.query(Project).filter(Project.id == project_id).delete(synchronize_session=False)
+            db.commit()
             db.close()
 
 

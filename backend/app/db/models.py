@@ -17,6 +17,8 @@ class Department(Base):
     name: Mapped[str] = mapped_column(String(200))
     parent_feishu_department_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parent_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    manager_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    manager_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
@@ -30,6 +32,9 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(100))
     department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True)
     manager_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    supervisor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    supervisor_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    supervisor_feishu_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     employment_status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
     snapshot_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -292,7 +297,7 @@ class Worklog(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     user_name_snapshot: Mapped[str] = mapped_column(String(100))
-    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
     project_name_snapshot: Mapped[str] = mapped_column(String(300))
     stage: Mapped[str] = mapped_column(String(40))
     work_type: Mapped[str] = mapped_column(String(40))
@@ -312,6 +317,12 @@ class Worklog(Base):
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     approval_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     approval_version: Mapped[int] = mapped_column(Integer, default=0)
+    approval_flow_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    converted_from_project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    converted_from_project_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    converted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    converted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    conversion_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
@@ -345,6 +356,11 @@ class ApprovalTask(Base):
     serial_no: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
     submitter_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     approver_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    step_order: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    step_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    total_steps: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    flow_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    resolved_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="PENDING")
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
@@ -411,6 +427,21 @@ class ConfigOption(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
+
+
+class WorkCalendarDay(Base):
+    """国家法定工作日历覆盖项；未配置日期回退到周一至周五规则。"""
+
+    __tablename__ = "work_calendar_days"
+    __table_args__ = (UniqueConstraint("calendar_date", name="uq_work_calendar_day_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    calendar_date: Mapped[date] = mapped_column(Date, nullable=False)
+    day_type: Mapped[str] = mapped_column(String(20), nullable=False)  # WORKDAY / HOLIDAY
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
 
@@ -550,6 +581,61 @@ class Payment(Base):
     current_workflow_instance_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
+
+
+class ReceiptPlan(Base):
+    """回款台账月度计划；按项目 + 收入合同维护计划回款和进展，不进入审批流。"""
+
+    __tablename__ = "receipt_plans"
+    __table_args__ = (UniqueConstraint("period_month", "contract_id", name="uq_receipt_plan_month_contract"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    period_month: Mapped[str] = mapped_column(String(7), nullable=False)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("contracts.id"), nullable=False)
+    plan_amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    progress_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expected_finish_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    remark: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
+
+
+class PaymentPlan(Base):
+    """付款计划；只用于资金计划维护，不生成审批任务，转单后再进入相应业务流程。"""
+
+    __tablename__ = "payment_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plan_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    period_month: Mapped[str] = mapped_column(String(7), nullable=False)
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True)
+    handler_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    payment_category: Mapped[str] = mapped_column(String(80), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    contract_id: Mapped[int | None] = mapped_column(ForeignKey("contracts.id"), nullable=True)
+    contract_stage_id: Mapped[int | None] = mapped_column(ForeignKey("contract_stages.id"), nullable=True)
+    payee_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    payee_ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payee_name_snapshot: Mapped[str] = mapped_column(String(300), nullable=False)
+    payee_bank_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    payee_account: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    payee_account_last4: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    planned_amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    payment_method: Mapped[str] = mapped_column(String(60), default="银行转账", nullable=False)
+    planned_pay_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    has_finance_material: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_urgent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="SUBMITTED", nullable=False)
+    linked_document_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    linked_document_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    remark: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 

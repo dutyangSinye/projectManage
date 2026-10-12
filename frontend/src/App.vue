@@ -84,6 +84,9 @@ type Page =
   | "contractDetail"
   | "projectReceipts"
   | "projectPayments"
+  | "receiptLedger"
+  | "paymentPlans"
+  | "businessAnalysis"
   | "projectExpenses"
   | "laborCosts"
   | "expenseDetail"
@@ -92,6 +95,7 @@ type Page =
   | "suppliers"
   | "customers"
   | "integrations"
+  | "monthlyWorklogLedger"
   | "adminWorklogs"
   | "adminPermissions"
   | "approvalPositions"
@@ -101,6 +105,9 @@ type ManagementPermission =
   | "contracts"
   | "receipts"
   | "payments"
+  | "receipt_ledger"
+  | "payment_plan"
+  | "business_analysis"
   | "project_expenses"
   | "labor_costs"
   | "cost_review"
@@ -306,6 +313,112 @@ type Payment = {
   approval_path?: WorkflowPathNode[];
   can_approve?: boolean;
   can_withdraw?: boolean;
+};
+type ReceiptLedgerRow = {
+  id: number | null;
+  period_month: string;
+  project_id: number;
+  project_name: string;
+  project_code?: string | null;
+  owner_name?: string | null;
+  department_name?: string | null;
+  contract_id: number;
+  contract_name: string;
+  contract_no?: string | null;
+  customer_name?: string | null;
+  contract_amount: number;
+  receivable_amount: number;
+  received_amount: number;
+  unreceived_amount: number;
+  previous_plan_amount: number;
+  previous_actual_amount: number;
+  current_plan_amount: number;
+  current_actual_amount: number;
+  completion_rate: number | null;
+  progress_note?: string | null;
+  expected_finish_date?: string | null;
+  remark?: string | null;
+  updated_by_name?: string | null;
+  updated_at?: string | null;
+  warning_tags: string[];
+};
+type ReceiptLedgerSummary = {
+  contract_amount: number;
+  receivable_amount: number;
+  received_amount: number;
+  unreceived_amount: number;
+  current_plan_amount: number;
+  current_actual_amount: number;
+  completion_rate: number | null;
+  overdue_unreceived_amount: number;
+};
+type ReceiptLedgerList = {
+  items: ReceiptLedgerRow[];
+  summary: ReceiptLedgerSummary;
+};
+type PaymentPlan = {
+  id: number;
+  plan_no: string;
+  period_month: string;
+  department_id?: number | null;
+  department_name?: string | null;
+  handler_user_id?: number | null;
+  handler_name?: string | null;
+  payment_category: string;
+  source_type: "CONTRACT_STAGE" | "PROJECT_EXPENSE" | "MANUAL";
+  source_label: string;
+  project_id?: number | null;
+  project_name?: string | null;
+  contract_id?: number | null;
+  contract_name?: string | null;
+  contract_stage_id?: number | null;
+  contract_stage_name?: string | null;
+  payee_type: "SUPPLIER" | "COMPANY" | "EMPLOYEE" | "EXTERNAL_PERSON" | "OTHER";
+  payee_type_label: string;
+  payee_ref_id?: number | null;
+  payee_name_snapshot: string;
+  payee_bank_snapshot?: string | null;
+  payee_account_last4?: string | null;
+  planned_amount: number;
+  payment_method: string;
+  planned_pay_date?: string | null;
+  purpose: string;
+  has_finance_material: boolean;
+  is_urgent: boolean;
+  status: "DRAFT" | "SUBMITTED" | "CONVERTED" | "CANCELLED";
+  status_label: string;
+  remark?: string | null;
+  created_by_name?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+type PaymentPlanSummary = {
+  planned_amount: number;
+  current_month_amount: number;
+  urgent_amount: number;
+  contract_stage_amount: number;
+  project_expense_amount: number;
+  personal_payee_amount: number;
+  converted_amount: number;
+};
+type PaymentPlanList = {
+  items: PaymentPlan[];
+  summary: PaymentPlanSummary;
+};
+type BusinessAnalysis = {
+  period_month: string;
+  receipt_summary: ReceiptLedgerSummary;
+  payment_summary: PaymentPlanSummary;
+  net_cash_flow: number;
+  trend: Array<{
+    period_month: string;
+    receipt_plan_amount: number;
+    actual_receipt_amount: number;
+    payment_plan_amount: number;
+    net_cash_flow: number;
+  }>;
+  risk_projects: ReceiptLedgerRow[];
+  urgent_payments: PaymentPlan[];
 };
 type ApprovalTimelineEvent = {
   event: string;
@@ -786,7 +899,7 @@ const importColumns: Record<ImportResource, string[]> = {
 };
 type Worklog = {
   id: number;
-  project_id: number;
+  project_id: number | null;
   user_name_snapshot?: string;
   project_name_snapshot: string;
   stage: string;
@@ -807,8 +920,21 @@ type Worklog = {
   rejection_reason: string | null;
   approval_comment: string | null;
   approval_version: number;
+  approval_flow_type?: string | null;
+  converted_from_project_id?: number | null;
+  converted_from_project_name?: string | null;
+  converted_at?: string | null;
+  converted_by?: number | null;
+  conversion_reason?: string | null;
   last_notified_at: string | null;
   updated_at: string;
+};
+type WorkCalendarDay = {
+  calendar_date: string;
+  day_type: "WORKDAY" | "HOLIDAY";
+  name: string;
+  source: string | null;
+  is_builtin: boolean;
 };
 type AdminWorklog = Worklog & {
   serial_no: string | null;
@@ -824,6 +950,78 @@ type AdminWorklogList = {
   page_count: number;
   summary: Record<string, number>;
   department_options: string[];
+};
+type OrgApprovalDepartment = {
+  id: number;
+  name: string;
+  path: string;
+  manager_user_id: number | null;
+  manager_name: string | null;
+  is_active: boolean;
+};
+type OrgApprovalUser = {
+  id: number;
+  name: string;
+  department_id: number | null;
+  department_path: string;
+  supervisor_user_id: number | null;
+  supervisor_name: string | null;
+};
+type OrgApprovalConfig = {
+  departments: OrgApprovalDepartment[];
+  users: OrgApprovalUser[];
+  market_department_id: number | null;
+};
+type WorklogMonthlyLedgerItem = {
+  project_id: number;
+  project_code: string;
+  project_name: string;
+  project_type: string;
+  project_type_name: string;
+  project_status: string;
+  project_status_name: string;
+  department_id: number | null;
+  department_name: string;
+  owner_user_id: number | null;
+  owner_name: string;
+  user_count: number;
+  approved_days: number;
+  pending_days: number;
+  rejected_days: number;
+  total_days: number;
+};
+type WorklogMonthlyLedgerList = {
+  month: string;
+  total_projects: number;
+  total_days: number;
+  approved_days: number;
+  pending_days: number;
+  rejected_days: number;
+  items: WorklogMonthlyLedgerItem[];
+  department_options: string[];
+};
+type WorklogMonthlyLedgerDetails = {
+  month: string;
+  project_id: number;
+  project_name: string;
+  items: AdminWorklog[];
+  summary: Record<string, number>;
+};
+type WorklogMonthlyLedgerPrintRow = {
+  index: number;
+  user_id: number;
+  user_name: string;
+  quantity: number;
+};
+type WorklogMonthlyLedgerPrintView = {
+  month: string;
+  project_id: number;
+  project_name: string;
+  project_owner_name: string;
+  printed_by_name: string;
+  printed_at: string;
+  rows: WorklogMonthlyLedgerPrintRow[];
+  total_quantity: number;
 };
 type AdminPermission = {
   id: number | null;
@@ -951,6 +1149,11 @@ type ApprovalTask = {
   serial_no: string;
   submitter_user_id: number;
   approver_user_id: number;
+  step_order: number;
+  step_name: string | null;
+  total_steps: number;
+  flow_type: string | null;
+  resolved_reason: string | null;
   status: string;
   comment: string | null;
   submitted_at: string;
@@ -958,6 +1161,45 @@ type ApprovalTask = {
   processed_by: number | null;
   worklog: Worklog;
   notification: Notification | null;
+};
+type BatchApprovalResultItem = {
+  task_id: number;
+  success: boolean;
+  message: string | null;
+  worklog_id: number | null;
+  status: string | null;
+};
+type BatchApprovalResult = {
+  success_count: number;
+  failed_count: number;
+  results: BatchApprovalResultItem[];
+};
+type WorklogCalendarSummary = {
+  required_workdays: number;
+  filled_days: number;
+  missing_days: number;
+  today_missing: number;
+  pending_count: number;
+  rejected_count: number;
+  draft_count: number;
+};
+type WorklogCalendarDay = {
+  date: string;
+  day: number;
+  is_workday: boolean;
+  is_today: boolean;
+  is_past: boolean;
+  has_worklog: boolean;
+  status: string;
+  status_label: string;
+  worklog_id: number | null;
+  quantity: number;
+  holiday_name: string | null;
+};
+type WorklogCalendar = {
+  month: string;
+  summary: WorklogCalendarSummary;
+  days: WorklogCalendarDay[];
 };
 type ReportRow = {
   name: string;
@@ -1106,6 +1348,7 @@ const initialPage = (() => {
     "adminPermissions",
     "approvalPositions",
     "configuration",
+    "monthlyWorklogLedger",
     "adminWorklogs",
   ];
   return supported.includes(requested as Page)
@@ -1152,6 +1395,79 @@ const expenseContractsLoading = ref(false);
 const projectContractStages = ref<ProjectContractStage[]>([]);
 const receipts = ref<Receipt[]>([]);
 const payments = ref<Payment[]>([]);
+const receiptLedgerRows = ref<ReceiptLedgerRow[]>([]);
+const receiptLedgerSummary = ref<ReceiptLedgerSummary>({
+  contract_amount: 0,
+  receivable_amount: 0,
+  received_amount: 0,
+  unreceived_amount: 0,
+  current_plan_amount: 0,
+  current_actual_amount: 0,
+  completion_rate: null,
+  overdue_unreceived_amount: 0,
+});
+const receiptLedgerLoading = ref(false);
+const receiptLedgerMonth = ref(applicationDate().slice(0, 7));
+const receiptLedgerProject = ref(0);
+const receiptLedgerCustomer = ref(0);
+const receiptLedgerStatus = ref("");
+const receiptLedgerKeyword = ref("");
+const receiptPlanFormOpen = ref(false);
+const editingReceiptPlan = ref<ReceiptLedgerRow | null>(null);
+const receiptPlanForm = reactive({
+  period_month: applicationDate().slice(0, 7),
+  contract_id: 0,
+  plan_amount: 0,
+  progress_note: "",
+  expected_finish_date: "",
+  remark: "",
+});
+const paymentPlans = ref<PaymentPlan[]>([]);
+const paymentPlanSummary = ref<PaymentPlanSummary>({
+  planned_amount: 0,
+  current_month_amount: 0,
+  urgent_amount: 0,
+  contract_stage_amount: 0,
+  project_expense_amount: 0,
+  personal_payee_amount: 0,
+  converted_amount: 0,
+});
+const paymentPlansLoading = ref(false);
+const paymentPlanMonth = ref(applicationDate().slice(0, 7));
+const paymentPlanProject = ref(0);
+const paymentPlanSource = ref("");
+const paymentPlanPayeeType = ref("");
+const paymentPlanStatus = ref("");
+const paymentPlanKeyword = ref("");
+const paymentPlanFormOpen = ref(false);
+const selectedPaymentPlan = ref<PaymentPlan | null>(null);
+const editingPaymentPlanId = ref<number | null>(null);
+const paymentPlanForm = reactive({
+  period_month: applicationDate().slice(0, 7),
+  department_id: null as number | null,
+  handler_user_id: null as number | null,
+  payment_category: "采购货款",
+  source_type: "CONTRACT_STAGE" as "CONTRACT_STAGE" | "PROJECT_EXPENSE" | "MANUAL",
+  project_id: null as number | null,
+  contract_id: null as number | null,
+  contract_stage_id: null as number | null,
+  payee_type: "SUPPLIER" as "SUPPLIER" | "COMPANY" | "EMPLOYEE" | "EXTERNAL_PERSON" | "OTHER",
+  payee_ref_id: null as number | null,
+  payee_name_snapshot: "",
+  payee_bank_snapshot: "",
+  payee_account: "",
+  planned_amount: 0,
+  payment_method: "银行转账",
+  planned_pay_date: applicationDate(),
+  purpose: "",
+  has_finance_material: true,
+  is_urgent: false,
+  status: "SUBMITTED" as "DRAFT" | "SUBMITTED" | "CANCELLED",
+  remark: "",
+});
+const businessAnalysis = ref<BusinessAnalysis | null>(null);
+const businessAnalysisLoading = ref(false);
+const businessAnalysisMonth = ref(applicationDate().slice(0, 7));
 const projectExpenses = ref<ProjectCostEntry[]>([]);
 const projectExpenseTotal = ref(0);
 const expensePage = ref(1);
@@ -1187,8 +1503,10 @@ const costReviewTotal = ref(0);
 const costReviewPage = ref(1);
 const expenseFilterMonth = ref("");
 const costReviewCounts = reactive({ pending: 0, processed: 0 });
+const costReviewProcessingKeys = ref<Set<string>>(new Set());
 const costRejectTarget = ref<CostReviewItem | null>(null);
 const costEntryActionComment = ref("");
+const costEntryApproving = ref(false);
 const costEntryRejectOpen = ref(false);
 const costEntryRejectReason = ref("");
 const costEntryReverseOpen = ref(false);
@@ -1223,10 +1541,22 @@ const workbenchLoading = ref(false);
 const projectDetailTab = ref("overview");
 const projectAuditLogs = ref<AuditEntry[]>([]);
 const selectedManagedProject = ref<Project | null>(null);
+const projectActionMenuId = ref<number | null>(null);
 const projectListLoading = ref(false);
 const projectListTotal = ref(0);
 const configOptions = ref<Record<string, ConfigOption[]>>({});
 const adminConfigOptions = ref<Record<string, ConfigOption[]>>({});
+const workCalendarOverrides = ref<Record<string, WorkCalendarDay>>({});
+const adminWorkCalendarItems = ref<WorkCalendarDay[]>([]);
+const workCalendarYear = ref(new Date().getFullYear());
+const workCalendarLoading = ref(false);
+const workCalendarFormOpen = ref(false);
+const workCalendarForm = reactive({
+  calendar_date: applicationDate(),
+  day_type: "HOLIDAY" as "WORKDAY" | "HOLIDAY",
+  name: "",
+  source: "",
+});
 const configurationCategory = ref("project_stage");
 const configurationLoading = ref(false);
 const configurationFormOpen = ref(false);
@@ -1253,6 +1583,14 @@ const configurationForm = reactive({
   sort_order: 1,
   is_active: true,
 });
+const orgApprovalConfig = ref<OrgApprovalConfig>({
+  departments: [],
+  users: [],
+  market_department_id: null,
+});
+const orgApprovalLoading = ref(false);
+const orgApprovalUserKeyword = ref("");
+const orgApprovalDepartmentKeyword = ref("");
 const demoUsers = ref<DemoUser[]>([]);
 const departments = ref<OrgDepartment[]>([]);
 const worklogs = ref<Worklog[]>([]);
@@ -1280,6 +1618,27 @@ const adminStatus = ref("");
 const adminPeriodStart = ref("");
 const adminPeriodEnd = ref("");
 const adminWorklogFormOpen = ref(false);
+const monthlyLedgerItems = ref<WorklogMonthlyLedgerItem[]>([]);
+const monthlyLedgerDetails = ref<WorklogMonthlyLedgerDetails | null>(null);
+const monthlyLedgerPrintData = ref<WorklogMonthlyLedgerPrintView | null>(null);
+const monthlyLedgerLoading = ref(false);
+const monthlyLedgerDetailLoading = ref(false);
+const monthlyLedgerPrintLoading = ref(false);
+const monthlyLedgerPrintOpen = ref(false);
+const monthlyLedgerMonth = ref(applicationDate().slice(0, 7));
+const monthlyLedgerProjectKeyword = ref("");
+const monthlyLedgerProjectType = ref("");
+const monthlyLedgerProjectStatus = ref("");
+const monthlyLedgerDepartment = ref("");
+const monthlyLedgerOwnerId = ref(0);
+const monthlyLedgerDepartmentOptions = ref<string[]>([]);
+const monthlyLedgerSummary = ref<Record<string, number>>({
+  total_projects: 0,
+  total_days: 0,
+  approved_days: 0,
+  pending_days: 0,
+  rejected_days: 0,
+});
 const adminPermissions = ref<AdminPermission[]>([]);
 const adminPermissionKeyword = ref("");
 const adminPermissionLoading = ref(false);
@@ -1353,6 +1712,9 @@ const permissionLabels: Array<{
   { key: "contracts", field: "can_manage_contracts", label: "项目合同" },
   { key: "receipts", field: "can_manage_receipts", label: "合同收款" },
   { key: "payments", field: "can_manage_payments", label: "合同付款" },
+  { key: "receipt_ledger", field: "can_manage_receipts", label: "回款台账" },
+  { key: "payment_plan", field: "can_manage_payments", label: "付款计划" },
+  { key: "business_analysis", field: "can_view_project_board", label: "经营分析" },
   { key: "project_board", field: "can_view_project_board", label: "项目看板" },
   {
     key: "counterparties",
@@ -1376,6 +1738,11 @@ const permissionLabels: Array<{
 const pendingApprovals = ref<ApprovalTask[]>([]);
 const processedApprovals = ref<ApprovalTask[]>([]);
 const approvalTab = ref<"pending" | "processed">("pending");
+const selectedApprovalIds = ref<number[]>([]);
+const batchApprovalBusy = ref(false);
+const worklogCalendarMonth = ref(applicationDate().slice(0, 7));
+const worklogCalendar = ref<WorklogCalendar | null>(null);
+const worklogCalendarLoading = ref(false);
 const report = ref<Report | null>(null);
 const integrationHealth = ref<IntegrationHealth>({
   mode: "mock",
@@ -1408,7 +1775,13 @@ const selectedTask = ref<ApprovalTask | null>(null);
 const selectedStatus = ref("");
 const projectQuery = ref("");
 const projectPickerOpen = ref(false);
+const projectSearchInput = ref<HTMLInputElement | null>(null);
+const projectOptionsList = ref<HTMLElement | null>(null);
 const reportDepartment = ref("");
+const reportUserId = ref(0);
+const reportProjectId = ref(0);
+const reportWorkType = ref("");
+const reportStatus = ref("");
 const reportPeriodStart = ref(`${applicationDate().slice(0, 8)}01`);
 const reportPeriodEnd = ref(applicationDate());
 const exportReadyUrl = ref("");
@@ -1554,6 +1927,7 @@ const paymentForm = reactive({
 });
 const receiptCounterpartyRequest = ref(0);
 const paymentCounterpartyRequest = ref(0);
+const paymentPlanCounterpartyRequest = ref(0);
 const customerFormOpen = ref(false);
 const editingCustomerId = ref<number | null>(null);
 const customerForm = reactive({
@@ -1630,6 +2004,8 @@ const stageChartEl = ref<HTMLElement | null>(null);
 const statusChartEl = ref<HTMLElement | null>(null);
 const projectStageChartEl = ref<HTMLElement | null>(null);
 const workTypeChartEl = ref<HTMLElement | null>(null);
+const projectKindChartEl = ref<HTMLElement | null>(null);
+const projectStageShareChartEl = ref<HTMLElement | null>(null);
 const budgetActualChartEl = ref<HTMLElement | null>(null);
 const costBudgetActualChartEl = ref<HTMLElement | null>(null);
 const projectCostChartEl = ref<HTMLElement | null>(null);
@@ -1690,15 +2066,28 @@ const expenseForm = reactive({
   detail: {} as Record<string, string | number | boolean | null>,
 });
 
+const isCalendarWorkday = (dateText: string) => {
+  const override = workCalendarOverrides.value[dateText];
+  if (override) return override.day_type === "WORKDAY";
+  const parsed = Date.parse(`${dateText}T00:00:00Z`);
+  if (!Number.isFinite(parsed)) return false;
+  const day = new Date(parsed).getUTCDay();
+  return day !== 0 && day !== 6;
+};
+
+const addIsoDay = (dateText: string) => {
+  const parsed = Date.parse(`${dateText}T00:00:00Z`);
+  if (!Number.isFinite(parsed)) return "";
+  const next = new Date(parsed);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+};
+
 const worklogDayCount = (startDate: string, endDate: string) => {
   if (!startDate || !endDate || startDate > endDate) return 0;
-  const start = Date.parse(`${startDate}T00:00:00Z`);
-  const end = Date.parse(`${endDate}T00:00:00Z`);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
   let count = 0;
-  for (let current = new Date(start); current.getTime() <= end; current.setUTCDate(current.getUTCDate() + 1)) {
-    const day = current.getUTCDay();
-    if (day !== 0 && day !== 6) count += 1;
+  for (let current = startDate; current && current <= endDate; current = addIsoDay(current)) {
+    if (isCalendarWorkday(current)) count += 1;
   }
   return count;
 };
@@ -1755,6 +2144,161 @@ const clearAuthOnUnauthorized = (status: number) => {
   authRequired.value = true;
 };
 
+const backendErrorLabel = (code: string) =>
+  ({
+    AUTH_REQUIRED: "请使用飞书账号登录后继续",
+    PERMISSION_REQUIRED: "当前账号没有访问权限",
+    ADMIN_PERMISSION_REQUIRED: "当前账号没有后台管理权限",
+    FEISHU_USER_NOT_SYNCED: "当前飞书用户尚未同步到系统",
+    FEISHU_USER_INACTIVE: "当前飞书用户已停用",
+    FEISHU_OAUTH_NOT_CONFIGURED: "飞书登录尚未配置",
+    FEISHU_OAUTH_FAILED: "飞书登录失败，请稍后重试",
+    INVALID_DEPARTMENT: "部门无效或未启用",
+    INVALID_CONFIG_CATEGORY: "配置分类无效",
+    INVALID_CONFIG_PARENT: "上级分类无效",
+    CONFIG_OPTION_EXISTS: "配置项已存在",
+    CONFIG_OPTION_NOT_FOUND: "配置项不存在",
+    CONFIG_OPTION_IN_USE: "配置项正在使用，不能删除",
+    CONFIG_OPTION_HAS_CHILDREN: "该配置项存在下级分类，不能删除",
+    BUILTIN_CONFIG_OPTION_DISABLE_ONLY: "内置配置项只能停用，不能删除",
+    PROJECT_NOT_FOUND: "项目不存在",
+    PROJECT_OUT_OF_SCOPE: "当前账号没有该项目的数据权限",
+    PROJECT_CODE_EXISTS: "项目编号已存在",
+    PROJECT_ALREADY_DELETED: "项目已删除",
+    PROJECT_NOT_FILLABLE: "该项目当前不允许填报工时",
+    BUDGET_ITEM_REQUIRED: "请选择预算项",
+    LABOR_BUDGET_ITEM_REQUIRED: "请先配置人工费用预算项",
+    BUDGET_ITEM_NOT_FOUND: "预算项不存在",
+    BUDGET_ITEM_INACTIVE: "预算项已停用",
+    BUDGET_ITEM_SOURCE_MISMATCH: "预算项不适用于当前单据",
+    PROJECT_BUDGET_ITEM_NOT_FOUND: "项目预算项不存在",
+    BUDGET_TEMPLATE_FIXED: "固定预算模板不能修改",
+    BUDGET_TEMPLATE_NOT_FOUND: "预算模板不存在",
+    CONTRACT_NOT_FOUND: "合同不存在",
+    CONTRACT_NO_EXISTS: "合同编号已存在",
+    CONTRACT_TYPE_MISMATCH: "合同类型与当前业务不匹配",
+    CONTRACT_STAGE_SUM_MISMATCH: "合同阶段金额合计不能超过合同金额",
+    CONTRACT_HAS_CASH_DOCUMENTS: "合同已有收付款单，不能删除",
+    STAGE_NOT_FOUND: "合同阶段不存在",
+    STAGE_NOT_MATCH_CONTRACT: "合同阶段不属于当前合同",
+    STAGE_REMAINING_INSUFFICIENT: "阶段剩余金额不足",
+    STAGE_HAS_CASH_DOCUMENTS: "阶段已有收付款单，不能删除",
+    RECEIPT_NOT_FOUND: "合同收款单不存在",
+    RECEIPT_READ_ONLY: "当前收款单状态不允许修改",
+    RECEIPT_NOT_RESUBMITTABLE: "当前收款单不能重新提交",
+    RECEIPT_WITHDRAW_FORBIDDEN: "只能撤回本人提交的收款单",
+    RECEIPT_NOT_PENDING: "当前收款单不是待审批状态",
+    RECEIPT_NOT_APPROVED: "当前收款单尚未审批通过",
+    PAYMENT_NOT_FOUND: "合同付款单不存在",
+    PAYMENT_READ_ONLY: "当前付款单状态不允许修改",
+    PAYMENT_NOT_RESUBMITTABLE: "当前付款单不能重新提交",
+    PAYMENT_CONTRACT_INVALID: "付款单关联的合同无效",
+    PAYMENT_WITHDRAW_FORBIDDEN: "只能撤回本人提交的付款单",
+    PAYMENT_NOT_PENDING_REVIEW: "当前付款单不是待复核状态",
+    PAYMENT_NOT_APPROVED: "当前付款单尚未复核通过",
+    PAYMENT_WORKFLOW_NOT_RUNNING: "付款流程当前未运行",
+    PAYMENT_TASK_NOT_ASSIGNED: "当前付款审批任务未分配给你",
+    CASH_DOCUMENT_NOT_FOUND: "收付款单不存在",
+    CUSTOMER_EXISTS: "客户名称或编码已存在",
+    CUSTOMER_NOT_FOUND: "客户不存在",
+    CUSTOMER_IN_USE: "客户正在使用，不能删除",
+    CUSTOMER_NOT_ACTIVE: "客户未启用",
+    SUPPLIER_EXISTS: "供应商名称或编码已存在",
+    SUPPLIER_NOT_FOUND: "供应商不存在",
+    SUPPLIER_IN_USE: "供应商正在使用，不能删除",
+    SUPPLIER_NOT_ACTIVE: "供应商未启用",
+    USER_NOT_FOUND: "人员不存在",
+    USER_NOT_ACTIVE: "人员未启用",
+    DEPARTMENT_NOT_ACTIVE: "部门未启用",
+    DATE_RANGE_INVALID: "开始日期不能晚于结束日期",
+    DATE_RANGE_CROSSES_MONTH: "开始日期和结束日期不能跨月",
+    INVALID_DATE_RANGE: "日期范围不正确",
+    WORKLOG_DATE_OVERLAP: "该人员当天已有工时记录，不能重复填报",
+    WORKLOG_QUANTITY_MISMATCH: "工时天数必须等于日期范围内的工作日天数",
+    WORKLOG_NO_WORKDAY: "所选日期范围内没有工作日，请重新选择日期",
+    WORKLOG_NOT_FOUND: "工时记录不存在",
+    WORKLOG_READ_ONLY: "当前工时状态不允许修改",
+    WORKLOG_NOT_WITHDRAWABLE: "当前工时不能撤回",
+    APPROVAL_NOT_FOUND: "审批任务不存在",
+    NOT_APPROVER: "当前账号不是该任务审批人",
+    APPROVAL_ALREADY_PROCESSED: "该审批任务已处理",
+    VERSION_CONFLICT: "数据已被其他人修改，请刷新后重试",
+    PROJECT_EXPENSE_NOT_FOUND: "项目费用单不存在",
+    PROJECT_COST_ENTRY_NOT_FOUND: "成本单不存在",
+    PROJECT_COST_ENTRY_NOT_PENDING_REVIEW: "当前成本单不是待复核状态",
+    PROJECT_COST_ENTRY_NOT_APPROVED: "当前成本单尚未复核通过",
+    PROJECT_COST_ENTRY_VERSION_CONFLICT: "成本单已被其他人修改，请刷新后重试",
+    EXPENSE_READ_ONLY: "当前费用单状态不允许修改",
+    EXPENSE_APPLICANT_ONLY: "只能操作本人提交的费用单",
+    EXPENSE_VERSION_CONFLICT: "费用单已被其他人修改，请刷新后重试",
+    EXPENSE_NOT_SUBMITTABLE: "当前费用单不能提交",
+    EXPENSE_NOT_WITHDRAWABLE: "当前费用单不能撤回",
+    DUPLICATE_INVOICE: "发票信息已存在，请勿重复录入",
+    COST_REVIEW_FORBIDDEN: "当前账号没有费用复核权限",
+    ROLE_CODE_EXISTS: "角色编码已存在",
+    ROLE_NOT_FOUND: "角色不存在",
+    ROLE_NOT_ACTIVE: "角色未启用",
+    BUILTIN_ROLE_LOCKED: "内置角色不能执行该操作",
+    INVALID_MENU_ACTION: "菜单操作权限无效，请刷新后重试",
+    INVALID_SCOPE_RESOURCE: "数据范围资源无效",
+    CONTRACT_ATTACHMENT_STORAGE_INVALID: "合同附件存储目录不可用",
+    CASH_ATTACHMENT_STORAGE_INVALID: "收付款附件存储目录不可用",
+    EXPENSE_ATTACHMENT_STORAGE_INVALID: "费用附件存储目录不可用",
+    CONTRACT_ATTACHMENT_NOT_FOUND: "合同附件不存在",
+    CASH_ATTACHMENT_NOT_FOUND: "收付款附件不存在",
+    PROJECT_COST_ATTACHMENT_NOT_FOUND: "成本附件不存在",
+    CONTRACT_ATTACHMENT_TYPE_NOT_ALLOWED: "合同附件格式不支持",
+    CASH_ATTACHMENT_TYPE_NOT_ALLOWED: "收付款附件格式不支持",
+    PROJECT_COST_ATTACHMENT_TYPE_NOT_ALLOWED: "成本附件格式不支持",
+    CONTRACT_ATTACHMENT_TOO_LARGE: "合同附件超过大小限制",
+    CASH_ATTACHMENT_TOO_LARGE: "收付款附件超过大小限制",
+    PROJECT_COST_ATTACHMENT_TOO_LARGE: "成本附件超过大小限制",
+    CONTRACT_ATTACHMENT_STORAGE_FAILED: "合同附件保存失败",
+    CASH_ATTACHMENT_STORAGE_FAILED: "收付款附件保存失败",
+    PROJECT_COST_ATTACHMENT_STORAGE_FAILED: "成本附件保存失败",
+    CONTRACT_ATTACHMENT_EMPTY: "合同附件为空",
+    CASH_ATTACHMENT_EMPTY: "收付款附件为空",
+    PROJECT_COST_ATTACHMENT_EMPTY: "成本附件为空",
+    CONTRACT_ATTACHMENT_FILE_NOT_FOUND: "合同附件文件不存在",
+    CASH_ATTACHMENT_FILE_NOT_FOUND: "收付款附件文件不存在",
+    PROJECT_COST_ATTACHMENT_FILE_NOT_FOUND: "成本附件文件不存在",
+    CONTRACT_ATTACHMENT_PREVIEW_FAILED: "合同附件预览生成失败",
+    CASH_ATTACHMENT_PREVIEW_FAILED: "收付款附件预览生成失败",
+    CONTRACT_ATTACHMENT_PREVIEW_UNAVAILABLE: "该附件暂不支持在线预览",
+    CASH_ATTACHMENT_PREVIEW_UNAVAILABLE: "该附件暂不支持在线预览",
+    NOTIFICATION_POLICY_NOT_FOUND: "通知策略不存在",
+    NOTIFICATION_POLICY_DISABLED: "通知策略未启用",
+    NOTIFICATION_POLICY_REMIND_TIME_INVALID: "提醒时间格式不正确",
+    NOTIFICATION_POLICY_TARGET_IDS_INVALID: "通知范围配置不正确",
+    NOTIFICATION_POLICY_SET_INVALID: "通知策略配置不正确",
+    NOTIFICATION_NOT_FOUND: "通知记录不存在",
+    NOTIFICATION_ALREADY_SENT: "通知已发送，不能重复发送",
+    NOTIFICATION_SOURCE_NOT_FOUND: "通知关联业务不存在",
+    NOTIFICATION_SOURCE_UNSUPPORTED: "暂不支持打开该通知业务详情",
+    NOTIFICATION_RECIPIENT_NOT_FOUND: "通知接收人不存在",
+    NOTIFICATION_TASK_NOT_ACTIVE: "关联审批任务已失效",
+    NOTIFICATION_TASK_TYPE_CHANGED: "关联审批任务类型已变化，请刷新",
+    WORKLOG_FILL_REMINDER_DISABLED: "工时填报提醒未启用",
+    WORKLOG_FILL_REMINDER_T1_DISABLED: "工时补填提醒未启用",
+    WORKFLOW_NOT_PUBLISHED: "审批流程尚未发布",
+    WORKFLOW_CONTEXT_MISSING: "审批流程上下文缺失",
+    PROJECT_APPROVER_MISSING: "项目审批人未配置",
+    DIRECT_MANAGER_MISSING: "上级领导未配置",
+    APPROVAL_POSITION_EMPTY: "审批岗位未配置成员",
+    WORKFLOW_HAS_NO_NODES: "审批流程没有可用节点",
+    WORKFLOW_NODE_NOT_FOUND: "审批节点不存在",
+  } as Record<string, string>)[code] || code;
+
+const validationErrorLabel = (message: string) => {
+  if (message.includes("String should have at least 1 character")) {
+    return "必填字段不能为空";
+  }
+  if (message.includes("Field required")) {
+    return "请补充必填字段";
+  }
+  return backendErrorLabel(message);
+};
+
 const api = async <T,>(url: string, options?: RequestInit): Promise<T> => {
   const headers = authHeaders(options?.headers);
   if (options?.body instanceof FormData) {
@@ -1774,14 +2318,12 @@ const api = async <T,>(url: string, options?: RequestInit): Promise<T> => {
     const detail = body.detail;
     const readableDetail = Array.isArray(detail)
       ? detail
-          .map((item) => item?.msg || item?.message || JSON.stringify(item))
+          .map((item) => validationErrorLabel(item?.msg || item?.message || JSON.stringify(item)))
           .join("；")
       : detail;
     const message =
       typeof readableDetail === "string"
-        ? readableDetail === "AUTH_REQUIRED"
-          ? "请使用飞书账号登录后继续"
-          : readableDetail
+        ? validationErrorLabel(readableDetail)
         : JSON.stringify(readableDetail ?? `请求失败（${response.status}）`);
     throw new Error(message);
   }
@@ -1795,6 +2337,11 @@ const reportUrl = () => {
   });
   if (reportDepartment.value)
     params.set("department_name", reportDepartment.value);
+  if (reportUserId.value) params.set("user_id", String(reportUserId.value));
+  if (reportProjectId.value)
+    params.set("project_id", String(reportProjectId.value));
+  if (reportWorkType.value) params.set("work_type", reportWorkType.value);
+  if (reportStatus.value) params.set("status", reportStatus.value);
   return `/api/v1/reports/workload?${params.toString()}`;
 };
 
@@ -1805,6 +2352,11 @@ const reportExportUrl = () => {
   });
   if (reportDepartment.value)
     params.set("department_name", reportDepartment.value);
+  if (reportUserId.value) params.set("user_id", String(reportUserId.value));
+  if (reportProjectId.value)
+    params.set("project_id", String(reportProjectId.value));
+  if (reportWorkType.value) params.set("work_type", reportWorkType.value);
+  if (reportStatus.value) params.set("status", reportStatus.value);
   return `/api/v1/reports/workload/export?${params.toString()}`;
 };
 
@@ -1884,6 +2436,85 @@ const renderCharts = async () => {
     chart.setOption(option);
     chartInstances.push(chart);
   };
+  const projectStageShareRows = rowsForUnit("by_stage_unit").slice(0, 10);
+  const projectStageTotal = projectStageShareRows.reduce(
+    (sum, row) => sum + Number(row.quantity || 0),
+    0,
+  );
+  makeChart(projectStageShareChartEl.value, {
+    color: ["#0f766e", "#3a6ea5", "#1f8a5b", "#d88918", "#8b6ccf", "#8aa09b", "#c94a3a"],
+    tooltip: {
+      trigger: "item",
+      formatter: "{b}: {c} 天（{d}%）",
+    },
+    legend: {
+      type: "scroll",
+      bottom: 0,
+      textStyle: { color: chartMuted },
+    },
+    series: [
+      {
+        name: "项目阶段",
+        type: "pie",
+        radius: ["44%", "72%"],
+        center: ["50%", "43%"],
+        avoidLabelOverlap: true,
+        label: {
+          color: chartText,
+          formatter: (params: { name?: string; value?: number; percent?: number }) =>
+            Number(params.percent || 0) >= 6
+              ? `${params.name}\n${params.value || 0} 天`
+              : "",
+        },
+        data: projectStageShareRows.map((row) => ({
+          name: row.name,
+          value: row.quantity,
+        })),
+      },
+    ],
+    graphic: projectStageTotal
+      ? [
+          {
+            type: "text",
+            left: "center",
+            top: "37%",
+            style: {
+              text: `${Number(projectStageTotal.toFixed(1))}天`,
+              fill: chartText,
+              fontSize: 24,
+              fontWeight: 800,
+              textAlign: "center",
+            },
+          },
+          {
+            type: "text",
+            left: "center",
+            top: "47%",
+            style: {
+              text: "项目工时",
+              fill: chartMuted,
+              fontSize: 12,
+              textAlign: "center",
+            },
+          },
+        ]
+      : [],
+  });
+  const projectKindRows = rowsForUnit("by_project_kind_unit");
+  makeChart(projectKindChartEl.value, {
+    color: ["#0f766e", "#d88918"],
+    tooltip: { trigger: "item", formatter: "{b}: {c} 天（{d}%）" },
+    legend: { bottom: 0, textStyle: { color: chartMuted } },
+    series: [
+      {
+        type: "pie",
+        radius: ["46%", "72%"],
+        center: ["50%", "43%"],
+        label: { color: chartText, formatter: "{b}\n{d}%" },
+        data: projectKindRows.map((row) => ({ name: row.name, value: row.quantity })),
+      },
+    ],
+  });
   const projectRows = rowsForUnit("by_project_unit").slice(0, 10);
   const projectNames = projectRows.map((row) => row.name).reverse();
   const budgetRows = (report.value?.breakdowns.by_project_budget_actual || [])
@@ -2205,10 +2836,18 @@ const renderCharts = async () => {
     ],
   });
   const projectStageRows = rowsForUnit("by_project_stage_unit");
-  const stackedProjects = projectRows
-    .slice()
+  const projectStageProjectTotals = new Map<string, number>();
+  for (const row of projectStageRows) {
+    projectStageProjectTotals.set(
+      row.name,
+      (projectStageProjectTotals.get(row.name) || 0) + Number(row.quantity || 0),
+    );
+  }
+  const stackedProjects = [...projectStageProjectTotals.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 10)
     .reverse()
-    .map((row) => row.name);
+    .map(([name]) => name);
   const stageNames = [
     ...new Set(
       projectStageRows
@@ -2267,8 +2906,7 @@ const renderCharts = async () => {
       stack: "share",
       barMaxWidth: 28,
       data: stackedProjects.map((projectName) => {
-        const total =
-          projectRows.find((row) => row.name === projectName)?.quantity || 0;
+        const total = projectStageProjectTotals.get(projectName) || 0;
         return total
           ? Number(((stageValue(projectName, stage) / total) * 100).toFixed(1))
           : 0;
@@ -2369,6 +3007,30 @@ watch(
   },
 );
 watch(
+  () => form.work_type,
+  (workType) => {
+    const requiredCategory = requiredProjectCategoryForWorkType(workType);
+    if (requiredCategory) form.project_type = requiredCategory;
+    if (!isProjectWorkType(workType)) {
+      form.project_id = 0;
+      form.stage =
+        activeConfigOptions("project_stage").find((option) => option.value === "管理")?.value ||
+        activeConfigOptions("project_stage")[0]?.value ||
+        "管理";
+      projectPickerOpen.value = false;
+      return;
+    }
+    if (
+      form.project_id &&
+      !fillableProjects.value.some(
+        (project) => project.id === Number(form.project_id),
+      )
+    ) {
+      form.project_id = 0;
+    }
+  },
+);
+watch(
   () => form.project_type,
   () => {
     if (
@@ -2411,6 +3073,7 @@ onBeforeUnmount(() => {
   if (attachmentPreviewUrl.value) URL.revokeObjectURL(attachmentPreviewUrl.value);
   window.removeEventListener("resize", resizeCharts);
   document.removeEventListener("click", closeProjectPicker);
+  document.removeEventListener("click", closeProjectActionMenu);
   window.removeEventListener("focus", refreshWorklogStatus);
   if (clockTimer) window.clearInterval(clockTimer);
   if (statusRefreshTimer) window.clearInterval(statusRefreshTimer);
@@ -2434,7 +3097,9 @@ const refresh = async () => {
       approvals,
       processed,
       workbench,
+      calendar,
       optionCatalog,
+      workCalendar,
       classificationCatalogResult,
     ] = await Promise.all([
       api<DemoUser[]>("/api/v1/org/users?active_only=true"),
@@ -2450,7 +3115,11 @@ const refresh = async () => {
         ? api<ApprovalTask[]>("/api/v1/approvals/processed")
         : Promise.resolve([]),
       api<WorkbenchOverview>("/api/v1/workbench/overview"),
+      api<WorklogCalendar>(`/api/v1/worklogs/calendar?month=${worklogCalendarMonth.value}`),
       api<ConfigCatalog>("/api/v1/config/options"),
+      api<{ items: WorkCalendarDay[] }>(
+        `/api/v1/work-calendar?start=${new Date().getFullYear() - 1}-01-01&end=${new Date().getFullYear() + 1}-12-31`,
+      ),
       api<ClassificationCatalog>("/api/v1/config/classifications").catch(
         () => null,
       ),
@@ -2464,7 +3133,11 @@ const refresh = async () => {
     pendingApprovals.value = approvals;
     processedApprovals.value = processed;
     workbenchOverview.value = workbench;
+    worklogCalendar.value = calendar;
     configOptions.value = optionCatalog.options;
+    workCalendarOverrides.value = Object.fromEntries(
+      workCalendar.items.map((item) => [item.calendar_date, item]),
+    );
     if (classificationCatalogResult) {
       classificationCatalog.value = classificationCatalogResult;
     }
@@ -2503,11 +3176,25 @@ const refresh = async () => {
   }
 };
 
+const refreshWorklogCalendar = async () => {
+  if (authRequired.value) return;
+  worklogCalendarLoading.value = true;
+  try {
+    worklogCalendar.value = await api<WorklogCalendar>(
+      `/api/v1/worklogs/calendar?month=${worklogCalendarMonth.value}`,
+    );
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "工时日历加载失败";
+  } finally {
+    worklogCalendarLoading.value = false;
+  }
+};
+
 const refreshWorklogStatus = async () => {
   if (
     authRequired.value ||
     statusRefreshBusy ||
-    !["workbench", "worklogs", "detail"].includes(page.value)
+    !["workbench", "worklogs", "detail", "approvals", "approvalDetail"].includes(page.value)
   )
     return;
   statusRefreshBusy = true;
@@ -2524,6 +3211,14 @@ const refreshWorklogStatus = async () => {
     worklogs.value = worklogList.items;
     pendingApprovals.value = approvals;
     processedApprovals.value = processed;
+    selectedApprovalIds.value = selectedApprovalIds.value.filter((id) =>
+      approvals.some((task) => task.id === id),
+    );
+    if (page.value === "workbench") {
+      worklogCalendar.value = await api<WorklogCalendar>(
+        `/api/v1/worklogs/calendar?month=${worklogCalendarMonth.value}`,
+      );
+    }
     if (page.value === "detail" && selectedTask.value) {
       selectedTask.value = await api<ApprovalTask>(
         `/api/v1/worklogs/${selectedTask.value.worklog_id}/approval`,
@@ -2767,6 +3462,9 @@ const go = (target: Page) => {
     contractDetail: "contracts",
     projectReceipts: "receipts",
     projectPayments: "payments",
+    receiptLedger: "receipt_ledger",
+    paymentPlans: "payment_plan",
+    businessAnalysis: "business_analysis",
     projectExpenses: "project_expenses",
     laborCosts: "labor_costs",
     expenseDetail: "project_expenses",
@@ -2774,6 +3472,7 @@ const go = (target: Page) => {
     projectBoard: "project_board",
     suppliers: "counterparties",
     customers: "counterparties",
+    monthlyWorklogLedger: "worklogs",
     adminWorklogs: "worklogs",
     integrations: "integrations",
     adminPermissions: "admins",
@@ -2794,6 +3493,7 @@ const go = (target: Page) => {
   errorMessage.value = "";
   successMessage.value = "";
   if (["workbench", "worklogs"].includes(target)) void refreshWorklogStatus();
+  if (target === "monthlyWorklogLedger") void refreshMonthlyLedger();
   if (target === "adminWorklogs") void refreshAdminWorklogs();
   if (target === "adminPermissions") void refreshAdminPermissions();
   if (target === "projects") void refreshProjectPage();
@@ -2808,6 +3508,9 @@ const go = (target: Page) => {
     paymentTab.value = canManage("cash_approval") ? "pending" : "all";
     void refreshPayments();
   }
+  if (target === "receiptLedger") void refreshReceiptLedger();
+  if (target === "paymentPlans") void refreshPaymentPlans();
+  if (target === "businessAnalysis") void refreshBusinessAnalysis();
   if (target === "projectExpenses" || target === "laborCosts") {
     void refreshProjectExpenses();
   }
@@ -3197,7 +3900,7 @@ const attachmentSizeText = (size: number) => {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 };
 const attachmentKindLabel = (kind: DocumentAttachment["preview_kind"]) =>
-  ({ word: "Word", excel: "Excel", powerpoint: "PPT", pdf: "PDF", image: "图片", download: "文件" })[kind];
+  ({ word: "文档", excel: "表格", powerpoint: "演示文稿", pdf: "PDF 文件", image: "图片", download: "文件" })[kind];
 const attachmentApiName = (attachment: DocumentAttachment) =>
   attachment.document_type
     ? "cash-attachments"
@@ -3635,7 +4338,7 @@ const saveReceipt = async () => {
     const url = editingReceiptId.value
       ? `/api/v1/receipts/${editingReceiptId.value}`
       : "/api/v1/receipts";
-    const savedReceipt = await api<Receipt>(url, {
+    let savedReceipt = await api<Receipt>(url, {
       method: editingReceiptId.value ? "PATCH" : "POST",
       body: JSON.stringify(receiptForm),
     });
@@ -3655,11 +4358,24 @@ const saveReceipt = async () => {
       ? await uploadCashFiles("RECEIPT", savedReceipt.id, pendingFiles)
       : [];
     pendingReceiptFiles.value = failedFiles;
+    if (wasEditing && !failedFiles.length) {
+      try {
+        savedReceipt = await api<Receipt>(`/api/v1/receipts/${savedReceipt.id}/submit`, {
+          method: "POST",
+        });
+      } catch (error) {
+        await refreshReceipts();
+        await loadCashAttachments("RECEIPT", savedReceipt.id);
+        errorMessage.value = `合同收款单已保存为草稿，但提交审批失败：${error instanceof Error ? error.message : "审批流程配置异常"}`;
+        return;
+      }
+    }
     await refreshReceipts();
     await loadCashAttachments("RECEIPT", savedReceipt.id);
-    successMessage.value = wasEditing ? "合同收款单已更新" : "合同收款单已提交";
-    if (pendingFiles.length && failedFiles.length) {
-      errorMessage.value = `合同收款单已保存，但以下附件上传失败：${pendingFileNames(failedFiles)}`;
+    successMessage.value = wasEditing ? "合同收款单已更新并重新提交" : "合同收款单已提交";
+    if (failedFiles.length) {
+      successMessage.value = "合同收款单已保存为草稿";
+      errorMessage.value = `以下附件上传失败，修复后再提交：${pendingFileNames(failedFiles)}`;
     } else if (pendingFiles.length) {
       successMessage.value += `，已自动上传 ${pendingFiles.length} 个附件`;
     }
@@ -3742,6 +4458,229 @@ const refreshPayments = async () => {
     payments.value = await api<Payment[]>(paymentUrl());
   } finally {
     paymentsLoading.value = false;
+  }
+};
+const receiptLedgerUrl = () => {
+  const params = new URLSearchParams({ period_month: receiptLedgerMonth.value });
+  if (receiptLedgerProject.value) params.set("project_id", String(receiptLedgerProject.value));
+  if (receiptLedgerCustomer.value) params.set("customer_id", String(receiptLedgerCustomer.value));
+  if (receiptLedgerStatus.value) params.set("status", receiptLedgerStatus.value);
+  if (receiptLedgerKeyword.value.trim()) params.set("keyword", receiptLedgerKeyword.value.trim());
+  return `/api/v1/receipt-ledger?${params.toString()}`;
+};
+const refreshReceiptLedger = async () => {
+  if (!canManage("receipt_ledger")) return;
+  receiptLedgerLoading.value = true;
+  try {
+    const result = await api<ReceiptLedgerList>(receiptLedgerUrl());
+    receiptLedgerRows.value = result.items;
+    receiptLedgerSummary.value = result.summary;
+  } finally {
+    receiptLedgerLoading.value = false;
+  }
+};
+const openReceiptPlanForm = (row: ReceiptLedgerRow) => {
+  editingReceiptPlan.value = row;
+  Object.assign(receiptPlanForm, {
+    period_month: receiptLedgerMonth.value,
+    contract_id: row.contract_id,
+    plan_amount: row.current_plan_amount || 0,
+    progress_note: row.progress_note || "",
+    expected_finish_date: row.expected_finish_date || "",
+    remark: row.remark || "",
+  });
+  receiptPlanFormOpen.value = true;
+};
+const saveReceiptPlan = async () => {
+  if (!receiptPlanForm.contract_id) {
+    errorMessage.value = "请选择收入合同";
+    return;
+  }
+  try {
+    await api<ReceiptLedgerRow>("/api/v1/receipt-ledger/plans", {
+      method: "POST",
+      body: JSON.stringify({
+        ...receiptPlanForm,
+        expected_finish_date: receiptPlanForm.expected_finish_date || null,
+      }),
+    });
+    receiptPlanFormOpen.value = false;
+    await refreshReceiptLedger();
+    successMessage.value = "回款计划已保存";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "回款计划保存失败";
+  }
+};
+const paymentPlanUrl = () => {
+  const params = new URLSearchParams({ period_month: paymentPlanMonth.value });
+  if (paymentPlanProject.value) params.set("project_id", String(paymentPlanProject.value));
+  if (paymentPlanSource.value) params.set("source_type", paymentPlanSource.value);
+  if (paymentPlanPayeeType.value) params.set("payee_type", paymentPlanPayeeType.value);
+  if (paymentPlanStatus.value) params.set("status", paymentPlanStatus.value);
+  if (paymentPlanKeyword.value.trim()) params.set("keyword", paymentPlanKeyword.value.trim());
+  return `/api/v1/payment-plans?${params.toString()}`;
+};
+const refreshPaymentPlans = async () => {
+  if (!canManage("payment_plan")) return;
+  paymentPlansLoading.value = true;
+  void refreshCashContractOptions("EXPENSE");
+  try {
+    const result = await api<PaymentPlanList>(paymentPlanUrl());
+    paymentPlans.value = result.items;
+    paymentPlanSummary.value = result.summary;
+  } finally {
+    paymentPlansLoading.value = false;
+  }
+};
+const resetPaymentPlanForm = () => {
+  editingPaymentPlanId.value = null;
+  paymentPlanFormOpen.value = false;
+  Object.assign(paymentPlanForm, {
+    period_month: paymentPlanMonth.value,
+    department_id: user.value.department_id || null,
+    handler_user_id: activeUserId.value || null,
+    payment_category: "采购货款",
+    source_type: "CONTRACT_STAGE",
+    project_id: null,
+    contract_id: null,
+    contract_stage_id: null,
+    payee_type: "SUPPLIER",
+    payee_ref_id: null,
+    payee_name_snapshot: "",
+    payee_bank_snapshot: "",
+    payee_account: "",
+    planned_amount: 0,
+    payment_method: "银行转账",
+    planned_pay_date: applicationDate(),
+    purpose: "",
+    has_finance_material: true,
+    is_urgent: false,
+    status: "SUBMITTED",
+    remark: "",
+  });
+};
+const openPaymentPlanForm = async (item: PaymentPlan | null = null) => {
+  resetPaymentPlanForm();
+  selectedPaymentPlan.value = null;
+  editingPaymentPlanId.value = item?.id ?? null;
+  Object.assign(paymentPlanForm, {
+    period_month: item?.period_month || paymentPlanMonth.value,
+    department_id: item?.department_id || user.value.department_id || null,
+    handler_user_id: item?.handler_user_id || activeUserId.value || null,
+    payment_category: item?.payment_category || "采购货款",
+    source_type: item?.source_type || "CONTRACT_STAGE",
+    project_id: item?.project_id || null,
+    contract_id: item?.contract_id || null,
+    contract_stage_id: item?.contract_stage_id || null,
+    payee_type: item?.payee_type || "SUPPLIER",
+    payee_ref_id: item?.payee_ref_id || null,
+    payee_name_snapshot: item?.payee_name_snapshot || "",
+    payee_bank_snapshot: item?.payee_bank_snapshot || "",
+    payee_account: "",
+    planned_amount: item?.planned_amount || 0,
+    payment_method: item?.payment_method || "银行转账",
+    planned_pay_date: item?.planned_pay_date || applicationDate(),
+    purpose: item?.purpose || "",
+    has_finance_material: item?.has_finance_material ?? true,
+    is_urgent: item?.is_urgent || false,
+    status: (item?.status === "CANCELLED" ? "CANCELLED" : item?.status || "SUBMITTED") as "DRAFT" | "SUBMITTED" | "CANCELLED",
+    remark: item?.remark || "",
+  });
+  if (paymentPlanForm.contract_id) await loadContractStages(paymentPlanForm.contract_id);
+  paymentPlanFormOpen.value = true;
+};
+const openPaymentPlanDetail = (item: PaymentPlan) => {
+  selectedPaymentPlan.value = item;
+  paymentPlanFormOpen.value = false;
+};
+const applyPaymentPlanContract = async () => {
+  const requestId = ++paymentPlanCounterpartyRequest.value;
+  const contract = expenseContractOptions.value.find((item) => item.id === Number(paymentPlanForm.contract_id));
+  paymentPlanForm.contract_stage_id = null;
+  if (!contract) {
+    Object.assign(paymentPlanForm, {
+      project_id: null,
+      payee_ref_id: null,
+      payee_name_snapshot: "",
+      payee_bank_snapshot: "",
+      payee_account: "",
+    });
+    return;
+  }
+  paymentPlanForm.project_id = contract.project_id;
+  paymentPlanForm.payee_type = contract.counterparty_type === "SUPPLIER" ? "SUPPLIER" : "COMPANY";
+  paymentPlanForm.payee_ref_id = contract.counterparty_id || null;
+  const [counterparty] = await Promise.all([
+    findContractCounterparty(contract),
+    loadContractStages(contract.id),
+  ]);
+  if (requestId !== paymentPlanCounterpartyRequest.value) return;
+  Object.assign(paymentPlanForm, {
+    payee_name_snapshot: counterparty?.name || contract.counterparty_name || "",
+    payee_bank_snapshot: counterparty?.bank_branch || counterparty?.bank_name || "",
+    payee_account: counterparty?.bank_account || "",
+  });
+};
+const applyPaymentPlanSupplier = () => {
+  const supplier = suppliers.value.find((item) => item.id === paymentPlanForm.payee_ref_id);
+  if (!supplier) return;
+  paymentPlanForm.payee_name_snapshot = supplier.name;
+  paymentPlanForm.payee_bank_snapshot = supplier.bank_branch || supplier.bank_name || "";
+  paymentPlanForm.payee_account = supplier.bank_account || "";
+};
+const paymentPlanPayload = () => ({
+  ...paymentPlanForm,
+  department_id: paymentPlanForm.department_id || null,
+  handler_user_id: paymentPlanForm.handler_user_id || null,
+  project_id: paymentPlanForm.source_type === "MANUAL" ? paymentPlanForm.project_id || null : paymentPlanForm.project_id,
+  contract_id: paymentPlanForm.source_type === "CONTRACT_STAGE" ? paymentPlanForm.contract_id : null,
+  contract_stage_id: paymentPlanForm.source_type === "CONTRACT_STAGE" ? paymentPlanForm.contract_stage_id : null,
+  payee_ref_id: paymentPlanForm.payee_ref_id || null,
+  planned_pay_date: paymentPlanForm.planned_pay_date || null,
+});
+const savePaymentPlan = async () => {
+  if (paymentPlanForm.source_type === "CONTRACT_STAGE" && (!paymentPlanForm.contract_id || !paymentPlanForm.contract_stage_id)) {
+    errorMessage.value = "来源为支出合同阶段时，必须选择支出合同和合同阶段";
+    return;
+  }
+  if (paymentPlanForm.source_type === "PROJECT_EXPENSE" && !paymentPlanForm.project_id) {
+    errorMessage.value = "来源为项目费用时，必须选择项目";
+    return;
+  }
+  if (!paymentPlanForm.payee_name_snapshot || !paymentPlanForm.planned_amount || !paymentPlanForm.purpose) {
+    errorMessage.value = "请填写收款方、计划付款金额和资金用途";
+    return;
+  }
+  try {
+    const url = editingPaymentPlanId.value ? `/api/v1/payment-plans/${editingPaymentPlanId.value}` : "/api/v1/payment-plans";
+    await api<PaymentPlan>(url, {
+      method: editingPaymentPlanId.value ? "PATCH" : "POST",
+      body: JSON.stringify(paymentPlanPayload()),
+    });
+    paymentPlanFormOpen.value = false;
+    await refreshPaymentPlans();
+    successMessage.value = "付款计划已保存";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "付款计划保存失败";
+  }
+};
+const cancelPaymentPlan = async (item: PaymentPlan) => {
+  if (!window.confirm(`确定取消付款计划 ${item.plan_no} 吗？`)) return;
+  try {
+    await api(`/api/v1/payment-plans/${item.id}`, { method: "DELETE" });
+    await refreshPaymentPlans();
+    successMessage.value = "付款计划已取消";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "付款计划取消失败";
+  }
+};
+const refreshBusinessAnalysis = async () => {
+  if (!canManage("business_analysis")) return;
+  businessAnalysisLoading.value = true;
+  try {
+    businessAnalysis.value = await api<BusinessAnalysis>(`/api/v1/business-analysis?period_month=${encodeURIComponent(businessAnalysisMonth.value)}`);
+  } finally {
+    businessAnalysisLoading.value = false;
   }
 };
 const openPaymentApproval = async (item: Payment) => {
@@ -4440,6 +5379,174 @@ const exportAdminWorklogs = async () => {
       error instanceof Error ? error.message : "工时台账导出失败";
   }
 };
+const monthlyLedgerUrl = () => {
+  const params = new URLSearchParams();
+  if (monthlyLedgerMonth.value) params.set("month", monthlyLedgerMonth.value);
+  if (monthlyLedgerProjectKeyword.value.trim())
+    params.set("project_keyword", monthlyLedgerProjectKeyword.value.trim());
+  if (monthlyLedgerProjectType.value)
+    params.set("project_type", monthlyLedgerProjectType.value);
+  if (monthlyLedgerProjectStatus.value)
+    params.set("project_status", monthlyLedgerProjectStatus.value);
+  if (monthlyLedgerDepartment.value)
+    params.set("department_name", monthlyLedgerDepartment.value);
+  if (monthlyLedgerOwnerId.value)
+    params.set("owner_user_id", String(monthlyLedgerOwnerId.value));
+  return `/api/v1/worklogs/monthly-ledger?${params.toString()}`;
+};
+const monthlyLedgerExportUrl = (mode: "summary" | "details", projectId = 0) => {
+  const params = new URLSearchParams();
+  params.set("mode", mode);
+  if (monthlyLedgerMonth.value) params.set("month", monthlyLedgerMonth.value);
+  if (mode === "details") {
+    params.set("project_id", String(projectId || monthlyLedgerDetails.value?.project_id || 0));
+  } else {
+    if (monthlyLedgerProjectKeyword.value.trim())
+      params.set("project_keyword", monthlyLedgerProjectKeyword.value.trim());
+    if (monthlyLedgerProjectType.value)
+      params.set("project_type", monthlyLedgerProjectType.value);
+    if (monthlyLedgerProjectStatus.value)
+      params.set("project_status", monthlyLedgerProjectStatus.value);
+    if (monthlyLedgerDepartment.value)
+      params.set("department_name", monthlyLedgerDepartment.value);
+    if (monthlyLedgerOwnerId.value)
+      params.set("owner_user_id", String(monthlyLedgerOwnerId.value));
+  }
+  return `/api/v1/worklogs/monthly-ledger/export?${params.toString()}`;
+};
+const downloadCsv = async (url: string, fallbackFilename: string, successText: string) => {
+  exportReadyUrl.value = "";
+  const response = await fetch(url, {
+    headers: authHeaders(),
+    credentials: "include",
+  });
+  if (!response.ok) {
+    clearAuthOnUnauthorized(response.status);
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || `导出失败（${response.status}）`);
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const filename = disposition.match(/filename="?([^";]+)"?/)?.[1] || fallbackFilename;
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = decodeURIComponent(filename);
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  exportReadyUrl.value = url;
+  successMessage.value = successText;
+};
+const refreshMonthlyLedger = async () => {
+  if (!canManage("worklogs")) return;
+  monthlyLedgerLoading.value = true;
+  try {
+    const result = await api<WorklogMonthlyLedgerList>(monthlyLedgerUrl());
+    monthlyLedgerItems.value = result.items;
+    monthlyLedgerDepartmentOptions.value = result.department_options;
+    monthlyLedgerSummary.value = {
+      total_projects: result.total_projects,
+      total_days: result.total_days,
+      approved_days: result.approved_days,
+      pending_days: result.pending_days,
+      rejected_days: result.rejected_days,
+    };
+    if (
+      monthlyLedgerDetails.value &&
+      !result.items.some((item) => item.project_id === monthlyLedgerDetails.value?.project_id)
+    ) {
+      monthlyLedgerDetails.value = null;
+    }
+  } finally {
+    monthlyLedgerLoading.value = false;
+  }
+};
+const queryMonthlyLedger = async () => {
+  try {
+    monthlyLedgerDetails.value = null;
+    await refreshMonthlyLedger();
+    errorMessage.value = "";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "工时月度台账查询失败";
+  }
+};
+const openMonthlyLedgerDetails = async (item: WorklogMonthlyLedgerItem) => {
+  monthlyLedgerDetailLoading.value = true;
+  try {
+    const params = new URLSearchParams();
+    if (monthlyLedgerMonth.value) params.set("month", monthlyLedgerMonth.value);
+    const result = await api<WorklogMonthlyLedgerDetails>(
+      `/api/v1/worklogs/monthly-ledger/${item.project_id}/details?${params.toString()}`,
+    );
+    monthlyLedgerDetails.value = result;
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "项目工时明细加载失败";
+  } finally {
+    monthlyLedgerDetailLoading.value = false;
+  }
+};
+const monthLabelText = (value: string | null | undefined) => {
+  if (!value) return "";
+  const match = value.match(/^(\d{4})-(\d{2})$/);
+  return match ? `${match[1]}年${Number(match[2])}月` : value;
+};
+const openMonthlyLedgerPrint = async (item: WorklogMonthlyLedgerItem) => {
+  monthlyLedgerPrintOpen.value = true;
+  monthlyLedgerPrintLoading.value = true;
+  monthlyLedgerPrintData.value = null;
+  try {
+    const params = new URLSearchParams();
+    if (monthlyLedgerMonth.value) params.set("month", monthlyLedgerMonth.value);
+    monthlyLedgerPrintData.value = await api<WorklogMonthlyLedgerPrintView>(
+      `/api/v1/worklogs/monthly-ledger/${item.project_id}/print?${params.toString()}`,
+    );
+  } catch (error) {
+    monthlyLedgerPrintOpen.value = false;
+    errorMessage.value =
+      error instanceof Error ? error.message : "项目月度工时打印表加载失败";
+  } finally {
+    monthlyLedgerPrintLoading.value = false;
+  }
+};
+const closeMonthlyLedgerPrint = () => {
+  monthlyLedgerPrintOpen.value = false;
+  monthlyLedgerPrintData.value = null;
+};
+const printMonthlyLedger = () => {
+  window.print();
+};
+const exportMonthlyLedgerSummary = async () => {
+  try {
+    await downloadCsv(
+      monthlyLedgerExportUrl("summary"),
+      `xinye-worklog-monthly-ledger-summary-${monthlyLedgerMonth.value || "current"}.csv`,
+      "工时月度台账汇总已生成",
+    );
+  } catch (error) {
+    exportReadyUrl.value = "";
+    errorMessage.value =
+      error instanceof Error ? error.message : "工时月度台账导出失败";
+  }
+};
+const exportMonthlyLedgerDetails = async () => {
+  if (!monthlyLedgerDetails.value) return;
+  try {
+    await downloadCsv(
+      monthlyLedgerExportUrl("details", monthlyLedgerDetails.value.project_id),
+      `xinye-worklog-monthly-ledger-details-${monthlyLedgerMonth.value}-${monthlyLedgerDetails.value.project_id}.csv`,
+      "项目月度工时明细已生成",
+    );
+  } catch (error) {
+    exportReadyUrl.value = "";
+    errorMessage.value =
+      error instanceof Error ? error.message : "项目月度工时明细导出失败";
+  }
+};
 const changeAdminPage = async (nextPage: number) => {
   if (
     nextPage < 1 ||
@@ -4500,11 +5607,16 @@ const refreshAdminPermissions = async () => {
 const rbacActionLabels: Record<string, string> = {
   VIEW: "查看",
   CREATE: "新增",
+  UPDATE: "修改",
   EDIT: "编辑",
   DELETE: "删除",
   APPROVE: "审批",
   EXPORT: "导出",
+  IMPORT: "导入",
+  UPLOAD: "上传",
+  DOWNLOAD: "下载",
   SYNC: "同步",
+  RETRY: "重试",
   CONFIGURE: "配置",
   PUBLISH: "发布",
   DISABLE: "停用",
@@ -4716,18 +5828,30 @@ const refreshAdminConfiguration = async () => {
   if (!canManage("configuration")) return;
   configurationLoading.value = true;
   classificationLoading.value = true;
+  orgApprovalLoading.value = true;
+  workCalendarLoading.value = true;
   try {
-    const [result, classifications] = await Promise.all([
+    const [result, classifications, orgApproval, workCalendar] = await Promise.all([
       api<ConfigCatalog>("/api/v1/admin/config/options"),
       api<ClassificationCatalog>("/api/v1/admin/config/classifications").catch(
         () => null,
       ),
+      api<OrgApprovalConfig>("/api/v1/admin/org-approval-config").catch(
+        () => null,
+      ),
+      api<{ items: WorkCalendarDay[] }>(
+        `/api/v1/admin/work-calendar?year=${workCalendarYear.value}`,
+      ).catch(() => null),
     ]);
     adminConfigOptions.value = result.options;
     if (classifications) classificationCatalog.value = classifications;
+    if (orgApproval) orgApprovalConfig.value = orgApproval;
+    if (workCalendar) adminWorkCalendarItems.value = workCalendar.items;
   } finally {
     configurationLoading.value = false;
     classificationLoading.value = false;
+    orgApprovalLoading.value = false;
+    workCalendarLoading.value = false;
   }
 };
 const configCategoryLabel = (category: string) =>
@@ -4739,6 +5863,71 @@ const configCategoryLabel = (category: string) =>
     project_category: "项目大类",
     project_sub_category: "项目小类",
   })[category] || category;
+const filteredOrgApprovalDepartments = computed(() => {
+  const keyword = orgApprovalDepartmentKeyword.value.trim().toLowerCase();
+  if (!keyword) return orgApprovalConfig.value.departments;
+  return orgApprovalConfig.value.departments.filter((item) =>
+    `${item.path} ${item.manager_name || ""}`.toLowerCase().includes(keyword),
+  );
+});
+const filteredOrgApprovalUsers = computed(() => {
+  const keyword = orgApprovalUserKeyword.value.trim().toLowerCase();
+  if (!keyword) return orgApprovalConfig.value.users;
+  return orgApprovalConfig.value.users.filter((item) =>
+    `${item.name} ${item.department_path} ${item.supervisor_name || ""}`.toLowerCase().includes(keyword),
+  );
+});
+const orgApprovalPersonOptions = computed(() => {
+  if (orgApprovalConfig.value.users.length) {
+    return orgApprovalConfig.value.users.map((item) => ({
+      id: item.id,
+      name: item.name,
+      department_name: item.department_path,
+    }));
+  }
+  return demoUsers.value;
+});
+const saveDepartmentManager = async (item: OrgApprovalDepartment) => {
+  try {
+    await api(`/api/v1/admin/departments/${item.id}/manager`, {
+      method: "PATCH",
+      body: JSON.stringify({ manager_user_id: item.manager_user_id || null }),
+    });
+    successMessage.value = "部门负责人已保存";
+    await refreshAdminConfiguration();
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "部门负责人保存失败";
+  }
+};
+const saveUserSupervisor = async (item: OrgApprovalUser) => {
+  try {
+    await api(`/api/v1/admin/users/${item.id}/supervisor`, {
+      method: "PATCH",
+      body: JSON.stringify({ supervisor_user_id: item.supervisor_user_id || null }),
+    });
+    successMessage.value = "直属上级已保存";
+    await refreshAdminConfiguration();
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "直属上级保存失败";
+  }
+};
+const saveMarketDepartment = async () => {
+  try {
+    await api("/api/v1/admin/org-approval-config/market-department", {
+      method: "PATCH",
+      body: JSON.stringify({
+        department_id: orgApprovalConfig.value.market_department_id || null,
+      }),
+    });
+    successMessage.value = "市场部门已保存";
+    await refreshAdminConfiguration();
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "市场部门保存失败";
+  }
+};
 /* 项目分类与成本分类改用树形卡片维护，不出现在左侧扁平静态列表里 */
 const classificationCategories = ["project_category", "project_sub_category"];
 const classificationTreeKeys = ["project_category"] as const;
@@ -4769,6 +5958,73 @@ const PROJECT_CATEGORY_FALLBACK_LABELS: Record<string, string> = {
   BUSINESS_PROJECT: "经营项目",
   RND_PROJECT: "研发项目",
 };
+const PROJECT_WORK_TYPE_CATEGORY: Record<string, string> = {
+  RND_PROJECT_WORK: "RND_PROJECT",
+  TECH_SERVICE_WORK: "BUSINESS_PROJECT",
+};
+const NEW_WORK_TYPE_ORDER = [
+  "RND_PROJECT_WORK",
+  "TECH_SERVICE_WORK",
+  "DEMO_PROMOTION_WORK",
+  "MARKETING_WORK",
+  "MANAGEMENT_WORK",
+  "OTHER_WORK",
+];
+const LEGACY_WORK_TYPES = ["PROJECT", "MANAGEMENT", "OTHER", "TECH_SERVICE", "OBSERVE_PROMOTE"];
+const isProjectWorkType = (value: string) =>
+  value === "PROJECT" || Object.prototype.hasOwnProperty.call(PROJECT_WORK_TYPE_CATEGORY, value);
+const requiredProjectCategoryForWorkType = (value: string) =>
+  PROJECT_WORK_TYPE_CATEGORY[value] || "";
+const workTypeOptionsForEditor = computed(() => {
+  const rows = activeConfigOptions("work_type").filter(
+    (item) => !LEGACY_WORK_TYPES.includes(item.value) || item.value === form.work_type,
+  );
+  const sorted = rows.sort((left, right) => {
+    const leftIndex = NEW_WORK_TYPE_ORDER.indexOf(left.value);
+    const rightIndex = NEW_WORK_TYPE_ORDER.indexOf(right.value);
+    return (leftIndex < 0 ? 99 : leftIndex) - (rightIndex < 0 ? 99 : rightIndex);
+  });
+  const seenLabels = new Set<string>();
+  return sorted.filter((item) => {
+    const key = item.label.trim();
+    if (item.value === form.work_type) {
+      seenLabels.add(key);
+      return true;
+    }
+    if (seenLabels.has(key)) return false;
+    seenLabels.add(key);
+    return true;
+  });
+});
+const reportWorkTypeOptions = computed(() => {
+  const seenLabels = new Set<string>();
+  return activeConfigOptions("work_type")
+    .filter((item) => !LEGACY_WORK_TYPES.includes(item.value))
+    .sort((left, right) => {
+      const leftIndex = NEW_WORK_TYPE_ORDER.indexOf(left.value);
+      const rightIndex = NEW_WORK_TYPE_ORDER.indexOf(right.value);
+      return (leftIndex < 0 ? 99 : leftIndex) - (rightIndex < 0 ? 99 : rightIndex);
+    })
+    .filter((item) => {
+      const key = item.label.trim();
+      if (seenLabels.has(key)) return false;
+      seenLabels.add(key);
+      return true;
+    });
+});
+const reportProjectOptions = computed(() =>
+  projects.value
+    .filter((item) => item.status !== "DELETED")
+    .slice()
+    .sort((left, right) => left.name.localeCompare(right.name, "zh-CN")),
+);
+const reportStatusOptions = [
+  { value: "DRAFT", label: "草稿" },
+  { value: "PENDING_APPROVAL", label: "审批中" },
+  { value: "APPROVED", label: "已通过" },
+  { value: "REJECTED", label: "已驳回" },
+  { value: "LOCKED", label: "已锁定" },
+];
 const projectCategoryOptions = computed(() =>
   classificationCatalog.value.project_category.filter(
     (item) => item.is_active,
@@ -5001,6 +6257,63 @@ const deleteConfigurationOption = async (option: ConfigOption) => {
     errorMessage.value = configOptionErrorMessage(error);
   }
 };
+const workCalendarStats = computed(() => ({
+  workday: adminWorkCalendarItems.value.filter((item) => item.day_type === "WORKDAY").length,
+  holiday: adminWorkCalendarItems.value.filter((item) => item.day_type === "HOLIDAY").length,
+}));
+const sortedWorkCalendarItems = computed(() =>
+  [...adminWorkCalendarItems.value].sort((a, b) => a.calendar_date.localeCompare(b.calendar_date)),
+);
+const workCalendarTypeLabel = (type: string) =>
+  type === "WORKDAY" ? "调休工作日" : "法定假日";
+const openWorkCalendarForm = (item?: WorkCalendarDay) => {
+  Object.assign(workCalendarForm, {
+    calendar_date: item?.calendar_date || `${workCalendarYear.value}-01-01`,
+    day_type: item?.day_type || "HOLIDAY",
+    name: item?.name || "",
+    source: item?.source || "",
+  });
+  workCalendarFormOpen.value = true;
+};
+const saveWorkCalendarDay = async () => {
+  if (!workCalendarForm.calendar_date || !workCalendarForm.name.trim()) {
+    errorMessage.value = "请填写日期和名称";
+    return;
+  }
+  try {
+    await api<WorkCalendarDay>(
+      `/api/v1/admin/work-calendar/${workCalendarForm.calendar_date}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          day_type: workCalendarForm.day_type,
+          name: workCalendarForm.name.trim(),
+          source: workCalendarForm.source.trim() || null,
+        }),
+      },
+    );
+    workCalendarYear.value = Number(workCalendarForm.calendar_date.slice(0, 4)) || workCalendarYear.value;
+    workCalendarFormOpen.value = false;
+    await Promise.all([refreshAdminConfiguration(), refresh()]);
+    successMessage.value = "工作日历已保存";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "工作日历保存失败";
+  }
+};
+const deleteWorkCalendarDay = async (item: WorkCalendarDay) => {
+  if (item.is_builtin) {
+    errorMessage.value = "内置官方日期不能删除，可以编辑类型或名称";
+    return;
+  }
+  if (!window.confirm(`确定删除 ${item.calendar_date} 的覆盖项吗？删除后将回到默认周末规则。`)) return;
+  try {
+    await api(`/api/v1/admin/work-calendar/${item.calendar_date}`, { method: "DELETE" });
+    await Promise.all([refreshAdminConfiguration(), refresh()]);
+    successMessage.value = "工作日历覆盖项已删除";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "工作日历删除失败";
+  }
+};
 const adminPermissionAvailableUsers = computed(() =>
   demoUsers.value.filter(
     (person) =>
@@ -5175,7 +6488,7 @@ const resetAdminWorklogForm = () => {
     project_type:
       projectCategoryOptions.value[0]?.value || "RND_PROJECT",
     stage: activeConfigOptions("project_stage")[0]?.value || "开发",
-    work_type: activeConfigOptions("work_type")[0]?.value || "PROJECT",
+    work_type: workTypeOptionsForEditor.value[0]?.value || "RND_PROJECT_WORK",
     work_status: activeConfigOptions("work_status")[0]?.value || "LOCAL",
     fill_date: "",
     start_date: "",
@@ -5262,11 +6575,53 @@ const approvalItems = computed(() =>
     ? pendingApprovals.value
     : processedApprovals.value,
 );
+const selectedApprovalTasks = computed(() =>
+  pendingApprovals.value.filter((task) => selectedApprovalIds.value.includes(task.id)),
+);
+const allPendingApprovalSelected = computed(
+  () =>
+    pendingApprovals.value.length > 0 &&
+    pendingApprovals.value.every((task) => selectedApprovalIds.value.includes(task.id)),
+);
+watch(approvalTab, () => {
+  selectedApprovalIds.value = [];
+});
+watch(pendingApprovals, (items) => {
+  selectedApprovalIds.value = selectedApprovalIds.value.filter((id) =>
+    items.some((task) => task.id === id),
+  );
+});
+watch(worklogCalendarMonth, () => {
+  if (!authRequired.value) void refreshWorklogCalendar();
+});
+const calendarWeekdays = ["一", "二", "三", "四", "五", "六", "日"];
+const worklogCalendarTitle = computed(() => {
+  const [year, month] = worklogCalendarMonth.value.split("-");
+  return `${year}年${Number(month || 1)}月`;
+});
+const worklogCalendarWeeks = computed(() => {
+  const days = worklogCalendar.value?.days || [];
+  if (!days.length) return [] as Array<Array<WorklogCalendarDay | null>>;
+  const cells: Array<WorklogCalendarDay | null> = [];
+  const firstDate = new Date(`${days[0].date}T00:00:00Z`);
+  const leading = (firstDate.getUTCDay() + 6) % 7;
+  for (let index = 0; index < leading; index += 1) cells.push(null);
+  cells.push(...days);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks: Array<Array<WorklogCalendarDay | null>> = [];
+  for (let index = 0; index < cells.length; index += 7) {
+    weeks.push(cells.slice(index, index + 7));
+  }
+  return weeks;
+});
 const fillableProjects = computed(() =>
   projects.value.filter(
     (item) =>
-      item.status === "ACTIVE" &&
+      ["ACTIVE", "PRE_APPROVAL"].includes(item.status) &&
       item.allow_worklog &&
+      isProjectWorkType(form.work_type) &&
+      (!requiredProjectCategoryForWorkType(form.work_type) ||
+        item.project_type === requiredProjectCategoryForWorkType(form.work_type)) &&
       (!form.project_type || item.project_type === form.project_type),
   ),
 );
@@ -5544,22 +6899,29 @@ const managementHome = computed<Page>(() => {
   if (canManage("contracts")) return "projectContracts";
   if (canManage("receipts")) return "projectReceipts";
   if (canManage("payments")) return "projectPayments";
+  if (canManage("receipt_ledger")) return "receiptLedger";
+  if (canManage("payment_plan")) return "paymentPlans";
+  if (canManage("business_analysis")) return "businessAnalysis";
   if (canManage("project_expenses")) return "projectExpenses";
   if (canManage("cost_review")) return "costReview";
   if (canManage("project_board")) return "projectBoard";
   if (canManage("counterparties")) return "customers";
-  if (canManage("worklogs")) return "adminWorklogs";
+  if (canManage("worklogs")) return "monthlyWorklogLedger";
   if (canManage("integrations")) return "integrations";
   if (canManage("configuration")) return "configuration";
   return "adminPermissions";
 });
 const mobileManagementItems = computed(() =>
   [
-    { page: "adminWorklogs", permission: "worklogs" as ManagementPermission, label: "工时台账", icon: "ledger" },
+    { page: "monthlyWorklogLedger", permission: "worklogs" as ManagementPermission, label: "工时月度台账", icon: "ledger" },
+    { page: "adminWorklogs", permission: "worklogs" as ManagementPermission, label: "工时明细台账", icon: "ledger" },
     { page: "projects", permission: "projects" as ManagementPermission, label: "项目管理", icon: "projects" },
     { page: "projectContracts", permission: "contracts" as ManagementPermission, label: "项目合同", icon: "contract" },
     { page: "projectReceipts", permission: "receipts" as ManagementPermission, label: "合同收款", icon: "receipt" },
     { page: "projectPayments", permission: "payments" as ManagementPermission, label: "合同付款", icon: "payment" },
+    { page: "receiptLedger", permission: "receipt_ledger" as ManagementPermission, label: "回款台账", icon: "receipt" },
+    { page: "paymentPlans", permission: "payment_plan" as ManagementPermission, label: "付款计划", icon: "payment" },
+    { page: "businessAnalysis", permission: "business_analysis" as ManagementPermission, label: "经营分析", icon: "board" },
     { page: "projectExpenses", permission: "project_expenses" as ManagementPermission, label: "项目费用", icon: "cost" },
     { page: "laborCosts", permission: "labor_costs" as ManagementPermission, label: "人工成本结转", icon: "cost" },
     { page: "costReview", permission: "cost_review" as ManagementPermission, label: "费用复核", icon: "cost" },
@@ -5593,6 +6955,19 @@ const auditActionLabel = (action: string) =>
     UPDATE_APPROVAL_CHAIN: "调整审批链",
     UPDATE_DAILY_COST: "更新单天成本",
   })[action] || action;
+const approvalTimelineEventLabel = (event: string) =>
+  ({
+    CREATE: "创建单据",
+    UPDATE: "修改单据",
+    DELETE: "删除单据",
+    SUBMIT: "提交审批",
+    WITHDRAW: "撤回申请",
+    APPROVE: "审批通过",
+    REJECT: "审批驳回",
+    REVERSE: "冲销",
+    CONFIRM_PAYMENT: "确认付款",
+    AUTO_APPROVE: "系统自动通过",
+  })[event] || auditActionLabel(event);
 const expenseApprovalActionLabel = (action: string) =>
   ({
     SUBMIT: "提交审批",
@@ -5638,12 +7013,16 @@ const pageTitle = computed(
       receiptDetail: "合同收款",
       paymentDetail: "合同付款",
       reports: "工时看板",
+      monthlyWorklogLedger: "工时月度台账",
       adminWorklogs: "工时台账",
       projects: "项目管理",
       projectDetail: "项目详情",
       projectContracts: "项目合同",
       projectReceipts: "合同收款",
       projectPayments: "合同付款",
+      receiptLedger: "回款台账",
+      paymentPlans: "付款计划",
+      businessAnalysis: "经营分析",
       projectExpenses: "项目费用",
       laborCosts: "人工成本结转",
       expenseDetail: "成本单详情",
@@ -5681,22 +7060,34 @@ const reportBudgetUsageSummary = computed(
 const statusLabel = (status: string) =>
   ({
     DRAFT: "草稿",
+    PRE_APPROVAL: "预立项",
+    PRE_APPROVAL_FAILED: "预立项失败",
     PENDING: "审批中",
+    PENDING_REVIEW: "待复核",
     PENDING_APPROVAL: "审批中",
     APPROVING: "审批中",
     APPROVED: "已通过",
+    APPROVED_PENDING_PAYMENT: "待支付",
+    PAID: "已支付",
     REJECTED: "已驳回",
+    REVERSED: "已冲销",
     WITHDRAWN: "已撤回",
     LOCKED: "已锁定",
   })[status] || status;
 const statusClass = (status: string) =>
   ({
     DRAFT: "neutral",
+    PRE_APPROVAL: "info",
+    PRE_APPROVAL_FAILED: "danger",
     PENDING: "warning",
+    PENDING_REVIEW: "warning",
     PENDING_APPROVAL: "warning",
     APPROVING: "warning",
     APPROVED: "success",
+    APPROVED_PENDING_PAYMENT: "info",
+    PAID: "success",
     REJECTED: "danger",
+    REVERSED: "danger",
     WITHDRAWN: "neutral",
     LOCKED: "success",
   })[status] || "neutral";
@@ -5728,13 +7119,14 @@ const cashStatusLabel = (value: string) =>
   ({
     DRAFT: "草稿",
     PENDING: "待出纳审批",
+    PENDING_REVIEW: "待复核",
     PENDING_APPROVAL: "审批中",
     APPROVED: "已确认",
     REJECTED: "已驳回",
     REVERSED: "已冲销",
   })[value] || value;
 const cashStatusClass = (value: string) =>
-  ({ PENDING: "warning", PENDING_APPROVAL: "warning", APPROVED: "success", REJECTED: "danger", REVERSED: "neutral" })[value] || "neutral";
+  ({ DRAFT: "neutral", PENDING: "warning", PENDING_REVIEW: "warning", PENDING_APPROVAL: "warning", APPROVED: "success", REJECTED: "danger", REVERSED: "neutral" })[value] || "neutral";
 const moneyText = (value: number | null | undefined) =>
   `¥${Number(value || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
 const taxRateOptions = [
@@ -5963,7 +7355,15 @@ const reportTypeLabel = (value: string) =>
   ({
     PROJECT: "项目工时",
     MANAGEMENT: "管理工时",
-    OTHER: "其它工时",
+    OTHER: "其他工时",
+    RND_PROJECT_WORK: "研发项目工时",
+    TECH_SERVICE_WORK: "技术服务工时",
+    DEMO_PROMOTION_WORK: "观摩推广工时",
+    MARKETING_WORK: "市场营销工时",
+    MANAGEMENT_WORK: "管理工时",
+    OTHER_WORK: "其他工时",
+    TECH_SERVICE: "技术服务工时",
+    OBSERVE_PROMOTE: "观摩推广工时",
     LOCAL: "本地",
     BUSINESS_TRIP: "出差",
     REMOTE: "异地办公",
@@ -6702,9 +8102,10 @@ const openBoardAgingItem = async (item: ProjectBoardAgingBucket["items"][number]
   target?.scrollIntoView({ behavior: "smooth", block: "center" });
 };
 const isSelfApprover = computed(
-  () => selectedProject.value?.approver_user_id === activeUserId.value,
+  () => isProjectWorkType(form.work_type) && selectedProject.value?.approver_user_id === activeUserId.value,
 );
 const actualApproverName = computed(() => {
+  if (!isProjectWorkType(form.work_type)) return "提交后按部门负责人确定";
   const project = selectedProject.value;
   if (!project) return "未配置";
   if (project.approver_user_id === activeUserId.value)
@@ -6717,16 +8118,17 @@ const actualApproverName = computed(() => {
   return project.approver_name || "未配置";
 });
 
-const openEditor = (item?: Worklog) => {
+const openEditor = (item?: Worklog | null, presetDate = applicationDate()) => {
   editingId.value = item?.id || null;
   projectQuery.value = "";
   projectPickerOpen.value = false;
   if (item)
     Object.assign(form, {
-      project_id: item.project_id,
+      project_id: item.project_id || 0,
       project_type:
         projects.value.find((project) => project.id === item.project_id)
           ?.project_type ||
+        requiredProjectCategoryForWorkType(item.work_type) ||
         projectCategoryOptions.value[0]?.value ||
         "RND_PROJECT",
       stage: item.stage,
@@ -6742,29 +8144,46 @@ const openEditor = (item?: Worklog) => {
   else
     Object.assign(form, {
       project_id: 0,
-      project_type: projectCategoryOptions.value[0]?.value || "",
+      project_type: "RND_PROJECT",
       stage: activeConfigOptions("project_stage")[0]?.value || "开发",
-      work_type: activeConfigOptions("work_type")[0]?.value || "PROJECT",
+      work_type: workTypeOptionsForEditor.value[0]?.value || "RND_PROJECT_WORK",
       work_status: activeConfigOptions("work_status")[0]?.value || "LOCAL",
-      fill_date: applicationDate(),
-      start_date: applicationDate(),
-      end_date: applicationDate(),
+      fill_date: presetDate,
+      start_date: presetDate,
+      end_date: presetDate,
       quantity: 1,
       unit: "DAY",
       description: "",
     });
-  if (!item) form.project_id = fillableProjects.value[0]?.id || 0;
+  if (!item && isProjectWorkType(form.work_type)) form.project_id = fillableProjects.value[0]?.id || 0;
   go("editor");
 };
 
-const toggleProjectPicker = () => {
+const toggleProjectPicker = async () => {
   projectPickerOpen.value = !projectPickerOpen.value;
-  if (!projectPickerOpen.value) projectQuery.value = "";
+  if (!projectPickerOpen.value) {
+    projectQuery.value = "";
+    return;
+  }
+  await nextTick();
+  // 打开时定位到当前已选项目，避免长列表里找不到
+  projectOptionsList.value
+    ?.querySelector<HTMLElement>(".project-picker-option.is-selected")
+    ?.scrollIntoView({ block: "nearest" });
+  // 桌面端（精细指针）自动聚焦搜索框；触屏设备保持键盘收起，避免遮挡列表
+  if (window.matchMedia?.("(pointer: fine)")?.matches) {
+    projectSearchInput.value?.focus();
+  }
 };
 const chooseProject = (project: Project) => {
   form.project_id = project.id;
   projectQuery.value = "";
   projectPickerOpen.value = false;
+};
+const chooseFirstFilteredProject = () => {
+  const first = filteredProjects.value[0];
+  if (first) chooseProject(first);
+  else projectQuery.value = "";
 };
 
 const saveWorklog = async (submit: boolean) => {
@@ -6774,7 +8193,14 @@ const saveWorklog = async (submit: boolean) => {
     return;
   }
   try {
-    const payload = { ...form, fill_date: form.fill_date || form.start_date };
+    const payload = {
+      ...form,
+      project_id: isProjectWorkType(form.work_type) ? form.project_id : null,
+      stage: isProjectWorkType(form.work_type)
+        ? form.stage
+        : activeConfigOptions("project_stage").find((option) => option.value === "管理")?.value || "管理",
+      fill_date: form.fill_date || form.start_date,
+    };
     let item: Worklog;
     if (editingId.value)
       item = await api<Worklog>(`/api/v1/worklogs/${editingId.value}`, {
@@ -6841,6 +8267,25 @@ const openWorklog = async (item: Worklog) => {
   }
 };
 const openDetail = openWorklog;
+const shiftWorklogCalendarMonth = (delta: number) => {
+  const [yearText, monthText] = worklogCalendarMonth.value.split("-");
+  const date = new Date(Date.UTC(Number(yearText), Number(monthText) - 1 + delta, 1));
+  worklogCalendarMonth.value = date.toISOString().slice(0, 7);
+};
+const worklogCalendarStatusClass = (status: string) =>
+  `calendar-status-${status.toLowerCase()}`;
+const openWorklogCalendarDay = async (day: WorklogCalendarDay) => {
+  if (day.has_worklog && day.worklog_id) {
+    const item = worklogs.value.find((row) => row.id === day.worklog_id);
+    if (item) {
+      if (["DRAFT", "REJECTED"].includes(item.status)) openEditor(item);
+      else await openWorklog(item);
+      return;
+    }
+  }
+  if (!day.is_workday && !window.confirm("当前日期不是工作日，是否仍要填报？")) return;
+  openEditor(null, day.date);
+};
 const withdrawWorklog = async (item: Worklog | null = null) => {
   const target = item || selectedTask.value?.worklog || null;
   if (!target) return;
@@ -6856,6 +8301,57 @@ const withdrawWorklog = async (item: Worklog | null = null) => {
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "工时撤回失败";
+  }
+};
+const toggleAllPendingApprovals = () => {
+  selectedApprovalIds.value = allPendingApprovalSelected.value
+    ? []
+    : pendingApprovals.value.map((task) => task.id);
+};
+const batchProcessApprovals = async (action: "approve" | "reject") => {
+  if (!selectedApprovalIds.value.length || batchApprovalBusy.value) return;
+  let reason = "";
+  if (action === "reject") {
+    const input = window.prompt(`请输入批量驳回原因（${selectedApprovalIds.value.length} 条）`, "");
+    if (!input) return;
+    reason = input.trim();
+    if (reason.length < 2) {
+      errorMessage.value = "驳回原因至少填写 2 个字";
+      return;
+    }
+  } else if (!window.confirm(`确认通过已选的 ${selectedApprovalIds.value.length} 条工时审批吗？`)) {
+    return;
+  }
+  batchApprovalBusy.value = true;
+  try {
+    const result = await api<BatchApprovalResult>(
+      `/api/v1/approvals/${action === "approve" ? "batch-approve" : "batch-reject"}`,
+      {
+        method: "POST",
+        body: JSON.stringify(
+          action === "approve"
+            ? { task_ids: selectedApprovalIds.value, comment: "" }
+            : { task_ids: selectedApprovalIds.value, reason },
+        ),
+      },
+    );
+    const failed = result.results.filter((item) => !item.success);
+    successMessage.value =
+      action === "approve"
+        ? `批量通过完成：成功 ${result.success_count} 条，失败 ${result.failed_count} 条`
+        : `批量驳回完成：成功 ${result.success_count} 条，失败 ${result.failed_count} 条`;
+    if (failed.length) {
+      errorMessage.value = failed
+        .slice(0, 3)
+        .map((item) => `任务 ${item.task_id}：${item.message || "处理失败"}`)
+        .join("；");
+    }
+    selectedApprovalIds.value = [];
+    await refresh();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "批量审批失败";
+  } finally {
+    batchApprovalBusy.value = false;
   }
 };
 const processTask = async (action: "approve" | "reject") => {
@@ -7071,13 +8567,14 @@ const saveProject = async () => {
     return;
   }
   if (
+    !projectForm.name.trim() ||
     !projectForm.owner_user_id ||
     !projectForm.department_id ||
     !projectForm.approver_user_id ||
     !projectForm.leader_user_id
   ) {
     errorMessage.value =
-      "项目部门、负责人、审批人和上级领导必须从组织架构中选择";
+      "项目名称、项目部门、负责人、审批人和上级领导必须填写";
     return;
   }
   try {
@@ -7117,6 +8614,62 @@ const deleteProject = async (project: Project) => {
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "项目删除失败";
+  }
+};
+const failPreApprovalProject = async (project: Project) => {
+  if (!canManage("projects")) {
+    errorMessage.value = "你没有项目管理权限";
+    return;
+  }
+  const reason = window.prompt(`请输入“${project.name}”预立项失败原因`, "预立项未成功");
+  if (reason === null) return;
+  try {
+    await api<Project>(`/api/v1/projects/${project.id}/pre-approval/fail`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason.trim() || "预立项未成功" }),
+    });
+    await refresh();
+    await refreshProjectPage();
+    successMessage.value = "项目已标记为预立项失败";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "预立项状态更新失败";
+  }
+};
+const convertProjectWorklogsToManagement = async (project: Project) => {
+  if (!canManage("projects")) {
+    errorMessage.value = "你没有项目管理权限";
+    return;
+  }
+  try {
+    const preview = await api<{
+      convertible_count: number;
+      total_days: number;
+    }>(`/api/v1/projects/${project.id}/worklogs/convert-to-management/preview`);
+    if (!preview.convertible_count) {
+      successMessage.value = "该项目暂无可转换工时";
+      return;
+    }
+    const reason = window.prompt(
+      `将 ${preview.convertible_count} 条、共 ${preview.total_days} 天工时转为管理工时，请填写转换原因`,
+      "预立项未成功，转为管理工时",
+    );
+    if (reason === null) return;
+    const result = await api<{ converted_count: number }>(
+      `/api/v1/projects/${project.id}/worklogs/convert-to-management`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          reason: reason.trim() || "预立项未成功，转为管理工时",
+        }),
+      },
+    );
+    await refresh();
+    await refreshProjectPage();
+    successMessage.value = `已转换 ${result.converted_count} 条工时`;
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "转管理工时失败";
   }
 };
 
@@ -7311,6 +8864,8 @@ const withdrawCostEntry = async (entry: ProjectCostEntry) => {
 const approveCostEntry = async () => {
   const entry = selectedExpense.value;
   if (!entry) return;
+  if (costEntryApproving.value) return;
+  costEntryApproving.value = true;
   try {
     selectedExpense.value = await api<ProjectCostEntry>(`/api/v1/project-cost-entries/${entry.id}/approve`, { method: "POST", body: JSON.stringify({ comment: costEntryActionComment.value || null }) });
     costEntryActionComment.value = "";
@@ -7318,6 +8873,8 @@ const approveCostEntry = async () => {
     successMessage.value = "复核已通过，成本已计入项目";
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "复核失败";
+  } finally {
+    costEntryApproving.value = false;
   }
 };
 const rejectCostEntry = async () => {
@@ -7360,12 +8917,19 @@ const refreshCostReview = async () => {
     costReviewTotal.value = result.total;
     costReviewCounts.pending = result.pending_count;
     costReviewCounts.processed = result.processed_count;
+    costReviewProcessingKeys.value = new Set(
+      [...costReviewProcessingKeys.value].filter((key) =>
+        result.items.some((item) => `${item.kind}:${item.entry_id}` === key && item.status === "PENDING_REVIEW")
+      )
+    );
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "费用复核加载失败";
   }
 };
 const costReviewApiPath = (item: CostReviewItem) =>
   item.kind === "PAYMENT" ? `/api/v1/payments/${item.entry_id}` : `/api/v1/project-cost-entries/${item.entry_id}`;
+const costReviewKey = (item: CostReviewItem) => `${item.kind}:${item.entry_id}`;
+const isCostReviewProcessing = (item: CostReviewItem) => costReviewProcessingKeys.value.has(costReviewKey(item));
 const openCostReviewTarget = async (item: CostReviewItem) => {
   if (item.kind === "PAYMENT") {
     await openPaymentApproval({ id: item.entry_id } as Payment);
@@ -7374,6 +8938,9 @@ const openCostReviewTarget = async (item: CostReviewItem) => {
   await openExpenseDetail({ id: item.entry_id });
 };
 const approveCostReview = async (item: CostReviewItem) => {
+  const key = costReviewKey(item);
+  if (costReviewProcessingKeys.value.has(key)) return;
+  costReviewProcessingKeys.value = new Set([...costReviewProcessingKeys.value, key]);
   try {
     await api(`${costReviewApiPath(item)}/approve`, { method: "POST", body: JSON.stringify({ comment: costEntryActionComment.value || null }) });
     costEntryActionComment.value = "";
@@ -7381,6 +8948,10 @@ const approveCostReview = async (item: CostReviewItem) => {
     successMessage.value = "复核已通过";
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "复核失败";
+  } finally {
+    const next = new Set(costReviewProcessingKeys.value);
+    next.delete(key);
+    costReviewProcessingKeys.value = next;
   }
 };
 const rejectCostReview = async (item: CostReviewItem) => {
@@ -7547,12 +9118,23 @@ const closeProjectPicker = () => {
   projectPickerOpen.value = false;
   projectQuery.value = "";
 };
+const closeProjectActionMenu = () => {
+  projectActionMenuId.value = null;
+};
+const toggleProjectActionMenu = (projectId: number) => {
+  projectActionMenuId.value = projectActionMenuId.value === projectId ? null : projectId;
+};
+const runProjectRowAction = (action: () => void | Promise<void>) => {
+  closeProjectActionMenu();
+  void action();
+};
 onMounted(() => {
   clockTimer = window.setInterval(() => {
     currentTime.value = new Date();
   }, 60000);
   window.addEventListener("resize", resizeCharts);
   document.addEventListener("click", closeProjectPicker);
+  document.addEventListener("click", closeProjectActionMenu);
   initialize();
   startStatusPolling();
 });
@@ -7629,6 +9211,14 @@ onMounted(() => {
       <button
         v-if="canManage('worklogs')"
         class="nav-item"
+        :class="{ active: page === 'monthlyWorklogLedger' }"
+        @click="go('monthlyWorklogLedger')"
+      >
+        <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#ledger"></use></svg></span><span>月度台账</span>
+      </button>
+      <button
+        v-if="canManage('worklogs')"
+        class="nav-item"
         :class="{ active: page === 'adminWorklogs' }"
         @click="go('adminWorklogs')"
       >
@@ -7667,6 +9257,30 @@ onMounted(() => {
           @click="go('projectPayments')"
         >
           <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#payment"></use></svg></span><span>合同付款</span>
+        </button>
+        <button
+          v-if="canManage('receipt_ledger')"
+          class="nav-item"
+          :class="{ active: page === 'receiptLedger' }"
+          @click="go('receiptLedger')"
+        >
+          <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#receipt"></use></svg></span><span>回款台账</span>
+        </button>
+        <button
+          v-if="canManage('payment_plan')"
+          class="nav-item"
+          :class="{ active: page === 'paymentPlans' }"
+          @click="go('paymentPlans')"
+        >
+          <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#payment"></use></svg></span><span>付款计划</span>
+        </button>
+        <button
+          v-if="canManage('business_analysis')"
+          class="nav-item"
+          :class="{ active: page === 'businessAnalysis' }"
+          @click="go('businessAnalysis')"
+        >
+          <span class="nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="/menu-icons.svg#board"></use></svg></span><span>经营分析</span>
         </button>
         <button
           v-if="canManage('project_expenses')"
@@ -7754,7 +9368,7 @@ onMounted(() => {
     <main class="main">
       <header class="topbar">
         <div class="crumb">
-          <span class="topbar-kicker">SINYE PROJECT MANAGE SYSTEM</span><span>工作空间</span
+          <span class="topbar-kicker">综合项目管理系统</span><span>工作空间</span
           ><span>/</span><strong>{{ pageTitle }}</strong>
         </div>
         <div class="user-chip">
@@ -7801,11 +9415,56 @@ onMounted(() => {
         <section v-if="page === 'workbench'" class="page-view workbench-page">
           <div class="page-head">
             <div>
-              <div class="eyebrow">WORKSPACE / {{ user.name }}</div>
+              <div class="eyebrow">工作台 / {{ user.name }}</div>
               <h1>{{ workbenchGreeting }}，{{ user.name }}</h1>
               <p class="muted">{{ todayLabel }}</p>
             </div>
           </div>
+
+          <section class="card worklog-calendar-card">
+            <div class="section-head">
+              <div>
+                <h2>本月工时日历</h2>
+                <p class="muted">绿色为已填报，红色为已过但未填报；点击日期可直接填报或查看。</p>
+              </div>
+              <div class="calendar-actions">
+                <button class="secondary" @click="shiftWorklogCalendarMonth(-1)">上月</button>
+                <strong>{{ worklogCalendarTitle }}</strong>
+                <button class="secondary" @click="shiftWorklogCalendarMonth(1)">下月</button>
+                <button class="primary" @click="openEditor(null, applicationDate())">＋ 填报工时</button>
+              </div>
+            </div>
+            <div class="worklog-calendar-summary">
+              <span>应填 {{ worklogCalendar?.summary.required_workdays || 0 }} 天</span>
+              <span class="success">已填 {{ worklogCalendar?.summary.filled_days || 0 }} 天</span>
+              <span class="danger">漏填 {{ worklogCalendar?.summary.missing_days || 0 }} 天</span>
+              <span class="warning">审批中 {{ worklogCalendar?.summary.pending_count || 0 }} 条</span>
+              <span>草稿 {{ worklogCalendar?.summary.draft_count || 0 }} 条</span>
+            </div>
+            <div v-if="worklogCalendarLoading" class="empty">正在加载工时日历…</div>
+            <div v-else class="worklog-calendar">
+              <div v-for="name in calendarWeekdays" :key="name" class="calendar-weekday">
+                {{ name }}
+              </div>
+              <template v-for="(week, weekIndex) in worklogCalendarWeeks" :key="weekIndex">
+                <button
+                  v-for="(day, dayIndex) in week"
+                  :key="day?.date || `${weekIndex}-${dayIndex}`"
+                  class="calendar-day"
+                  :class="day ? [worklogCalendarStatusClass(day.status), { today: day.is_today, rest: !day.is_workday }] : 'blank'"
+                  :disabled="!day"
+                  @click="day && openWorklogCalendarDay(day)"
+                >
+                  <template v-if="day">
+                    <b>{{ day.day }}</b>
+                    <span>{{ day.status_label }}</span>
+                    <small v-if="day.holiday_name">{{ day.holiday_name }}</small>
+                    <small v-else-if="day.quantity">{{ day.quantity }} 天</small>
+                  </template>
+                </button>
+              </template>
+            </div>
+          </section>
 
           <template v-if="ownedProjectRows.length">
             <section class="workbench-owner-section">
@@ -8060,7 +9719,7 @@ onMounted(() => {
         >
           <div class="page-head">
             <div>
-              <div class="eyebrow">MY WORKLOGS</div>
+              <div class="eyebrow">我的工时</div>
               <h1>我的工时</h1>
               <p class="muted">每条工作内容单独提交，随时查看审批进度。</p>
             </div>
@@ -8173,76 +9832,110 @@ onMounted(() => {
           </section>
         </section>
 
-        <section v-else-if="page === 'editor'" class="page-view narrow">
+        <section
+          v-else-if="page === 'editor'"
+          class="page-view narrow worklog-editor-page"
+        >
           <div class="page-head">
             <div>
-              <div class="eyebrow">WORKLOG EDITOR</div>
+              <div class="eyebrow">工时填报</div>
               <h1>{{ editingId ? "修改工时" : "新增工时" }}</h1>
               <p class="muted">
-                先选择项目大类，再选择该大类下的项目；每条工时独立审批。
+                先选择工时类型；项目类工时再选择项目名称，非项目类工时只填写事项内容。
               </p>
             </div>
             <span class="tag teal">工作日天数</span>
           </div>
           <section class="card form-card">
+            <div class="mobile-worklog-summary" aria-hidden="true">
+              <div>
+                <small>工时类型</small
+                ><strong>{{ workTypeLabel(form.work_type) || "未选择" }}</strong>
+              </div>
+              <div>
+                <small>项目</small
+                ><strong>{{
+                  isProjectWorkType(form.work_type)
+                    ? selectedProject
+                      ? selectedProject.name
+                      : "未选择项目"
+                    : "非项目工时"
+                }}</strong>
+              </div>
+              <div>
+                <small>工时天数</small><strong>{{ form.quantity }} 天</strong>
+              </div>
+            </div>
             <div class="form-grid">
               <label
-                >项目大类<select v-model="form.project_type">
-                  <option value="" disabled>请选择项目大类</option>
+                >工时类型<select v-model="form.work_type">
+                  <option value="" disabled>请选择工时类型</option>
                   <option
-                    v-for="option in projectCategoryOptions"
+                    v-for="option in workTypeOptionsForEditor"
                     :key="option.value"
                     :value="option.value"
                   >
                     {{ option.label }}
                   </option>
-                </select></label
-              ><label class="project-picker-label"
-                >项目
-                <div class="project-picker" @click.stop>
+                </select><small class="form-helper">{{
+                  isProjectWorkType(form.work_type)
+                    ? "项目类工时需选择项目，系统按项目负责人和项目审批人两级审批"
+                    : "非项目工时不关联项目，按部门负责人审批"
+                }}</small></label
+              ><div
+                v-if="isProjectWorkType(form.work_type)"
+                class="project-picker-label"
+              >
+                <span class="project-picker-label-text">项目</span>
+                <div class="project-picker" @click.stop @pointerdown.stop>
                   <button
                     type="button"
                     class="project-picker-trigger"
                     :aria-expanded="projectPickerOpen"
-                    :disabled="!form.project_type"
                     @click="toggleProjectPicker"
+                    @keydown.esc.prevent="closeProjectPicker"
                   >
                     <span v-if="selectedProject"
-                      ><strong
-                        >{{ selectedProject.code }} ·
-                        {{ selectedProject.name }}</strong
+                      ><strong>{{ selectedProject.name }}</strong
                       ><small
-                        >{{ selectedProject.project_type }} ·
+                        >{{ selectedProject.code }} ·
+                        {{ projectCategoryLabelOf(selectedProject.project_type) }} ·
                         点击展开筛选项目</small
                       ></span
-                    ><span v-else class="project-picker-placeholder">{{
-                      form.project_type
-                        ? "请选择可填报项目"
-                        : "请先选择项目大类"
-                    }}</span
+                    ><span v-else class="project-picker-placeholder">请选择可填报项目</span
                     ><span class="project-picker-chevron" aria-hidden="true"
                       >⌄</span
                     >
                   </button>
                   <div v-if="projectPickerOpen" class="project-picker-menu">
                     <input
+                      ref="projectSearchInput"
                       v-model="projectQuery"
                       type="search"
                       placeholder="按项目名称或编码筛选"
                       aria-label="按项目名称或编码筛选"
                       @click.stop
+                      @keydown.esc.prevent="closeProjectPicker"
+                      @keydown.enter.prevent="chooseFirstFilteredProject"
                     />
-                    <div class="project-picker-options">
+                    <div ref="projectOptionsList" class="project-picker-options">
                       <button
                         v-for="project in filteredProjects"
                         :key="project.id"
                         type="button"
                         class="project-picker-option"
+                        :class="{
+                          'is-selected': project.id === Number(form.project_id),
+                        }"
+                        @mousedown.prevent
                         @click="chooseProject(project)"
                       >
                         <span
-                          ><strong>{{ project.code }}</strong
-                          ><small>{{ project.name }}</small></span
+                          ><strong>{{ project.name }}</strong
+                          ><small
+                            >{{ project.code }} ·
+                            {{ projectCategoryLabelOf(project.project_type) }}</small
+                          ></span
                         ><b
                           v-if="project.id === Number(form.project_id)"
                           aria-label="当前项目"
@@ -8266,28 +9959,17 @@ onMounted(() => {
                       : ''
                   "
                   >实际审批人：{{ actualApproverName }}</small
-                ></label
-              >
+                >
+              </div>
               <div v-if="isSelfApprover" class="notice warning full">
                 <strong>本人填报</strong
                 ><span>本人是项目审批人，本条工时将由上级领导审批。</span>
               </div>
-              <label
+              <label v-if="isProjectWorkType(form.work_type)"
                 >项目阶段<select v-model="form.stage">
                   <option value="" disabled>请选择项目阶段</option>
                   <option
                     v-for="option in activeConfigOptions('project_stage')"
-                    :key="option.value"
-                    :value="option.value"
-                  >
-                    {{ option.label }}
-                  </option>
-                </select></label
-              ><label
-                >工时类型<select v-model="form.work_type">
-                  <option value="" disabled>请选择工时类型</option>
-                  <option
-                    v-for="option in activeConfigOptions('work_type')"
                     :key="option.value"
                     :value="option.value"
                   >
@@ -8317,7 +9999,7 @@ onMounted(() => {
                   type="number"
                   min="1"
                   step="1"
-                  readonly /><small class="form-helper">按开始日期和结束日期自动计算（仅周一至周五，含首尾日期）</small></label
+                  readonly /><small class="form-helper">按开始日期和结束日期自动计算（国家法定工作日，含调休）</small></label
               ><label class="full"
                 >工作描述<textarea
                   v-model="form.description"
@@ -8342,7 +10024,7 @@ onMounted(() => {
         >
           <div class="page-head detail-page-head">
             <div>
-              <div class="eyebrow">WORKLOG DETAIL</div>
+              <div class="eyebrow">工时详情</div>
               <h1>工时提交结果</h1>
               <p class="muted">本条工时的完整信息、审批状态和通知结果。</p>
             </div>
@@ -8384,7 +10066,7 @@ onMounted(() => {
               <div class="detail-section">
                 <div class="detail-section-head">
                   <div>
-                    <small class="detail-kicker">WORK SUMMARY</small>
+                    <small class="detail-kicker">工作摘要</small>
                     <h2>工作信息</h2>
                   </div>
                   <span class="tag teal"
@@ -8486,7 +10168,7 @@ onMounted(() => {
             <aside class="card detail-timeline-card">
               <div class="detail-section-head">
                 <div>
-                  <small class="detail-kicker">APPROVAL FLOW</small>
+                  <small class="detail-kicker">审批流程</small>
                   <h2>审批时间线</h2>
                 </div>
                 <span
@@ -8574,7 +10256,7 @@ onMounted(() => {
         >
           <div class="page-head">
             <div>
-              <div class="eyebrow">APPROVALS / WORKLOGS</div>
+              <div class="eyebrow">工时审批</div>
               <h1>工时审批</h1>
               <p class="muted">按待处理和历史结果查看你负责的工时审批。</p>
             </div>
@@ -8606,6 +10288,41 @@ onMounted(() => {
                 }}</b>
               </button>
             </div>
+            <div
+              v-if="approvalTab === 'pending' && pendingApprovals.length"
+              class="approval-batch-bar"
+            >
+              <label class="batch-check">
+                <input
+                  type="checkbox"
+                  :checked="allPendingApprovalSelected"
+                  @change="toggleAllPendingApprovals"
+                />
+                全选
+              </label>
+              <span>已选择 {{ selectedApprovalTasks.length }} 条</span>
+              <button
+                class="primary success-button"
+                :disabled="!selectedApprovalTasks.length || batchApprovalBusy"
+                @click="batchProcessApprovals('approve')"
+              >
+                批量通过
+              </button>
+              <button
+                class="secondary danger-button"
+                :disabled="!selectedApprovalTasks.length || batchApprovalBusy"
+                @click="batchProcessApprovals('reject')"
+              >
+                批量驳回
+              </button>
+              <button
+                class="text-button"
+                :disabled="!selectedApprovalTasks.length"
+                @click="selectedApprovalIds = []"
+              >
+                清空选择
+              </button>
+            </div>
             <div v-if="approvalItems.length" class="approval-list">
               <button
                 v-for="task in approvalItems"
@@ -8613,6 +10330,15 @@ onMounted(() => {
                 class="approval-row"
                 @click="openTask(task)"
               >
+                <input
+                  v-if="approvalTab === 'pending'"
+                  v-model="selectedApprovalIds"
+                  class="approval-row-check"
+                  type="checkbox"
+                  :value="task.id"
+                  @click.stop
+                  @change.stop
+                />
                 <span
                   ><strong>{{ task.worklog.project_name_snapshot }}</strong
                   ><small
@@ -8658,7 +10384,7 @@ onMounted(() => {
           <div class="page-head">
             <div>
               <div class="eyebrow">
-                APPROVAL DETAIL / {{ selectedTask?.serial_no }}
+                审批详情 / {{ selectedTask?.serial_no }}
               </div>
               <h1>工时审批详情</h1>
               <p class="muted">
@@ -8832,10 +10558,10 @@ onMounted(() => {
         <section v-else-if="page === 'reports'" class="page-view report-page">
           <div class="page-head report-page-head">
             <div>
-              <div class="eyebrow">REPORTS / WORKLOAD</div>
+              <div class="eyebrow">工时看板</div>
               <h1>工时看板</h1>
               <p class="muted">
-                只看工时口径：投入规模、填报分布与审批效率。
+                只看工时口径：工时类型、项目/非项目结构和项目阶段占比。
               </p>
             </div>
             <span class="tag teal">{{
@@ -8845,7 +10571,7 @@ onMounted(() => {
           <section class="card report-toolbar">
             <div class="report-toolbar-head">
               <div>
-                <span class="report-toolbar-kicker">VIEW / FILTERS</span
+                <span class="report-toolbar-kicker">视图筛选</span
                 ><strong>筛选看板数据</strong>
               </div>
               <span class="report-toolbar-meta">数据口径：已通过、已锁定</span>
@@ -8860,6 +10586,42 @@ onMounted(() => {
                     :value="name"
                   >
                     {{ name }}
+                  </option>
+                </select></label
+              ><label
+                >人员<select v-model.number="reportUserId">
+                  <option :value="0">全部人员</option>
+                  <option v-for="person in demoUsers" :key="person.id" :value="person.id">
+                    {{ person.name }} · {{ person.department_name || "未同步部门" }}
+                  </option>
+                </select></label
+              ><label
+                >项目<select v-model.number="reportProjectId">
+                  <option :value="0">全部项目</option>
+                  <option v-for="item in reportProjectOptions" :key="item.id" :value="item.id">
+                    {{ item.name }}
+                  </option>
+                </select></label
+              ><label
+                >工时类型<select v-model="reportWorkType">
+                  <option value="">全部类型</option>
+                  <option
+                    v-for="option in reportWorkTypeOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select></label
+              ><label
+                >审批状态<select v-model="reportStatus">
+                  <option value="">全部状态</option>
+                  <option
+                    v-for="option in reportStatusOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
                   </option>
                 </select></label
               ><label
@@ -8920,6 +10682,18 @@ onMounted(() => {
                 >
               </div>
             </article>
+            <article class="report-overview-card report-overview-rate">
+              <span>填报完成率</span
+              ><strong>{{ report?.metrics.fill_completion_rate || 0 }}%</strong
+              ><small
+                >已填 {{ report?.metrics.filled_user_days || 0 }} /
+                应填 {{ report?.metrics.required_user_days || 0 }} 个工作日人次</small
+              >
+              <div class="report-overview-foot">
+                <span>漏填 {{ report?.metrics.missing_user_days || 0 }} 个</span
+                ><span>人员 {{ report?.metrics.active_user_count || 0 }} 人</span>
+              </div>
+            </article>
             <article class="report-overview-card report-overview-people">
               <span>填报人数</span
               ><strong>{{ report?.metrics.user_count || 0 }}</strong
@@ -8937,88 +10711,66 @@ onMounted(() => {
               </div>
             </article>
           </div>
-          <div v-if="report" class="report-chart-grid report-echarts-grid">
+          <div v-if="report" class="report-chart-grid report-echarts-grid worklog-dashboard-v2">
             <section class="card report-card report-feature-card">
               <div class="section-head">
                 <div>
-                  <h2>部门投入对比</h2>
-                  <p class="muted">按部门汇总已审批工时，判断资源分布</p>
+                  <h2>工时类型分布</h2>
+                  <p class="muted">固定展示新版工时类型，历史类型兼容展示不重复。</p>
+                </div>
+                <strong>天</strong>
+              </div>
+              <div ref="workTypeChartEl" class="report-chart"></div>
+            </section>
+            <section class="card report-card report-feature-card">
+              <div class="section-head">
+                <div>
+                  <h2>项目类 / 非项目类</h2>
+                  <p class="muted">研发项目和技术服务为项目类，其余为非项目类。</p>
+                </div>
+                <strong>占比</strong>
+              </div>
+              <div ref="projectKindChartEl" class="report-chart"></div>
+            </section>
+            <section class="card report-card">
+              <div class="section-head">
+                <div>
+                  <h2>项目工时阶段占比</h2>
+                  <p class="muted">只统计研发项目工时和技术服务工时。</p>
+                </div>
+                <strong>项目类</strong>
+              </div>
+              <div ref="projectStageShareChartEl" class="report-chart"></div>
+            </section>
+            <section class="card report-card">
+              <div class="section-head">
+                <div>
+                  <h2>各项目阶段占比</h2>
+                  <p class="muted">按项目拆分阶段投入比例，快速看每个项目投入集中在哪些阶段。</p>
+                </div>
+                <strong>Top 10</strong>
+              </div>
+              <div ref="projectStageChartEl" class="report-chart"></div>
+            </section>
+            <section class="card report-card">
+              <div class="section-head">
+                <div>
+                  <h2>部门投入排行</h2>
+                  <p class="muted">按部门汇总全部已审批工时，包含非项目工时。</p>
                 </div>
                 <strong>天</strong>
               </div>
               <div ref="departmentChartEl" class="report-chart"></div>
             </section>
-            <section class="card report-card report-feature-card">
-              <div class="section-head">
-                <div>
-                  <h2>工时投入趋势</h2>
-                  <p class="muted">按填报开始日查看投入变化</p>
-                </div>
-                <strong>天</strong>
-              </div>
-              <div ref="trendChartEl" class="report-chart"></div>
-            </section>
-            <section class="card report-card">
-              <div class="section-head">
-                <div>
-                  <h2>项目投入排行</h2>
-                  <p class="muted">按项目汇总已审批工时</p>
-                </div>
-                <strong>Top 10</strong>
-              </div>
-              <div ref="projectChartEl" class="report-chart"></div>
-            </section>
             <section class="card report-card">
               <div class="section-head">
                 <div>
                   <h2>人员工时排行</h2>
-                  <p class="muted">按填报人汇总已审批工时</p>
+                  <p class="muted">按填报人汇总全部已审批工时。</p>
                 </div>
-                <strong>Top 8</strong>
+                <strong>前 8 名</strong>
               </div>
               <div ref="userChartEl" class="report-chart"></div>
-            </section>
-            <section class="card report-card">
-              <div class="section-head">
-                <div>
-                  <h2>审批状态分布</h2>
-                  <p class="muted">查看当前范围内的处理进度</p>
-                </div>
-              </div>
-              <div ref="statusChartEl" class="report-chart"></div>
-            </section>
-            <section class="card report-card">
-              <div class="section-head">
-                <div>
-                  <h2>工作阶段分布</h2>
-                  <p class="muted">按项目阶段汇总已审批工时</p>
-                </div>
-                <strong>天</strong>
-              </div>
-              <div ref="stageChartEl" class="report-chart"></div>
-            </section>
-            <section class="card report-card report-wide">
-              <div class="section-head">
-                <div>
-                  <h2>项目阶段占比</h2>
-                  <p class="muted">按项目查看各阶段投入结构</p>
-                </div>
-                <strong>%</strong>
-              </div>
-              <div
-                ref="projectStageChartEl"
-                class="report-chart report-chart-tall"
-              ></div>
-            </section>
-            <section class="card report-card">
-              <div class="section-head">
-                <div>
-                  <h2>工时类型分布</h2>
-                  <p class="muted">项目、管理和其它工时占比</p>
-                </div>
-                <strong>天</strong>
-              </div>
-              <div ref="workTypeChartEl" class="report-chart"></div>
             </section>
           </div>
           <section v-else class="card empty">报表正在加载，请稍候</section>
@@ -9030,7 +10782,7 @@ onMounted(() => {
         >
           <div class="page-head">
             <div>
-              <div class="eyebrow">PROJECT MASTER DATA</div>
+              <div class="eyebrow">项目主数据</div>
               <h1>项目管理</h1>
               <p class="muted">
                 维护项目主信息。预算执行、人工成本和经营数据在项目详情中查看。
@@ -9266,9 +11018,7 @@ onMounted(() => {
                     <td>
                       <span
                         class="tag"
-                        :class="
-                          project.status === 'ACTIVE' ? 'success' : 'warning'
-                        "
+                        :class="statusClass(project.status)"
                         >{{
                           optionLabel("project_status", project.status)
                         }}</span
@@ -9312,21 +11062,51 @@ onMounted(() => {
                           查看
                         </button>
                         <button
+                          v-if="canAction('projects', 'EDIT')"
                           class="text-button"
                           @click="editProject(project)"
                         >
                           编辑</button
-                        ><button
-                          class="text-button"
-                          @click="openProjectBudgetModal(project)"
-                        >
-                          预算项</button
-                        ><button
-                          class="text-button danger-button"
-                          @click="deleteProject(project)"
-                        >
-                          删除
-                        </button>
+                        ><div class="row-action-more">
+                          <button
+                            class="text-button row-action-trigger"
+                            :aria-expanded="projectActionMenuId === project.id"
+                            type="button"
+                            @click="toggleProjectActionMenu(project.id)"
+                          >
+                            更多
+                          </button>
+                          <div
+                            v-if="projectActionMenuId === project.id"
+                            class="row-action-menu"
+                          >
+                            <button
+                              v-if="canAction('projects', 'EDIT')"
+                              class="text-button"
+                              @click="runProjectRowAction(() => openProjectBudgetModal(project))"
+                            >
+                              预算项</button
+                            ><button
+                              v-if="project.status === 'PRE_APPROVAL' && canAction('projects', 'EDIT')"
+                              class="text-button"
+                              @click="runProjectRowAction(() => failPreApprovalProject(project))"
+                            >
+                              终止预立项</button
+                            ><button
+                              v-if="['PRE_APPROVAL', 'PRE_APPROVAL_FAILED'].includes(project.status) && canAction('projects', 'EDIT') && canAction('worklogs', 'EDIT')"
+                              class="text-button"
+                              @click="runProjectRowAction(() => convertProjectWorklogsToManagement(project))"
+                            >
+                              转管理工时</button
+                            ><button
+                              v-if="canAction('projects', 'DELETE')"
+                              class="text-button danger-button"
+                              @click="runProjectRowAction(() => deleteProject(project))"
+                            >
+                              删除
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -9387,7 +11167,7 @@ onMounted(() => {
             >
               <div class="modal-head">
                 <div>
-                  <div class="eyebrow">PROJECT FORM</div>
+                  <div class="eyebrow">项目表单</div>
                   <h2 id="project-modal-title">
                     {{ editingProjectId ? "编辑项目" : "新增项目" }}
                   </h2>
@@ -9405,9 +11185,9 @@ onMounted(() => {
               </div>
               <div class="form-grid project-v3-form-grid">
                 <label
-                  >项目编码<input
+                  >项目编码（可选）<input
                     v-model.trim="projectForm.code"
-                    placeholder="如 PRJ-2026-010" /></label
+                    placeholder="不填则系统自动生成" /></label
                 ><label
                   >项目名称<input
                     v-model.trim="projectForm.name"
@@ -9551,7 +11331,7 @@ onMounted(() => {
           <section class="modal-card wide-modal budget-items-modal" @click.stop>
             <div class="modal-head">
               <div>
-                <div class="eyebrow">PROJECT BUDGET ITEMS</div>
+                <div class="eyebrow">项目预算项</div>
                 <h2>{{ selectedBudgetProject.name }} · 预算项</h2>
                 <p class="muted">项目总预算 = 启用预算项金额合计；已发生金额来自已复核的人工成本结转单、合同付款和项目费用。</p>
               </div>
@@ -9979,7 +11759,7 @@ onMounted(() => {
                     <small>{{ entry.object_label || `${entry.object_type} #${entry.object_id}` }} · {{ entry.actor_name }}</small>
                   </div>
                   <div>
-                    <span v-if="entry.old_status || entry.new_status" class="audit-status">{{ entry.old_status || "—" }} → {{ entry.new_status || "—" }}</span>
+                    <span v-if="entry.old_status || entry.new_status" class="audit-status">{{ entry.old_status ? statusLabel(entry.old_status) : "—" }} → {{ entry.new_status ? statusLabel(entry.new_status) : "—" }}</span>
                     <small>{{ formatDateTime(entry.created_at) }}</small>
                   </div>
                   <p>{{ entry.description || `${auditActionLabel(entry.action)} · ${entry.object_label || `${entry.object_type} #${entry.object_id}`}` }}</p>
@@ -10002,7 +11782,7 @@ onMounted(() => {
         >
           <div class="page-head">
             <div>
-              <div class="eyebrow">PROJECT / CONTRACTS</div>
+              <div class="eyebrow">项目合同</div>
               <h1>项目合同</h1>
               <p class="muted">收入合同和支出合同分开维护，合同阶段用于收付款计划。</p>
             </div>
@@ -10033,7 +11813,7 @@ onMounted(() => {
                 项目
                 <select v-model.number="contractFilterProject">
                   <option :value="0">全部项目</option>
-                  <option v-for="item in managedProjects" :key="item.id" :value="item.id">
+                  <option v-for="item in projects" :key="item.id" :value="item.id">
                     {{ item.name }}
                   </option>
                 </select>
@@ -10132,13 +11912,13 @@ onMounted(() => {
              <section class="modal-card v3-modal" role="dialog" aria-modal="true">
               <div class="modal-head">
                 <div>
-                  <div class="eyebrow">CONTRACT FORM</div>
+                  <div class="eyebrow">合同表单</div>
                   <h2>{{ editingContractId ? "编辑合同" : "新增合同" }}</h2>
                 </div>
                 <button class="modal-close" aria-label="关闭弹窗" @click="resetContractForm">×</button>
               </div>
               <div class="form-grid">
-                <label>合同编号<input v-model.trim="contractForm.contract_no" placeholder="如 HT-2026-001" /></label>
+                <label>合同编号<input v-model.trim="contractForm.contract_no" placeholder="例如：合同编号-2026-001" /></label>
                 <label>合同名称<input v-model.trim="contractForm.name" placeholder="请输入合同名称" /></label>
                 <label>
                   所属项目
@@ -10224,7 +12004,7 @@ onMounted(() => {
              <section class="modal-card v3-modal" role="dialog" aria-modal="true">
               <div class="modal-head">
                 <div>
-                  <div class="eyebrow">CONTRACT STAGES</div>
+                  <div class="eyebrow">合同阶段</div>
                   <h2>阶段列表</h2>
                 </div>
                 <button class="modal-close" aria-label="关闭弹窗" @click="stageListOpen = false">×</button>
@@ -10258,7 +12038,7 @@ onMounted(() => {
             <section class="modal-card v3-modal stage-form-modal" role="dialog" aria-modal="true">
               <div class="modal-head">
                 <div>
-                  <div class="eyebrow">CONTRACT STAGE FORM</div>
+                  <div class="eyebrow">合同阶段表单</div>
                   <h2>{{ editingStageId ? "编辑合同阶段" : "新增合同阶段" }}</h2>
                 </div>
                 <button class="modal-close" aria-label="关闭弹窗" @click="stageFormOpen = false">×</button>
@@ -10287,7 +12067,7 @@ onMounted(() => {
             <div class="page-head contract-detail-head">
               <div>
                 <button class="text-button contract-back" @click="closeContractDetail">← 返回合同列表</button>
-                <div class="eyebrow">PROJECT / CONTRACT DETAIL</div>
+                <div class="eyebrow">项目合同详情</div>
                 <h1>{{ selectedContract.name }}</h1>
                 <p class="muted">{{ selectedContract.contract_no }} · {{ contractTypeLabel(selectedContract.contract_type) }} · {{ selectedContract.project_name }}</p>
               </div>
@@ -10340,7 +12120,7 @@ onMounted(() => {
               <section v-if="selectedContract.description" class="card contract-detail-description"><div class="section-head"><h2>合同说明</h2></div><p>{{ selectedContract.description }}</p></section>
               <section class="card contract-attachments-card">
                 <div class="section-head">
-                  <div><h2>合同附件</h2><p class="muted">支持 Word、Excel、PPT、PDF 和图片</p></div>
+                  <div><h2>合同附件</h2><p class="muted">支持文档、表格、演示文稿、PDF 文件和图片</p></div>
                   <span class="muted">{{ contractAttachments.length }} 个文件</span>
                 </div>
                 <div v-if="contractAttachmentsLoading" class="empty attachment-empty">正在加载附件…</div>
@@ -10359,9 +12139,9 @@ onMounted(() => {
           <section v-else class="card empty"><h2>未选择合同</h2><button class="primary" @click="go('projectContracts')">返回合同列表</button></section>
           <div v-if="contractFormOpen" class="modal-backdrop">
             <section class="modal-card v3-modal" role="dialog" aria-modal="true">
-              <div class="modal-head"><div><div class="eyebrow">CONTRACT FORM</div><h2>{{ editingContractId ? '编辑合同' : '新增合同' }}</h2></div><button class="modal-close" aria-label="关闭弹窗" @click="resetContractForm">×</button></div>
+              <div class="modal-head"><div><div class="eyebrow">合同表单</div><h2>{{ editingContractId ? '编辑合同' : '新增合同' }}</h2></div><button class="modal-close" aria-label="关闭弹窗" @click="resetContractForm">×</button></div>
               <div class="form-grid">
-                <label>合同编号<input v-model.trim="contractForm.contract_no" placeholder="如 HT-2026-001" /></label>
+                <label>合同编号<input v-model.trim="contractForm.contract_no" placeholder="例如：合同编号-2026-001" /></label>
                 <label>合同名称<input v-model.trim="contractForm.name" placeholder="请输入合同名称" /></label>
                 <label>所属项目<select v-model.number="contractForm.project_id"><option :value="0" disabled>请选择项目</option><option v-for="item in managedProjects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
                 <label>合同类型<select v-model="contractForm.contract_type"><option value="INCOME">收入合同</option><option value="EXPENSE">支出合同</option></select></label>
@@ -10398,7 +12178,7 @@ onMounted(() => {
           </div>
           <div v-if="stageFormOpen" class="modal-backdrop">
             <section class="modal-card v3-modal stage-form-modal" role="dialog" aria-modal="true">
-              <div class="modal-head"><div><div class="eyebrow">CONTRACT STAGE FORM</div><h2>{{ editingStageId ? '编辑合同阶段' : '新增合同阶段' }}</h2></div><button class="modal-close" aria-label="关闭弹窗" @click="stageFormOpen = false">×</button></div>
+              <div class="modal-head"><div><div class="eyebrow">合同阶段表单</div><h2>{{ editingStageId ? '编辑合同阶段' : '新增合同阶段' }}</h2></div><button class="modal-close" aria-label="关闭弹窗" @click="stageFormOpen = false">×</button></div>
               <div class="form-grid"><label>阶段名称<input v-model.trim="stageForm.name" placeholder="如 设备到货款" /></label><label>阶段含税金额<input v-model.number="stageForm.amount" type="number" min="0" step="0.01" @input="syncTaxFields(stageForm)" /></label><label>税率<select v-model.number="stageForm.tax_rate" @change="syncTaxFields(stageForm)"><option v-for="item in taxRateOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label><label>阶段未税金额<input v-model.number="stageForm.amount_without_tax" type="number" min="0" step="0.01" @input="syncTaxFields(stageForm, 'net')" /></label><label>税额<input :value="moneyText(stageForm.tax_amount)" disabled /></label><label>计划日期<input v-model="stageForm.planned_date" type="date" /></label><label>提前提醒<input v-model.number="stageForm.remind_days_before" type="number" min="0" max="365" /></label><label>排序<input v-model.number="stageForm.sort_order" type="number" min="0" /></label><label class="checkbox-field"><input v-model="stageForm.reminder_paused" type="checkbox" /> 暂停提醒</label></div>
               <div class="form-footer"><button class="secondary" @click="stageFormOpen = false">取消</button><button class="primary" @click="saveStage">保存阶段</button></div>
             </section>
@@ -10408,7 +12188,7 @@ onMounted(() => {
         <section v-else-if="page === 'projectReceipts'" class="page-view v3-ops-page">
           <div class="page-head">
             <div>
-              <div class="eyebrow">CONTRACT / RECEIPTS</div>
+              <div class="eyebrow">合同收款</div>
               <h1>合同收款</h1>
               <p class="muted">合同收款单提交后由收款复核岗位或具备收付款复核权限的人员确认入账。</p>
             </div>
@@ -10426,7 +12206,7 @@ onMounted(() => {
                 项目
                 <select v-model.number="receiptFilterProject">
                   <option :value="0">全部项目</option>
-                  <option v-for="item in managedProjects" :key="item.id" :value="item.id">
+                  <option v-for="item in projects" :key="item.id" :value="item.id">
                     {{ item.name }}
                   </option>
                 </select>
@@ -10509,7 +12289,7 @@ onMounted(() => {
              <section class="modal-card v3-modal cash-document-modal" role="dialog" aria-modal="true">
               <div class="modal-head">
                 <div>
-                  <div class="eyebrow">CONTRACT RECEIPT FORM</div>
+                  <div class="eyebrow">合同收款表单</div>
                   <h2>{{ editingReceiptId ? "编辑合同收款单" : "新增合同收款单" }}</h2>
                 </div>
                 <button class="modal-close" aria-label="关闭弹窗" @click="resetReceiptForm">×</button>
@@ -10572,7 +12352,7 @@ onMounted(() => {
         <section v-else-if="page === 'receiptDetail'" class="page-view narrow">
           <div class="page-head">
             <div>
-              <div class="eyebrow">CONTRACT RECEIPT DETAIL / {{ selectedReceipt?.receipt_no }}</div>
+              <div class="eyebrow">合同收款详情 / {{ selectedReceipt?.receipt_no }}</div>
               <h1>合同收款单详情</h1>
               <p class="muted">提交时间：{{ formatDateTime(selectedReceipt?.submitted_at) || "未记录" }}</p>
             </div>
@@ -10618,7 +12398,7 @@ onMounted(() => {
               <h2>审批信息</h2>
               <div class="timeline">
                 <template v-if="selectedReceipt.approval_timeline?.length">
-                  <div v-for="entry in selectedReceipt.approval_timeline" :key="`${entry.occurred_at}-${entry.event}`"><b>{{ entry.event }} · {{ entry.actor_name }}</b><small>{{ formatDateTime(entry.occurred_at) }}<span v-if="entry.status"> · {{ cashStatusLabel(entry.status) }}</span></small><small v-if="entry.comment">{{ entry.comment }}</small></div>
+                  <div v-for="entry in selectedReceipt.approval_timeline" :key="`${entry.occurred_at}-${entry.event}`"><b>{{ approvalTimelineEventLabel(entry.event) }} · {{ entry.actor_name }}</b><small>{{ formatDateTime(entry.occurred_at) }}<span v-if="entry.status"> · {{ cashStatusLabel(entry.status) }}</span></small><small v-if="entry.comment">{{ entry.comment }}</small></div>
                 </template>
                 <template v-else>
                   <div><b>{{ selectedReceipt.submitted_by_name || "申请人" }} 提交合同收款单</b><small>{{ formatDateTime(selectedReceipt.submitted_at) || "未记录" }}</small></div>
@@ -10645,7 +12425,7 @@ onMounted(() => {
         <section v-else-if="page === 'projectPayments'" class="page-view v3-ops-page">
           <div class="page-head">
             <div>
-              <div class="eyebrow">CONTRACT / PAYMENTS</div>
+              <div class="eyebrow">合同付款</div>
               <h1>合同付款</h1>
               <p class="muted">合同付款单按项目审批、经营、上级、财务和出纳七级流程流转，出纳末节点确认后计入已付。</p>
             </div>
@@ -10663,7 +12443,7 @@ onMounted(() => {
                 项目
                 <select v-model.number="paymentFilterProject">
                   <option :value="0">全部项目</option>
-                  <option v-for="item in managedProjects" :key="item.id" :value="item.id">
+                  <option v-for="item in projects" :key="item.id" :value="item.id">
                     {{ item.name }}
                   </option>
                 </select>
@@ -10749,7 +12529,7 @@ onMounted(() => {
              <section class="modal-card v3-modal cash-document-modal" role="dialog" aria-modal="true">
               <div class="modal-head">
                 <div>
-                  <div class="eyebrow">CONTRACT PAYMENT FORM</div>
+                  <div class="eyebrow">合同付款表单</div>
                   <h2>{{ editingPaymentId ? "编辑合同付款单" : "新增合同付款单" }}</h2>
                 </div>
                 <button class="modal-close" aria-label="关闭弹窗" @click="resetPaymentForm">×</button>
@@ -10812,7 +12592,7 @@ onMounted(() => {
         <section v-else-if="page === 'paymentDetail'" class="page-view narrow">
           <div class="page-head">
             <div>
-              <div class="eyebrow">CONTRACT PAYMENT DETAIL / {{ selectedPayment?.payment_no }}</div>
+              <div class="eyebrow">合同付款详情 / {{ selectedPayment?.payment_no }}</div>
               <h1>合同付款单详情</h1>
               <p class="muted">提交时间：{{ formatDateTime(selectedPayment?.submitted_at) || "未记录" }}</p>
             </div>
@@ -10863,7 +12643,7 @@ onMounted(() => {
               </div>
               <div class="timeline">
                 <template v-if="selectedPayment.approval_timeline?.length">
-                  <div v-for="entry in selectedPayment.approval_timeline" :key="`${entry.occurred_at}-${entry.event}`"><b>{{ entry.event }} · {{ entry.actor_name }}</b><small>{{ formatDateTime(entry.occurred_at) }}<span v-if="entry.status"> · {{ cashStatusLabel(entry.status) }}</span></small><small v-if="entry.comment">{{ entry.comment }}</small></div>
+                  <div v-for="entry in selectedPayment.approval_timeline" :key="`${entry.occurred_at}-${entry.event}`"><b>{{ approvalTimelineEventLabel(entry.event) }} · {{ entry.actor_name }}</b><small>{{ formatDateTime(entry.occurred_at) }}<span v-if="entry.status"> · {{ cashStatusLabel(entry.status) }}</span></small><small v-if="entry.comment">{{ entry.comment }}</small></div>
                 </template>
                 <template v-else>
                   <div><b>{{ selectedPayment.submitted_by_name || "申请人" }} 提交合同付款单</b><small>{{ formatDateTime(selectedPayment.submitted_at) || "未记录" }}</small></div>
@@ -10887,9 +12667,118 @@ onMounted(() => {
            <section v-else class="card empty"><h2>合同付款单不存在</h2><button class="primary" @click="go('projectPayments')">返回合同付款</button></section>
         </section>
 
+        <section v-else-if="page === 'receiptLedger'" class="page-view v3-ops-page">
+          <div class="page-head"><div><div class="eyebrow">回款台账</div><h1>回款台账</h1><p class="muted">按项目和收入合同维护月度回款计划；计划不需要审批。</p></div><div class="actions"><button class="secondary" @click="refreshReceiptLedger">刷新</button></div></div>
+          <section class="card v3-filter-card"><div class="v3-filters"><label>统计月份<input v-model="receiptLedgerMonth" type="month" /></label><label>项目<select v-model.number="receiptLedgerProject"><option :value="0">全部项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label>客户<select v-model.number="receiptLedgerCustomer"><option :value="0">全部客户</option><option v-for="item in customers" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label>状态<select v-model="receiptLedgerStatus"><option value="">全部状态</option><option value="UNRECEIVED">未收完</option><option value="COMPLETED">已收完</option><option value="OVERDUE">逾期未收</option></select></label><label class="span-2">关键词<input v-model.trim="receiptLedgerKeyword" type="search" placeholder="项目、合同、客户" @keyup.enter="refreshReceiptLedger" /></label><div class="v3-filter-actions"><button class="primary" @click="refreshReceiptLedger">查询</button><button class="secondary" @click="receiptLedgerProject = 0; receiptLedgerCustomer = 0; receiptLedgerStatus = ''; receiptLedgerKeyword = ''; refreshReceiptLedger()">重置</button></div></div></section>
+          <section class="finance-summary-grid"><div><span>合同总额</span><strong>{{ moneyText(receiptLedgerSummary.contract_amount) }}</strong></div><div><span>合同应收</span><strong>{{ moneyText(receiptLedgerSummary.receivable_amount) }}</strong></div><div><span>累计已收</span><strong>{{ moneyText(receiptLedgerSummary.received_amount) }}</strong></div><div><span>实际未收</span><strong>{{ moneyText(receiptLedgerSummary.unreceived_amount) }}</strong></div><div><span>本月计划</span><strong>{{ moneyText(receiptLedgerSummary.current_plan_amount) }}</strong></div><div><span>本月实际</span><strong>{{ moneyText(receiptLedgerSummary.current_actual_amount) }}</strong></div><div><span>完成率</span><strong>{{ receiptLedgerSummary.completion_rate === null ? '—' : `${receiptLedgerSummary.completion_rate}%` }}</strong></div><div><span>逾期未收</span><strong>{{ moneyText(receiptLedgerSummary.overdue_unreceived_amount) }}</strong></div></section>
+          <section class="card"><div class="section-head"><div><h2>回款计划与实际</h2><p class="muted">共 {{ receiptLedgerRows.length }} 条收入合同</p></div></div><div v-if="receiptLedgerLoading" class="empty">正在加载回款台账…</div><div v-else-if="!receiptLedgerRows.length" class="empty">当前范围暂无回款数据。</div><div v-else class="table-wrap"><table class="v3-ops-table compact-ledger-table"><thead><tr><th>项目 / 合同</th><th>客户</th><th>应收/已收/未收</th><th>上月计划/实际</th><th>本月计划/实际</th><th>进展与预警</th><th>预计完成</th><th>操作</th></tr></thead><tbody><tr v-for="item in receiptLedgerRows" :key="item.contract_id"><td><strong>{{ item.project_name }}</strong><small>{{ item.contract_name }}</small></td><td>{{ item.customer_name || '—' }}</td><td><strong>{{ moneyText(item.receivable_amount) }}</strong><small>已收 {{ moneyText(item.received_amount) }} · 未收 {{ moneyText(item.unreceived_amount) }}</small></td><td>{{ moneyText(item.previous_plan_amount) }}<small>实际 {{ moneyText(item.previous_actual_amount) }}</small></td><td>{{ moneyText(item.current_plan_amount) }}<small>实际 {{ moneyText(item.current_actual_amount) }} · {{ item.completion_rate === null ? '—' : `${item.completion_rate}%` }}</small></td><td><span v-if="item.warning_tags.length" class="tag warning">{{ item.warning_tags.join('、') }}</span><small>{{ item.progress_note || '未维护进展' }}</small></td><td>{{ item.expected_finish_date || '—' }}</td><td><div class="table-actions"><button class="text-button" @click="openReceiptPlanForm(item)">维护计划</button></div></td></tr></tbody></table></div></section>
+          <div v-if="receiptPlanFormOpen" class="modal-backdrop"><section class="modal-card v3-modal"><div class="modal-head"><div><div class="eyebrow">月度回款计划</div><h2>{{ editingReceiptPlan?.contract_name }}</h2></div><button class="modal-close" @click="receiptPlanFormOpen=false">×</button></div><div class="form-grid"><label>计划月份<input v-model="receiptPlanForm.period_month" type="month" /></label><label>本月计划回款<input v-model.number="receiptPlanForm.plan_amount" type="number" min="0" step="0.01" /></label><label>预计完成时间<input v-model="receiptPlanForm.expected_finish_date" type="date" /></label><label class="span-2">项目进展及计划<textarea v-model.trim="receiptPlanForm.progress_note" rows="3"></textarea></label><label class="span-2">备注<textarea v-model.trim="receiptPlanForm.remark" rows="2"></textarea></label></div><div class="form-footer"><button class="secondary" @click="receiptPlanFormOpen=false">取消</button><button class="primary" @click="saveReceiptPlan">保存计划</button></div></section></div>
+        </section>
+
+        <section v-else-if="page === 'paymentPlans'" class="page-view v3-ops-page">
+          <div class="page-head"><div><div class="eyebrow">付款计划</div><h1>付款计划</h1><p class="muted">用于资金计划收集，不需要审批；实际付款仍通过合同付款或费用流程办理。</p></div><div class="actions"><button class="primary" @click="openPaymentPlanForm()">＋ 新增付款计划</button></div></div>
+          <section class="card v3-filter-card"><div class="v3-filters"><label>计划月份<input v-model="paymentPlanMonth" type="month" /></label><label>项目<select v-model.number="paymentPlanProject"><option :value="0">全部项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label>来源<select v-model="paymentPlanSource"><option value="">全部来源</option><option value="CONTRACT_STAGE">支出合同阶段</option><option value="PROJECT_EXPENSE">项目费用</option><option value="MANUAL">手工计划</option></select></label><label>收款方类型<select v-model="paymentPlanPayeeType"><option value="">全部类型</option><option value="SUPPLIER">供应商</option><option value="COMPANY">公司</option><option value="EMPLOYEE">员工</option><option value="EXTERNAL_PERSON">外部个人</option><option value="OTHER">其他</option></select></label><label>状态<select v-model="paymentPlanStatus"><option value="">全部状态</option><option value="DRAFT">草稿</option><option value="SUBMITTED">已列入计划</option><option value="CONVERTED">已转付款</option><option value="CANCELLED">已取消</option></select></label><label class="span-2">关键词<input v-model.trim="paymentPlanKeyword" type="search" placeholder="计划编号、收款方、用途" @keyup.enter="refreshPaymentPlans" /></label><div class="v3-filter-actions"><button class="primary" @click="refreshPaymentPlans">查询</button><button class="secondary" @click="paymentPlanProject=0; paymentPlanSource=''; paymentPlanPayeeType=''; paymentPlanStatus=''; paymentPlanKeyword=''; refreshPaymentPlans()">重置</button></div></div></section>
+          <section class="finance-summary-grid"><div><span>计划付款总额</span><strong>{{ moneyText(paymentPlanSummary.planned_amount) }}</strong></div><div><span>加急金额</span><strong>{{ moneyText(paymentPlanSummary.urgent_amount) }}</strong></div><div><span>合同阶段付款</span><strong>{{ moneyText(paymentPlanSummary.contract_stage_amount) }}</strong></div><div><span>项目费用</span><strong>{{ moneyText(paymentPlanSummary.project_expense_amount) }}</strong></div><div><span>个人收款</span><strong>{{ moneyText(paymentPlanSummary.personal_payee_amount) }}</strong></div><div><span>已转付款</span><strong>{{ moneyText(paymentPlanSummary.converted_amount) }}</strong></div></section>
+          <section class="card">
+            <div class="section-head">
+              <div>
+                <h2>付款计划列表</h2>
+                <p class="muted">共 {{ paymentPlans.length }} 条计划</p>
+              </div>
+            </div>
+            <div v-if="paymentPlansLoading" class="empty">正在加载付款计划…</div>
+            <div v-else-if="!paymentPlans.length" class="empty">当前范围暂无付款计划。</div>
+            <div v-else class="table-wrap">
+              <table class="v3-ops-table compact-ledger-table">
+                <thead>
+                  <tr>
+                    <th>计划编号</th>
+                    <th>来源 / 项目</th>
+                    <th>类别</th>
+                    <th>收款方</th>
+                    <th>计划金额</th>
+                    <th>计划日期</th>
+                    <th>用途</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="item in paymentPlans"
+                    :key="item.id"
+                    class="payment-plan-row"
+                    tabindex="0"
+                    role="button"
+                    title="点击查看付款计划详情"
+                    @click="openPaymentPlanDetail(item)"
+                    @keydown.enter.prevent="openPaymentPlanDetail(item)"
+                  >
+                    <td><strong>{{ item.plan_no }}</strong><small>{{ item.period_month }}</small></td>
+                    <td>{{ item.source_label }}<small>{{ item.project_name || item.contract_name || '未关联项目合同' }}<template v-if="item.contract_stage_name"> · {{ item.contract_stage_name }}</template></small></td>
+                    <td>{{ item.payment_category }}</td>
+                    <td>{{ item.payee_type_label }}<small>{{ item.payee_name_snapshot }}<template v-if="item.payee_account_last4"> · 尾号 {{ item.payee_account_last4 }}</template></small></td>
+                    <td>{{ moneyText(item.planned_amount) }}</td>
+                    <td>{{ item.planned_pay_date || '—' }}</td>
+                    <td>{{ item.purpose }}</td>
+                    <td><span class="tag" :class="item.status === 'CANCELLED' ? 'danger' : item.status === 'CONVERTED' ? 'success' : 'neutral'">{{ item.status_label }}</span><span v-if="item.is_urgent" class="tag warning">加急</span></td>
+                    <td>
+                      <div class="table-actions" @click.stop>
+                        <button class="text-button" @click="openPaymentPlanDetail(item)">查看</button>
+                        <button class="text-button" @click="openPaymentPlanForm(item)">编辑</button>
+                        <button v-if="item.status !== 'CANCELLED'" class="text-button danger-text" @click="cancelPaymentPlan(item)">取消</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <div v-if="paymentPlanFormOpen" class="modal-backdrop"><section class="modal-card v3-modal cash-document-modal"><div class="modal-head"><div><div class="eyebrow">付款计划表单</div><h2>{{ editingPaymentPlanId ? '编辑付款计划' : '新增付款计划' }}</h2></div><button class="modal-close" @click="paymentPlanFormOpen=false">×</button></div><div class="form-grid"><label>计划月份<input v-model="paymentPlanForm.period_month" type="month" /></label><label>经办人<select v-model.number="paymentPlanForm.handler_user_id"><option :value="null">请选择</option><option v-for="item in demoUsers" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label>付款类别<select v-model="paymentPlanForm.payment_category"><option>采购货款</option><option>研发费用</option><option>服务费</option><option>差旅费</option><option>报销款</option><option>劳务费</option><option>税费</option><option>其他</option></select></label><label>来源类型<select v-model="paymentPlanForm.source_type"><option value="CONTRACT_STAGE">支出合同阶段</option><option value="PROJECT_EXPENSE">项目费用</option><option value="MANUAL">手工计划</option></select></label><label v-if="paymentPlanForm.source_type === 'PROJECT_EXPENSE' || paymentPlanForm.source_type === 'MANUAL'">项目<select v-model.number="paymentPlanForm.project_id"><option :value="null">{{ paymentPlanForm.source_type === 'PROJECT_EXPENSE' ? '请选择项目' : '可不选择项目' }}</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label v-if="paymentPlanForm.source_type === 'CONTRACT_STAGE'">支出合同<select v-model.number="paymentPlanForm.contract_id" @change="applyPaymentPlanContract"><option :value="null" disabled>请选择支出合同</option><option v-for="item in expenseContractOptions" :key="item.id" :value="item.id">{{ item.name }} · {{ item.counterparty_name }}</option></select></label><label v-if="paymentPlanForm.source_type === 'CONTRACT_STAGE'">合同阶段<select v-model.number="paymentPlanForm.contract_stage_id"><option :value="null" disabled>请选择合同阶段</option><option v-for="item in stageOptionsFor(paymentPlanForm.contract_id || 0)" :key="item.id" :value="item.id">{{ item.name }} · {{ moneyText(item.amount) }}</option></select></label><label>收款方类型<select v-model="paymentPlanForm.payee_type"><option value="SUPPLIER">供应商</option><option value="COMPANY">公司</option><option value="EMPLOYEE">员工</option><option value="EXTERNAL_PERSON">外部个人</option><option value="OTHER">其他</option></select></label><label>收款方名称<input v-model.trim="paymentPlanForm.payee_name_snapshot" /></label><label>开户银行<input v-model.trim="paymentPlanForm.payee_bank_snapshot" /></label><label>收款账号<input v-model.trim="paymentPlanForm.payee_account" placeholder="列表仅展示后四位" /></label><label>计划付款金额<input v-model.number="paymentPlanForm.planned_amount" type="number" min="0.01" step="0.01" /></label><label>付款方式<select v-model="paymentPlanForm.payment_method"><option>银行转账</option><option>现金</option><option>票据</option><option>其他</option></select></label><label>计划付款日期<input v-model="paymentPlanForm.planned_pay_date" type="date" /></label><label class="checkbox-field"><input v-model="paymentPlanForm.has_finance_material" type="checkbox" /> 关联合同/财务资料</label><label class="checkbox-field"><input v-model="paymentPlanForm.is_urgent" type="checkbox" /> 加急</label><label class="span-2">资金用途说明<textarea v-model.trim="paymentPlanForm.purpose" rows="3"></textarea></label><label class="span-2">备注<textarea v-model.trim="paymentPlanForm.remark" rows="2"></textarea></label></div><div class="form-footer"><button class="secondary" @click="paymentPlanFormOpen=false">取消</button><button class="primary" @click="savePaymentPlan">保存计划</button></div></section></div>
+          <div v-if="selectedPaymentPlan" class="modal-backdrop" @click.self="selectedPaymentPlan = null">
+            <section class="modal-card v3-modal payment-plan-detail-modal" role="dialog" aria-modal="true">
+              <div class="modal-head">
+                <div>
+                  <div class="eyebrow">付款计划详情</div>
+                  <h2>{{ selectedPaymentPlan.plan_no }}</h2>
+                  <p class="muted">{{ selectedPaymentPlan.period_month }} · {{ selectedPaymentPlan.source_label }}</p>
+                </div>
+                <button class="modal-close" aria-label="关闭弹窗" @click="selectedPaymentPlan = null">×</button>
+              </div>
+              <div class="detail-grid">
+                <div><small>计划状态</small><strong>{{ selectedPaymentPlan.status_label }}</strong></div>
+                <div><small>付款类别</small><strong>{{ selectedPaymentPlan.payment_category }}</strong></div>
+                <div><small>项目</small><strong>{{ selectedPaymentPlan.project_name || '未关联项目' }}</strong></div>
+                <div><small>支出合同</small><strong>{{ selectedPaymentPlan.contract_name || '未关联合同' }}</strong></div>
+                <div><small>合同阶段</small><strong>{{ selectedPaymentPlan.contract_stage_name || '未关联阶段' }}</strong></div>
+                <div><small>经办人</small><strong>{{ selectedPaymentPlan.handler_name || '未填写' }}</strong></div>
+                <div><small>收款方类型</small><strong>{{ selectedPaymentPlan.payee_type_label }}</strong></div>
+                <div><small>收款方名称</small><strong>{{ selectedPaymentPlan.payee_name_snapshot }}</strong></div>
+                <div><small>开户银行</small><strong>{{ selectedPaymentPlan.payee_bank_snapshot || '未填写' }}</strong></div>
+                <div><small>收款账号</small><strong>{{ selectedPaymentPlan.payee_account_last4 ? `尾号 ${selectedPaymentPlan.payee_account_last4}` : '未填写' }}</strong></div>
+                <div><small>计划付款金额</small><strong>{{ moneyText(selectedPaymentPlan.planned_amount) }}</strong></div>
+                <div><small>计划付款日期</small><strong>{{ selectedPaymentPlan.planned_pay_date || '未填写' }}</strong></div>
+                <div><small>付款方式</small><strong>{{ selectedPaymentPlan.payment_method }}</strong></div>
+                <div><small>资料与加急</small><strong>{{ selectedPaymentPlan.has_finance_material ? '有关联合同/财务资料' : '未关联合同/财务资料' }} · {{ selectedPaymentPlan.is_urgent ? '加急' : '普通' }}</strong></div>
+                <div class="full"><small>资金用途说明</small><strong>{{ selectedPaymentPlan.purpose || '未填写' }}</strong></div>
+                <div class="full"><small>备注</small><strong>{{ selectedPaymentPlan.remark || '无' }}</strong></div>
+              </div>
+              <div class="form-footer">
+                <button class="secondary" @click="selectedPaymentPlan = null">关闭</button>
+                <button class="primary" @click="selectedPaymentPlan && openPaymentPlanForm(selectedPaymentPlan)">编辑计划</button>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section v-else-if="page === 'businessAnalysis'" class="page-view v3-ops-page">
+          <div class="page-head"><div><div class="eyebrow">经营分析</div><h1>经营分析</h1><p class="muted">独立查看回款计划、付款计划、净现金流和风险项目。</p></div><div class="actions"><input v-model="businessAnalysisMonth" type="month" /><button class="primary" @click="refreshBusinessAnalysis">查询</button></div></div>
+          <div v-if="businessAnalysisLoading" class="empty">正在加载经营分析…</div><template v-else-if="businessAnalysis"><section class="finance-summary-grid"><div><span>本月计划回款</span><strong>{{ moneyText(businessAnalysis.receipt_summary.current_plan_amount) }}</strong></div><div><span>本月实际回款</span><strong>{{ moneyText(businessAnalysis.receipt_summary.current_actual_amount) }}</strong></div><div><span>回款完成率</span><strong>{{ businessAnalysis.receipt_summary.completion_rate === null ? '—' : `${businessAnalysis.receipt_summary.completion_rate}%` }}</strong></div><div><span>本月计划付款</span><strong>{{ moneyText(businessAnalysis.payment_summary.planned_amount) }}</strong></div><div><span>资金净流入</span><strong>{{ moneyText(businessAnalysis.net_cash_flow) }}</strong></div><div><span>逾期未收</span><strong>{{ moneyText(businessAnalysis.receipt_summary.overdue_unreceived_amount) }}</strong></div></section><section class="business-analysis-grid"><div class="card"><div class="section-head"><h2>近 6 月收付趋势</h2></div><div class="mini-trend"><div v-for="item in businessAnalysis.trend" :key="item.period_month" class="mini-trend-row"><span>{{ item.period_month }}</span><i :style="{ width: `${Math.min(100, Math.max(4, item.actual_receipt_amount / Math.max(...businessAnalysis.trend.map((t) => Math.max(t.actual_receipt_amount, t.payment_plan_amount, 1))) * 100))}%` }"></i><b>{{ moneyText(item.actual_receipt_amount) }}</b><em>{{ moneyText(item.payment_plan_amount) }}</em></div></div></div><div class="card"><div class="section-head"><h2>风险项目排行</h2><button class="text-button" @click="go('receiptLedger')">去回款台账</button></div><div v-if="!businessAnalysis.risk_projects.length" class="empty">暂无风险项目</div><div v-else class="risk-list"><button v-for="item in businessAnalysis.risk_projects" :key="item.contract_id" @click="receiptLedgerProject = item.project_id; receiptLedgerMonth = businessAnalysisMonth; go('receiptLedger')"><strong>{{ item.project_name }}</strong><small>{{ item.contract_name }} · 未收 {{ moneyText(item.unreceived_amount) }}</small><span>{{ item.warning_tags.join('、') || '关注' }}</span></button></div></div><div class="card"><div class="section-head"><h2>加急付款计划</h2><button class="text-button" @click="go('paymentPlans')">去付款计划</button></div><div v-if="!businessAnalysis.urgent_payments.length" class="empty">暂无加急付款计划</div><div v-else class="risk-list"><button v-for="item in businessAnalysis.urgent_payments" :key="item.id" @click="paymentPlanMonth = businessAnalysisMonth; paymentPlanKeyword = item.plan_no; go('paymentPlans')"><strong>{{ item.payee_name_snapshot }}</strong><small>{{ item.purpose }} · {{ moneyText(item.planned_amount) }}</small><span>{{ item.planned_pay_date || '待定' }}</span></button></div></div></section></template><div v-else class="empty">请选择月份后查询经营分析。</div>
+        </section>
+
         <section v-else-if="page === 'projectExpenses' || page === 'laborCosts'" class="page-view expense-page">
           <div class="page-head">
-            <div><div class="eyebrow">PROJECT COST / REVIEW</div><h1>{{ page === 'laborCosts' ? '人工成本结转' : '项目费用' }}</h1><p class="muted">{{ page === 'laborCosts' ? '按会计期间把人工成本结转到项目，复核通过后计入项目成本。' : '项目发生的各类费用，按统一 8 项预算项归集，复核通过后计入项目成本。' }}</p></div>
+            <div><div class="eyebrow">项目成本复核</div><h1>{{ page === 'laborCosts' ? '人工成本结转' : '项目费用' }}</h1><p class="muted">{{ page === 'laborCosts' ? '按会计期间把人工成本结转到项目，复核通过后计入项目成本。' : '项目发生的各类费用，按统一 8 项预算项归集，复核通过后计入项目成本。' }}</p></div>
               <button v-if="page === 'laborCosts' && canAction('labor_costs', 'CREATE')" class="secondary" @click="openImport('labor_costs')">导入结转单</button>
               <button v-if="canAction(costEntryResourceKey, 'CREATE')" class="primary" @click="openExpenseForm">＋ 新增{{ page === 'laborCosts' ? '结转单' : '费用单' }}</button>
             </div>
@@ -10911,7 +12800,7 @@ onMounted(() => {
           </section>
           <div v-if="expenseFormOpen" class="modal-backdrop">
             <section class="modal-card expense-form-modal">
-              <div class="modal-head"><div><span class="eyebrow">COST ENTRY DRAFT</span><h2>{{ selectedExpense ? '编辑成本单' : (page === 'laborCosts' ? '新增人工成本结转' : '新增项目费用') }}</h2></div><button class="modal-close" aria-label="关闭" @click="expenseFormOpen=false">×</button></div>
+              <div class="modal-head"><div><span class="eyebrow">成本单草稿</span><h2>{{ selectedExpense ? '编辑成本单' : (page === 'laborCosts' ? '新增人工成本结转' : '新增项目费用') }}</h2></div><button class="modal-close" aria-label="关闭" @click="expenseFormOpen=false">×</button></div>
               <div class="expense-form-section"><h3>基本信息</h3><div class="form-grid three-cols"><label>项目<select v-model.number="costEntryForm.project_id" @change="loadProjectBudgetItems(costEntryForm.project_id)"><option :value="0" disabled>请选择项目</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'">会计期间<input v-model="costEntryForm.accounting_month" type="month" /></label><label v-else>发生日期<input v-model="costEntryForm.occurred_on" type="date" /></label><template v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'"><label>填报日期<input :value="costEntryForm.fill_date" disabled /><small>填报日期由系统取当天自动生成，不可修改</small></label><label>金额<input v-model.number="costEntryForm.amount" type="number" min="0.01" step="0.01" /></label></template><template v-else><label>含税金额<input v-model.number="costEntryForm.amount" type="number" min="0.01" step="0.01" @input="syncTaxFields(costEntryForm)" /></label><label>税率<select v-model.number="costEntryForm.tax_rate" @change="syncTaxFields(costEntryForm)"><option v-for="item in taxRateOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label><label>未税金额<input v-model.number="costEntryForm.amount_without_tax" type="number" min="0" step="0.01" @input="syncTaxFields(costEntryForm, 'net')" /><small>多张发票税率不一致时，可手动填写实际入账未税金额，保存以此为准。</small></label><label>税额<input :value="moneyText(costEntryForm.tax_amount)" disabled /></label></template></div></div>
               <div class="expense-form-section"><h3>预算归集</h3><div class="form-grid three-cols"><label v-if="costEntryForm.entry_kind === 'PERSONNEL_COST'">预算项<input value="人工费用" disabled /><small>人工成本结转固定归集到「人工费用」，无需选择</small></label><label v-else>预算项<select v-model.number="costEntryForm.budget_item_id"><option :value="0">{{ projectBudgetLoading ? '正在加载预算项…' : '不归集' }}</option><option v-for="item in budgetOptionsForExpense" :key="item.id" :value="item.id">{{ item.name }}</option></select></label></div></div>
               <div class="expense-form-section"><h3>附件与说明</h3><div class="form-grid"><label class="span-2">说明<textarea v-model.trim="costEntryForm.description" rows="3"></textarea></label><label class="file-drop span-2">选择凭证（可选）<input type="file" multiple accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.pdf,.png,.jpg,.jpeg,.webp" @change="chooseExpenseFiles" /><span>{{ pendingExpenseFiles.length ? `已选择 ${pendingExpenseFiles.length} 个文件` : '可不上传附件，选择后保存会自动上传' }}</span></label></div></div>
@@ -10921,24 +12810,24 @@ onMounted(() => {
         </section>
 
         <section v-else-if="page === 'expenseDetail'" class="page-view expense-detail-page">
-          <div class="page-head"><div><div class="eyebrow">COST ENTRY / {{ selectedExpense?.cost_no }}</div><h1>成本单详情</h1><p class="muted">{{ costKindLabel(selectedExpense?.entry_kind || 'PROJECT_EXPENSE') }} · 一级费用复核通过后计入项目成本</p></div><div class="actions"><span v-if="selectedExpense" class="tag" :class="costEntryStatusClass(selectedExpense.status)">{{ costEntryStatusLabel(selectedExpense.status) }}</span><button v-if="selectedExpense?.can_withdraw" class="secondary danger-button" @click="withdrawCostEntry(selectedExpense)">撤回</button><button class="secondary" @click="go(selectedExpense?.entry_kind === 'PERSONNEL_COST' ? 'laborCosts' : 'projectExpenses')">返回台账</button></div></div>
+          <div class="page-head"><div><div class="eyebrow">成本单详情 / {{ selectedExpense?.cost_no }}</div><h1>成本单详情</h1><p class="muted">{{ costKindLabel(selectedExpense?.entry_kind || 'PROJECT_EXPENSE') }} · 一级费用复核通过后计入项目成本</p></div><div class="actions"><span v-if="selectedExpense" class="tag" :class="costEntryStatusClass(selectedExpense.status)">{{ costEntryStatusLabel(selectedExpense.status) }}</span><button v-if="selectedExpense?.can_withdraw" class="secondary danger-button" @click="withdrawCostEntry(selectedExpense)">撤回</button><button class="secondary" @click="go(selectedExpense?.entry_kind === 'PERSONNEL_COST' ? 'laborCosts' : 'projectExpenses')">返回台账</button></div></div>
           <template v-if="selectedExpense">
             <section class="expense-hero-grid"><div class="expense-kpi"><span>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? '结转金额' : '含税金额' }}</span><strong>{{ moneyText(selectedExpense.amount) }}</strong><small v-if="selectedExpense.entry_kind === 'PERSONNEL_COST'">填报日期 {{ selectedExpense.fill_date || '—' }}</small></div><div v-if="selectedExpense.entry_kind !== 'PERSONNEL_COST'" class="expense-kpi"><span>未税金额 / 税额</span><strong>{{ moneyText(selectedExpense.amount_without_tax) }}</strong><small>{{ taxRateText(selectedExpense.tax_rate) }} · 税额 {{ moneyText(selectedExpense.tax_amount) }}</small></div><div class="expense-kpi"><span>归集预算项</span><strong>{{ selectedExpense.budget_item_name || '未归集' }}</strong></div><div class="expense-kpi"><span>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? '会计期间' : '发生日期' }}</span><strong>{{ selectedExpense.entry_kind === 'PERSONNEL_COST' ? (selectedExpense.accounting_month || '—') : (selectedExpense.occurred_on || '—') }}</strong></div><div class="expense-kpi"><span>同期间单据数</span><strong>{{ selectedExpense.same_month_count }}</strong></div></section>
             <section class="expense-detail-grid"><section class="card"><div class="section-head"><div><h2>单据信息</h2><p class="muted">{{ selectedExpense.project_name }} · {{ selectedExpense.project_code }}</p></div><button v-if="selectedExpense.can_edit" class="secondary" @click="editCostEntry(selectedExpense)">编辑草稿</button></div><div class="detail-grid"><div><small>单据编号</small><strong>{{ selectedExpense.cost_no }}</strong></div><div><small>单据类型</small><strong>{{ costKindLabel(selectedExpense.entry_kind) }}</strong></div><div><small>申请人</small><strong>{{ selectedExpense.applicant_name }}</strong></div><div v-if="selectedExpense.entry_kind === 'PERSONNEL_COST'"><small>填报日期</small><strong>{{ selectedExpense.fill_date || '—' }}</strong></div><div><small>所属部门</small><strong>{{ selectedExpense.applicant_department_name || '未分配' }}</strong></div><div class="full"><small>说明</small><strong>{{ selectedExpense.description || '无' }}</strong></div></div></section>
               <section class="card"><h2>复核信息</h2><div class="workflow-track"><div :class="['workflow-node', selectedExpense.status === 'APPROVED' ? 'approved' : selectedExpense.status === 'REJECTED' ? 'rejected' : selectedExpense.status === 'PENDING_REVIEW' ? 'pending' : 'draft']"><i>1</i><span><strong>费用复核</strong><small>{{ selectedExpense.reviewed_by_name || '待费用复核岗位处理' }}</small></span></div></div><div class="timeline"><div v-if="selectedExpense.submitted_at"><b>{{ selectedExpense.submitted_by_name || '申请人' }} 提交复核</b><small>{{ formatDateTime(selectedExpense.submitted_at) }}</small></div><div v-if="selectedExpense.reviewed_at"><b>{{ selectedExpense.reviewed_by_name }} {{ costEntryStatusLabel(selectedExpense.status) }}</b><small>{{ formatDateTime(selectedExpense.reviewed_at) }}<span v-if="selectedExpense.review_comment"> · {{ selectedExpense.review_comment }}</span></small></div><div v-else><b>等待费用复核</b><small>{{ formatDateTime(selectedExpense.created_at) }}</small></div></div></section>
             </section>
             <section class="card contract-attachments-card"><div class="section-head"><div><h2>单据附件</h2><p class="muted">复核依据与费用凭证</p></div><span>{{ selectedExpense.attachments.length }} 个文件</span></div><div v-if="!selectedExpense.attachments.length" class="empty">暂无附件</div><div v-else class="contract-attachment-list"><div v-for="attachment in selectedExpense.attachments" :key="attachment.id" class="contract-attachment-row"><div class="attachment-file-icon" :class="`attachment-${attachment.preview_kind}`">{{ attachmentKindLabel(attachment.preview_kind) }}</div><div class="attachment-file-main"><strong>{{ attachment.file_name }}</strong><small>{{ attachmentSizeText(attachment.file_size) }} · {{ formatDateTime(attachment.created_at) }}</small></div><div class="table-actions"><button v-if="attachment.can_preview" class="text-button" @click="previewContractAttachment(attachment)">预览</button><button class="text-button" @click="downloadContractAttachment(attachment)">下载</button></div></div></div></section>
-            <section v-if="selectedExpense.can_review" class="card expense-action-bar"><div><strong>当前节点：费用复核</strong><small>请核对项目、预算项、金额；如有附件请一并查看</small></div><textarea v-model.trim="costEntryActionComment" rows="2" placeholder="复核意见"></textarea><div class="actions"><button class="secondary danger-button" @click="costEntryRejectOpen = true">驳回</button><button class="primary" @click="approveCostEntry">复核通过</button></div></section>
+            <section v-if="selectedExpense.can_review" class="card expense-action-bar"><div><strong>当前节点：费用复核</strong><small>请核对项目、预算项、金额；如有附件请一并查看</small></div><textarea v-model.trim="costEntryActionComment" rows="2" placeholder="复核意见"></textarea><div class="actions"><button class="secondary danger-button" @click="costEntryRejectOpen = true">驳回</button><button class="primary" :disabled="costEntryApproving" @click="approveCostEntry">{{ costEntryApproving ? "处理中…" : "复核通过" }}</button></div></section>
             <section v-else-if="selectedExpense.status === 'DRAFT' || selectedExpense.status === 'REJECTED'" class="card expense-action-bar"><div><strong>草稿可继续编辑</strong><small>提交后进入费用复核</small></div><div class="actions"><button class="primary" @click="submitCostEntry">提交复核</button></div></section>
             <section v-else-if="selectedExpense.can_reverse" class="card expense-action-bar"><div><strong>已通过单据可冲销</strong><small>冲销后按净额口径扣减项目成本</small></div><div class="actions"><button class="secondary danger-button" @click="costEntryReverseOpen = true">冲销</button></div></section>
           </template>
-          <div v-if="costEntryRejectOpen" class="modal-backdrop"><section class="modal-card compact-modal"><div class="modal-head"><div><span class="eyebrow">COST REVIEW REJECT</span><h2>驳回成本单</h2></div><button class="modal-close" @click="costEntryRejectOpen=false">×</button></div><div class="form-grid"><label class="span-2">驳回原因<textarea v-model.trim="costEntryRejectReason" rows="3" placeholder="至少填写 2 个字"></textarea></label></div><div class="form-footer"><button class="secondary" @click="costEntryRejectOpen=false">取消</button><button class="primary" @click="rejectCostEntry">确认驳回</button></div></section></div>
-          <div v-if="costEntryReverseOpen" class="modal-backdrop"><section class="modal-card compact-modal"><div class="modal-head"><div><span class="eyebrow">COST REVERSAL</span><h2>冲销成本单</h2></div><button class="modal-close" @click="costEntryReverseOpen=false">×</button></div><div class="form-grid"><label class="span-2">冲销原因<textarea v-model.trim="costEntryReverseReason" rows="3" placeholder="可留空"></textarea></label></div><div class="form-footer"><button class="secondary" @click="costEntryReverseOpen=false">取消</button><button class="primary" @click="reverseCostEntry">确认冲销</button></div></section></div>
+          <div v-if="costEntryRejectOpen" class="modal-backdrop"><section class="modal-card compact-modal"><div class="modal-head"><div><span class="eyebrow">费用复核驳回</span><h2>驳回成本单</h2></div><button class="modal-close" @click="costEntryRejectOpen=false">×</button></div><div class="form-grid"><label class="span-2">驳回原因<textarea v-model.trim="costEntryRejectReason" rows="3" placeholder="至少填写 2 个字"></textarea></label></div><div class="form-footer"><button class="secondary" @click="costEntryRejectOpen=false">取消</button><button class="primary" @click="rejectCostEntry">确认驳回</button></div></section></div>
+          <div v-if="costEntryReverseOpen" class="modal-backdrop"><section class="modal-card compact-modal"><div class="modal-head"><div><span class="eyebrow">成本冲销</span><h2>冲销成本单</h2></div><button class="modal-close" @click="costEntryReverseOpen=false">×</button></div><div class="form-grid"><label class="span-2">冲销原因<textarea v-model.trim="costEntryReverseReason" rows="3" placeholder="可留空"></textarea></label></div><div class="form-footer"><button class="secondary" @click="costEntryReverseOpen=false">取消</button><button class="primary" @click="reverseCostEntry">确认冲销</button></div></section></div>
         </section>
 
         <section v-else-if="page === 'costReview'" class="page-view v3-ops-page">
           <div class="page-head">
-            <div><div class="eyebrow">COST REVIEW</div><h1>费用复核</h1><p class="muted">合同付款、项目费用与人工成本结转统一一级复核，通过后计入项目成本。</p></div>
+            <div><div class="eyebrow">费用复核</div><h1>费用复核</h1><p class="muted">合同付款、项目费用与人工成本结转统一一级复核，通过后计入项目成本。</p></div>
           </div>
           <div class="v3-tabs" role="tablist" aria-label="费用复核范围">
             <button type="button" :class="{ active: costReviewTab === 'pending' }" @click="costReviewTab = 'pending'; costReviewPage = 1; refreshCostReview()">待复核（{{ costReviewCounts.pending }}）</button>
@@ -10947,16 +12836,16 @@ onMounted(() => {
           </div>
           <section class="card">
             <div class="section-head"><div><h2>复核清单</h2><p class="muted">共 {{ costReviewTotal }} 条</p></div><button class="secondary" @click="refreshCostReview">刷新</button></div>
-            <div class="table-wrap"><table class="v3-ops-table"><thead><tr><th>单据编号</th><th>单据类型</th><th>项目</th><th>预算项</th><th>申请人</th><th>含税金额</th><th>提交时间</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in costReviewItems" :key="`${item.kind}-${item.entry_id}`"><td><button class="detail-link" @click="openCostReviewTarget(item)">{{ item.document_no }}</button></td><td>{{ item.document_label }}</td><td><strong>{{ item.project_name }}</strong><small>{{ item.project_code }}</small></td><td>{{ item.budget_item_name || '—' }}</td><td>{{ item.applicant_name }}</td><td>{{ moneyText(item.amount) }}</td><td>{{ formatDateTime(item.submitted_at) }}</td><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td><td><div class="table-actions"><button class="text-button" @click="openCostReviewTarget(item)">查看</button><button v-if="item.status === 'PENDING_REVIEW'" class="text-button" @click="costRejectTarget = item; costEntryRejectOpen = true">驳回</button><button v-if="item.status === 'PENDING_REVIEW'" class="text-button" @click="approveCostReview(item)">通过</button></div></td></tr></tbody></table></div>
+            <div class="table-wrap"><table class="v3-ops-table"><thead><tr><th>单据编号</th><th>单据类型</th><th>项目</th><th>预算项</th><th>申请人</th><th>含税金额</th><th>提交时间</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="item in costReviewItems" :key="`${item.kind}-${item.entry_id}`"><td><button class="detail-link" @click="openCostReviewTarget(item)">{{ item.document_no }}</button></td><td>{{ item.document_label }}</td><td><strong>{{ item.project_name }}</strong><small>{{ item.project_code }}</small></td><td>{{ item.budget_item_name || '—' }}</td><td>{{ item.applicant_name }}</td><td>{{ moneyText(item.amount) }}</td><td>{{ formatDateTime(item.submitted_at) }}</td><td><span class="tag" :class="costEntryStatusClass(item.status)">{{ costEntryStatusLabel(item.status) }}</span></td><td><div class="table-actions"><button class="text-button" @click="openCostReviewTarget(item)">查看</button><button v-if="item.status === 'PENDING_REVIEW'" class="text-button" @click="costRejectTarget = item; costEntryRejectOpen = true">驳回</button><button v-if="item.status === 'PENDING_REVIEW'" class="text-button" :disabled="isCostReviewProcessing(item)" @click="approveCostReview(item)">{{ isCostReviewProcessing(item) ? "处理中…" : "通过" }}</button></div></td></tr></tbody></table></div>
             <div v-if="!costReviewItems.length" class="empty">当前没有符合条件的单据</div>
           </section>
-          <div v-if="costEntryRejectOpen" class="modal-backdrop"><section class="modal-card compact-modal"><div class="modal-head"><div><span class="eyebrow">COST REVIEW REJECT</span><h2>驳回单据</h2></div><button class="modal-close" @click="costEntryRejectOpen=false">×</button></div><div class="form-grid"><label class="span-2">驳回原因<textarea v-model.trim="costEntryRejectReason" rows="3" placeholder="至少填写 2 个字"></textarea></label></div><div class="form-footer"><button class="secondary" @click="costEntryRejectOpen=false">取消</button><button class="primary" @click="costRejectTarget ? rejectCostReview(costRejectTarget) : rejectCostEntry()">确认驳回</button></div></section></div>
+          <div v-if="costEntryRejectOpen" class="modal-backdrop"><section class="modal-card compact-modal"><div class="modal-head"><div><span class="eyebrow">费用复核驳回</span><h2>驳回单据</h2></div><button class="modal-close" @click="costEntryRejectOpen=false">×</button></div><div class="form-grid"><label class="span-2">驳回原因<textarea v-model.trim="costEntryRejectReason" rows="3" placeholder="至少填写 2 个字"></textarea></label></div><div class="form-footer"><button class="secondary" @click="costEntryRejectOpen=false">取消</button><button class="primary" @click="costRejectTarget ? rejectCostReview(costRejectTarget) : rejectCostEntry()">确认驳回</button></div></section></div>
         </section>
 
         <section v-else-if="page === 'suppliers' || page === 'customers'" class="page-view v3-ops-page">
           <div class="page-head">
             <div>
-              <div class="eyebrow">COUNTERPARTY / MASTER DATA</div>
+              <div class="eyebrow">往来单位主数据</div>
               <h1>{{ pageTitle }}</h1>
               <p class="muted">维护往来单位核心信息、联系人、地址和银行账户。</p>
             </div>
@@ -11019,7 +12908,7 @@ onMounted(() => {
             <section class="modal-card v3-modal" role="dialog" aria-modal="true">
               <div class="modal-head">
                 <div>
-                  <div class="eyebrow">COUNTERPARTY FORM</div>
+                  <div class="eyebrow">往来单位表单</div>
                   <h2>{{ page === "suppliers" ? (editingSupplierId ? "编辑供应商" : "新增供应商") : (editingCustomerId ? "编辑客户" : "新增客户") }}</h2>
                 </div>
                 <button class="modal-close" aria-label="关闭弹窗" @click="page === 'suppliers' ? supplierFormOpen = false : customerFormOpen = false">×</button>
@@ -11062,7 +12951,7 @@ onMounted(() => {
         <section v-else-if="page === 'projectBoard'" class="page-view v3-ops-page">
           <div class="page-head">
             <div>
-              <div class="eyebrow">PROJECT / FINANCE BOARD</div>
+              <div class="eyebrow">项目经营看板</div>
               <h1>项目看板</h1>
               <p class="muted">按项目汇总合同、收付款和毛利，并提示应收应付预警。</p>
             </div>
@@ -11238,7 +13127,7 @@ onMounted(() => {
         </section>
 
         <section v-else-if="page === 'approvalPositions'" class="page-view approval-config-page">
-          <div class="page-head approval-position-head"><div><div class="eyebrow">APPROVAL POSITION</div><h1>审批岗位</h1><p class="muted">岗位决定业务流转给谁，与菜单角色分开配置；变更只影响后续新提交。</p></div><button class="secondary compact-button" @click="refreshApprovalPositions">刷新</button></div>
+          <div class="page-head approval-position-head"><div><div class="eyebrow">审批岗位</div><h1>审批岗位</h1><p class="muted">岗位决定业务流转给谁，与菜单角色分开配置；变更只影响后续新提交。</p></div><button class="secondary compact-button" @click="refreshApprovalPositions">刷新</button></div>
           <section class="position-overview" aria-label="审批岗位配置概况">
             <div><span>岗位总数</span><strong>{{ approvalPositionSummary.total }}</strong></div>
             <div><span>启用岗位</span><strong>{{ approvalPositionSummary.active }}</strong></div>
@@ -11265,7 +13154,7 @@ onMounted(() => {
             </article>
             <div v-if="!approvalPositions.length" class="empty">暂无审批岗位</div>
           </section>
-          <div v-if="positionFormOpen" class="modal-backdrop"><section class="modal-card position-modal"><div class="modal-head"><div><span class="eyebrow">POSITION MEMBERS</span><h2>配置{{ editingPosition?.name }}</h2><p class="muted">保存后仅影响后续提交的新单据</p></div><button class="modal-close" aria-label="关闭" @click="positionFormOpen=false">×</button></div><div class="position-basic-form"><label>岗位名称<input v-model.trim="positionForm.name" /></label><label>状态<select v-model="positionForm.status"><option value="ACTIVE">启用</option><option value="INACTIVE">停用</option></select></label><label class="span-2">岗位说明<textarea v-model.trim="positionForm.description" rows="2"></textarea></label></div><div class="member-picker"><div class="member-picker-head"><div><strong>岗位成员</strong><p class="muted">人员来自飞书组织架构；或签岗位任一成员处理后即完成该节点。</p></div><span>{{ positionForm.member_ids.length }} 人已选</span></div><label class="member-search"><span>筛选人员</span><input v-model.trim="positionMemberKeyword" placeholder="输入姓名或部门" /></label><div class="member-check-grid"><label v-for="person in filteredPositionUsers" :key="person.id" :class="{ selected: positionForm.member_ids.includes(person.id) }"><input v-model="positionForm.member_ids" type="checkbox" :value="person.id" /><i>{{ person.name.slice(0, 1) }}</i><span><strong>{{ person.name }}</strong><small>{{ person.department_path || person.department_name || '未同步部门' }}</small></span></label><div v-if="!filteredPositionUsers.length" class="empty compact-empty">没有匹配的组织人员</div></div></div><div class="form-footer"><button class="secondary" @click="positionFormOpen=false">取消</button><button class="primary" @click="saveApprovalPosition">保存岗位配置</button></div></section></div>
+          <div v-if="positionFormOpen" class="modal-backdrop"><section class="modal-card position-modal"><div class="modal-head"><div><span class="eyebrow">岗位成员</span><h2>配置{{ editingPosition?.name }}</h2><p class="muted">保存后仅影响后续提交的新单据</p></div><button class="modal-close" aria-label="关闭" @click="positionFormOpen=false">×</button></div><div class="position-basic-form"><label>岗位名称<input v-model.trim="positionForm.name" /></label><label>状态<select v-model="positionForm.status"><option value="ACTIVE">启用</option><option value="INACTIVE">停用</option></select></label><label class="span-2">岗位说明<textarea v-model.trim="positionForm.description" rows="2"></textarea></label></div><div class="member-picker"><div class="member-picker-head"><div><strong>岗位成员</strong><p class="muted">人员来自飞书组织架构；或签岗位任一成员处理后即完成该节点。</p></div><span>{{ positionForm.member_ids.length }} 人已选</span></div><label class="member-search"><span>筛选人员</span><input v-model.trim="positionMemberKeyword" placeholder="输入姓名或部门" /></label><div class="member-check-grid"><label v-for="person in filteredPositionUsers" :key="person.id" :class="{ selected: positionForm.member_ids.includes(person.id) }"><input v-model="positionForm.member_ids" type="checkbox" :value="person.id" /><i>{{ person.name.slice(0, 1) }}</i><span><strong>{{ person.name }}</strong><small>{{ person.department_path || person.department_name || '未同步部门' }}</small></span></label><div v-if="!filteredPositionUsers.length" class="empty compact-empty">没有匹配的组织人员</div></div></div><div class="form-footer"><button class="secondary" @click="positionFormOpen=false">取消</button><button class="primary" @click="saveApprovalPosition">保存岗位配置</button></div></section></div>
         </section>
 
         <section
@@ -11274,7 +13163,7 @@ onMounted(() => {
         >
           <div class="page-head rbac-page-head">
             <div>
-              <div class="eyebrow">ADMIN / ACCESS CONTROL</div>
+              <div class="eyebrow">系统管理 / 权限控制</div>
               <h1>权限管理</h1>
               <p class="muted">用角色统一管理菜单、业务操作和数据访问范围。</p>
             </div>
@@ -11358,7 +13247,7 @@ onMounted(() => {
         >
           <div class="page-head">
             <div>
-              <div class="eyebrow">ADMIN / ACCESS CONTROL</div>
+              <div class="eyebrow">系统管理 / 权限控制</div>
               <h1>权限管理</h1>
               <p class="muted">
                 只维护已加入管理的人员，并配置他们可以查看和操作的菜单。
@@ -11528,7 +13417,7 @@ onMounted(() => {
             >
               <div class="modal-head">
                 <div>
-                  <div class="eyebrow">ADD ADMINISTRATOR</div>
+                  <div class="eyebrow">添加管理员</div>
                   <h2 id="admin-permission-modal-title">添加管理员</h2>
                   <p class="muted">
                     从已同步的飞书组织架构选择人员，并设置可以查看和操作的菜单。
@@ -11623,7 +13512,7 @@ onMounted(() => {
         <section v-else-if="page === 'integrations'" class="page-view integration-page">
           <div class="page-head integration-page-head">
             <div>
-              <div class="eyebrow">ADMIN / FEISHU CENTER</div>
+              <div class="eyebrow">系统管理 / 飞书中心</div>
               <h1>集成与通知</h1>
               <p class="muted">统一维护飞书连接、组织架构同步和业务提醒。</p>
             </div>
@@ -11648,7 +13537,7 @@ onMounted(() => {
           <template v-if="integrationView === 'overview'">
           <div class="two-columns integration-overview-grid">
             <section class="card integration-sync-card">
-              <div class="section-head"><div><span class="integration-section-label">DIRECTORY</span><h2>组织架构同步</h2><p class="muted">从飞书读取成员和部门，保存为本地业务快照。</p></div><span class="tag teal">{{ integrationOverview?.summary.member_count ?? demoUsers.length }} 人</span></div>
+              <div class="section-head"><div><span class="integration-section-label">组织目录</span><h2>组织架构同步</h2><p class="muted">从飞书读取成员和部门，保存为本地业务快照。</p></div><span class="tag teal">{{ integrationOverview?.summary.member_count ?? demoUsers.length }} 人</span></div>
               <div class="integration-sync-current"><div class="integration-sync-current-info"><span class="integration-status-dot" :class="integrationHealth.directory === 'app-configured' ? 'ok' : 'error'"></span><div><small>当前数据来源</small><strong>{{ directoryHealthLabel(integrationHealth.directory) }}</strong><span>{{ syncSummary || '尚未执行本次同步' }}</span></div></div><button class="primary" @click="syncOrgUsers">立即同步</button></div>
               <div class="integration-sync-metrics"><div><strong>{{ integrationOverview?.summary.member_count ?? demoUsers.length }}</strong><span>成员</span></div><div><strong>{{ integrationOverview?.summary.department_count ?? departments.length }}</strong><span>部门</span></div><div><strong>{{ integrationSyncTotal }}</strong><span>同步记录</span></div></div>
               <div class="integration-timeline-head"><strong>最近同步</strong><span>点击记录查看详情</span></div>
@@ -11658,7 +13547,7 @@ onMounted(() => {
             </section>
             <section class="card integration-policy-card">
               <div class="section-head">
-                <div><span class="integration-section-label">NOTIFICATION POLICY</span><h2>通知策略</h2><p class="muted">统一查看业务提醒配置，修改时一次保存全部策略。</p></div>
+                <div><span class="integration-section-label">通知策略</span><h2>通知策略</h2><p class="muted">统一查看业务提醒配置，修改时一次保存全部策略。</p></div>
                 <div class="actions"><span class="tag" :class="integrationHealth.notification === 'app' ? 'success' : 'warning'">{{ notificationHealthLabel(integrationHealth.notification) }}</span><button class="secondary" type="button" :disabled="worklogReminderRunning" @click="runWorklogFillReminder">{{ worklogReminderRunning ? '发送中…' : '立即发送一次' }}</button><button class="secondary" type="button" @click="openIntegrationPolicyEditor">修改</button></div>
               </div>
               <div class="integration-policy-groups">
@@ -11676,7 +13565,7 @@ onMounted(() => {
             </section>
             <div v-if="integrationPolicyEditOpen" class="modal-backdrop" @click.self="closeIntegrationPolicyEditor">
               <section class="modal-card integration-policy-edit-modal" role="dialog" aria-modal="true" aria-labelledby="integration-policy-edit-title">
-                <div class="modal-head"><div><div class="eyebrow">NOTIFICATION POLICY</div><h2 id="integration-policy-edit-title">修改通知策略</h2><p class="muted">所有策略将在点击“统一保存”后一次生效。</p></div><button class="modal-close" type="button" aria-label="关闭通知策略编辑" :disabled="integrationPolicyBatchSaving" @click="closeIntegrationPolicyEditor">×</button></div>
+                <div class="modal-head"><div><div class="eyebrow">通知策略</div><h2 id="integration-policy-edit-title">修改通知策略</h2><p class="muted">所有策略将在点击“统一保存”后一次生效。</p></div><button class="modal-close" type="button" aria-label="关闭通知策略编辑" :disabled="integrationPolicyBatchSaving" @click="closeIntegrationPolicyEditor">×</button></div>
                 <div class="integration-policy-edit-list">
                   <section v-for="group in integrationPolicyGroups" :key="`edit-${group.key}`" class="integration-policy-edit-group">
                     <div class="integration-policy-group-head"><div><strong>{{ group.label }}</strong><span>{{ group.description }}</span></div></div>
@@ -11700,9 +13589,9 @@ onMounted(() => {
             <section v-if="worklogReminderPolicy" class="card worklog-reminder-card">
               <div class="section-head worklog-reminder-head">
                 <div>
-                  <span class="integration-section-label">WORKLOG FILL REMINDER</span>
+                  <span class="integration-section-label">工时填报提醒</span>
                   <h2>工时填报提醒</h2>
-                  <p class="muted">每个工作日按设定时刻提醒成员填报工时，已填报的人自动跳过。</p>
+              <p class="muted">每个国家法定工作日按设定时刻提醒成员填报工时，已填报的人自动跳过。</p>
                 </div>
                 <div class="worklog-reminder-head-actions">
                   <button
@@ -11718,7 +13607,7 @@ onMounted(() => {
               </div>
               <div class="worklog-reminder-body">
                 <div class="reminder-block">
-                  <div class="reminder-block-head"><strong>提醒时刻</strong><span>周一至周五生效，节假日照常发送</span></div>
+                  <div class="reminder-block-head"><strong>提醒时刻</strong><span>按国家法定工作日生效，调休上班日会提醒，法定假日不提醒</span></div>
                   <div class="reminder-time-chips">
                     <span v-for="(slot, index) in activeReminderTimes" :key="slot" class="reminder-time-chip">{{ slot }}<button v-if="worklogReminderEditing" type="button" :aria-label="`删除 ${slot}`" @click="removeReminderTime(index)">×</button></span>
                     <span v-if="!activeReminderTimes.length" class="reminder-placeholder">尚未设置提醒时刻</span>
@@ -11780,9 +13669,9 @@ onMounted(() => {
             <section v-if="t1Reminder.policy" class="card worklog-reminder-card">
               <div class="section-head worklog-reminder-head">
                 <div>
-                  <span class="integration-section-label">WORKLOG FILL REMINDER T-1</span>
+                  <span class="integration-section-label">工时补填提醒</span>
                   <h2>工时补填提醒（T-1）</h2>
-                  <p class="muted">每个工作日按设定时刻检查上一个工作日漏填的工时，提醒成员当天补填。</p>
+                  <p class="muted">每个国家法定工作日按设定时刻检查上一个国家工作日漏填的工时，提醒成员当天补填。</p>
                 </div>
                 <div class="worklog-reminder-head-actions">
                   <button
@@ -11798,7 +13687,7 @@ onMounted(() => {
               </div>
               <div class="worklog-reminder-body">
                 <div class="reminder-block">
-                  <div class="reminder-block-head"><strong>提醒时刻</strong><span>周一至周五生效，检查的是上一个工作日</span></div>
+                  <div class="reminder-block-head"><strong>提醒时刻</strong><span>按国家法定工作日生效，检查的是上一个国家工作日</span></div>
                   <div class="reminder-time-chips">
                     <span v-for="(slot, index) in t1Reminder.activeTimes" :key="slot" class="reminder-time-chip">{{ slot }}<button v-if="t1Reminder.editing" type="button" :aria-label="`删除 ${slot}`" @click="t1Reminder.removeTime(index)">×</button></span>
                     <span v-if="!t1Reminder.activeTimes.length" class="reminder-placeholder">尚未设置提醒时刻</span>
@@ -11860,7 +13749,7 @@ onMounted(() => {
           </template>
           <template v-else>
           <section class="card integration-notification-card">
-            <div class="section-head"><div><span class="integration-section-label">MESSAGE LOG</span><h2>通知中心</h2><p class="muted">统一查看工时审批、合同阶段、预算和收付款通知。</p></div><span class="tag teal">共 {{ integrationOverview?.notification_total ?? 0 }} 条</span></div>
+            <div class="section-head"><div><span class="integration-section-label">消息记录</span><h2>通知中心</h2><p class="muted">统一查看工时审批、合同阶段、预算和收付款通知。</p></div><span class="tag teal">共 {{ integrationOverview?.notification_total ?? 0 }} 条</span></div>
             <div class="integration-notification-summary"><div><span>记录总数</span><strong>{{ integrationOverview?.notification_total ?? 0 }}</strong></div><div><span>当前页</span><strong>{{ integrationNotificationRows.length }}</strong></div><div><span>待重试</span><strong :class="(integrationOverview?.summary.retry_count || 0) ? 'negative-number' : 'positive-number'">{{ integrationOverview?.summary.retry_count ?? 0 }}</strong></div></div>
              <div class="integration-filters"><label>通知类型<select v-model="integrationNotificationType"><option value="">全部类型</option><option v-for="type in integrationNotificationTypes" :key="type" :value="type">{{ integrationNotificationTypeLabel(type) }}</option></select></label><label>发送状态<select v-model="integrationNotificationStatus"><option value="">全部状态</option><option value="SENT">发送成功</option><option value="FAILED">发送失败</option><option value="PENDING">发送中</option><option value="SKIPPED">策略关闭</option></select></label><div class="integration-filter-actions"><button class="primary" @click="queryIntegrationNotifications">查询</button><button class="secondary" @click="integrationNotificationType = ''; integrationNotificationStatus = ''; queryIntegrationNotifications()">重置筛选</button></div></div>
             <div v-if="integrationOverviewLoading" class="empty">正在读取通知记录…</div>
@@ -11876,13 +13765,13 @@ onMounted(() => {
         >
           <div class="page-head">
             <div>
-              <div class="eyebrow">ADMIN / CONFIGURATION</div>
+              <div class="eyebrow">系统管理 / 基础配置</div>
               <h1>基础配置</h1>
               <p class="muted">
                 维护项目和工时表单中的下拉选项；选项值用于系统存储，显示名称可随时调整。
               </p>
             </div>
-            <button class="primary" @click="openConfigurationForm">
+            <button v-if="canAction('configuration', 'CREATE')" class="primary" @click="openConfigurationForm">
               ＋ 新增选项
             </button>
           </div>
@@ -11947,11 +13836,13 @@ onMounted(() => {
                   >
                   <div class="table-actions">
                     <button
+                      v-if="canAction('configuration', 'EDIT')"
                       class="text-button"
                       @click="editConfigurationOption(option)"
                     >
                       编辑</button
                     ><button
+                      v-if="canAction('configuration', 'DELETE')"
                       class="text-button danger-button"
                       :disabled="option.is_builtin"
                       @click="deleteConfigurationOption(option)"
@@ -11962,6 +13853,91 @@ onMounted(() => {
                 </div>
               </div>
             </section>
+          </section>
+          <section class="card work-calendar-card">
+            <div class="section-head">
+              <div>
+                <h2>工作日历</h2>
+                <p class="muted">
+                  维护法定假日和调休工作日；未配置日期默认按周一至周五为工作日、周六周日为非工作日。
+                </p>
+              </div>
+              <div class="work-calendar-toolbar">
+                <label
+                  >年份<input
+                    v-model.number="workCalendarYear"
+                    type="number"
+                    min="2000"
+                    max="2100"
+                    @change="refreshAdminConfiguration"
+                /></label>
+                <button class="secondary" @click="refreshAdminConfiguration">
+                  查询
+                </button>
+                <button
+                  v-if="canAction('configuration', 'CREATE')"
+                  class="primary"
+                  @click="openWorkCalendarForm()"
+                >
+                  ＋ 新增日期
+                </button>
+              </div>
+            </div>
+            <div class="work-calendar-summary">
+              <span class="tag teal">覆盖 {{ adminWorkCalendarItems.length }} 天</span>
+              <span class="tag success">调休工作日 {{ workCalendarStats.workday }} 天</span>
+              <span class="tag neutral">法定假日 {{ workCalendarStats.holiday }} 天</span>
+              <small>工时天数、填报提醒和 T-1 补填提醒均使用该日历。</small>
+            </div>
+            <div v-if="workCalendarLoading" class="empty">正在读取工作日历…</div>
+            <div v-else-if="!sortedWorkCalendarItems.length" class="empty">
+              当前年份暂无覆盖项，将完全按默认周末规则计算。
+            </div>
+            <div v-else class="table-wrap compact-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>日期</th>
+                    <th>类型</th>
+                    <th>名称</th>
+                    <th>来源</th>
+                    <th>属性</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in sortedWorkCalendarItems" :key="item.calendar_date">
+                    <td><strong>{{ item.calendar_date }}</strong></td>
+                    <td>
+                      <span class="tag" :class="item.day_type === 'WORKDAY' ? 'success' : 'neutral'">
+                        {{ workCalendarTypeLabel(item.day_type) }}
+                      </span>
+                    </td>
+                    <td>{{ item.name }}</td>
+                    <td>{{ item.source || '手工维护' }}</td>
+                    <td>{{ item.is_builtin ? '内置官方' : '自定义' }}</td>
+                    <td>
+                      <div class="table-actions">
+                        <button
+                          v-if="canAction('configuration', 'EDIT')"
+                          class="text-button"
+                          @click="openWorkCalendarForm(item)"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          v-if="canAction('configuration', 'DELETE') && !item.is_builtin"
+                          class="text-button danger-button"
+                          @click="deleteWorkCalendarDay(item)"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </section>
           <section class="card classification-tree-card">
             <div class="section-head">
@@ -11988,6 +13964,7 @@ onMounted(() => {
                 >{{ visibleClassificationTree.length }} 个大类</span
               >
               <button
+                v-if="canAction('configuration', 'CREATE')"
                 class="secondary"
                 @click="openClassificationForm(classificationTreeKey, null)"
               >
@@ -12031,6 +14008,7 @@ onMounted(() => {
                   >
                   <div class="table-actions">
                     <button
+                      v-if="canAction('configuration', 'CREATE')"
                       class="text-button"
                       @click="
                         openClassificationForm(classificationTreeKey, node)
@@ -12038,16 +14016,19 @@ onMounted(() => {
                     >
                       加小类</button
                     ><button
+                      v-if="canAction('configuration', 'EDIT')"
                       class="text-button"
                       @click="editClassificationNode(classificationTreeKey, node)"
                     >
                       编辑</button
                     ><button
+                      v-if="canAction('configuration', 'EDIT')"
                       class="text-button"
                       @click="toggleClassificationNode(node)"
                     >
                       {{ node.is_active ? "停用" : "启用" }}</button
                     ><button
+                      v-if="canAction('configuration', 'DELETE')"
                       class="text-button danger-button"
                       @click="deleteClassificationNode(node)"
                     >
@@ -12079,16 +14060,19 @@ onMounted(() => {
                     >
                     <div class="table-actions">
                       <button
+                        v-if="canAction('configuration', 'EDIT')"
                         class="text-button"
                         @click="editClassificationNode(classificationTreeKey, child)"
                       >
                         编辑</button
                       ><button
+                        v-if="canAction('configuration', 'EDIT')"
                         class="text-button"
                         @click="toggleClassificationNode(child)"
                       >
                         {{ child.is_active ? "停用" : "启用" }}</button
                       ><button
+                        v-if="canAction('configuration', 'DELETE')"
                         class="text-button danger-button"
                         @click="deleteClassificationNode(child)"
                       >
@@ -12096,6 +14080,145 @@ onMounted(() => {
                       </button>
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section class="card org-approval-config-card">
+            <div class="section-head">
+              <div>
+                <h2>组织审批配置</h2>
+                <p class="muted">
+                  非项目工时按部门负责人审批；审批人是本人时，自动转直属上级。
+                </p>
+              </div>
+              <span class="tag teal">工时审批规则</span>
+            </div>
+            <div v-if="orgApprovalLoading" class="empty">
+              正在读取组织审批配置…
+            </div>
+            <div v-else class="org-approval-grid">
+              <div class="org-approval-market">
+                <div>
+                  <strong>市场部门</strong>
+                  <small>观摩推广工时、市场营销工时会由该部门负责人审批</small>
+                </div>
+                <select v-model.number="orgApprovalConfig.market_department_id">
+                  <option :value="0">未设置</option>
+                  <option
+                    v-for="department in orgApprovalConfig.departments"
+                    :key="department.id"
+                    :value="department.id"
+                  >
+                    {{ department.path }}
+                  </option>
+                </select>
+                <button v-if="canAction('configuration', 'EDIT')" class="secondary" @click="saveMarketDepartment">
+                  保存市场部门
+                </button>
+              </div>
+              <div class="org-approval-pane">
+                <div class="mini-filter-bar">
+                  <strong>部门负责人</strong>
+                  <input
+                    v-model.trim="orgApprovalDepartmentKeyword"
+                    type="search"
+                    placeholder="筛选部门/负责人"
+                  />
+                </div>
+                <div class="table-wrap compact-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>部门</th>
+                        <th>负责人</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="item in filteredOrgApprovalDepartments"
+                        :key="item.id"
+                      >
+                        <td>
+                          <strong>{{ item.name }}</strong>
+                          <small>{{ item.path }}</small>
+                        </td>
+                        <td>
+                          <select v-model.number="item.manager_user_id">
+                            <option :value="null">未设置</option>
+                            <option
+                              v-for="person in orgApprovalPersonOptions"
+                              :key="person.id"
+                              :value="person.id"
+                            >
+                              {{ person.name }} · {{ person.department_name || "未分配部门" }}
+                            </option>
+                          </select>
+                        </td>
+                        <td>
+                          <button
+                            v-if="canAction('configuration', 'EDIT')"
+                            class="text-button"
+                            @click="saveDepartmentManager(item)"
+                          >
+                            保存
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="org-approval-pane">
+                <div class="mini-filter-bar">
+                  <strong>人员直属上级</strong>
+                  <input
+                    v-model.trim="orgApprovalUserKeyword"
+                    type="search"
+                    placeholder="筛选人员/部门/上级"
+                  />
+                </div>
+                <div class="table-wrap compact-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>人员</th>
+                        <th>直属上级</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="item in filteredOrgApprovalUsers" :key="item.id">
+                        <td>
+                          <strong>{{ item.name }}</strong>
+                          <small>{{ item.department_path }}</small>
+                        </td>
+                        <td>
+                          <select v-model.number="item.supervisor_user_id">
+                            <option :value="null">未设置</option>
+                            <option
+                              v-for="person in orgApprovalPersonOptions.filter((person) => person.id !== item.id)"
+                              :key="person.id"
+                              :value="person.id"
+                            >
+                              {{ person.name }} · {{ person.department_name || "未分配部门" }}
+                            </option>
+                          </select>
+                          <small v-if="item.supervisor_name" class="muted">飞书同步：{{ item.supervisor_name }}</small>
+                        </td>
+                        <td>
+                          <button
+                            v-if="canAction('configuration', 'EDIT')"
+                            class="text-button"
+                            @click="saveUserSupervisor(item)"
+                          >
+                            保存
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -12109,7 +14232,7 @@ onMounted(() => {
             >
               <div class="modal-head">
                 <div>
-                  <div class="eyebrow">CONFIGURATION OPTION</div>
+                  <div class="eyebrow">配置选项</div>
                   <h2 id="configuration-modal-title">
                     {{ configurationEditingId ? "编辑配置项" : "新增配置项" }}
                   </h2>
@@ -12141,7 +14264,7 @@ onMounted(() => {
                   >存储值<input
                     v-model.trim="configurationForm.value"
                     :disabled="Boolean(configurationEditingId)"
-                    placeholder="如 CUSTOMER_PROJECT" /></label
+                    placeholder="例如：客户项目" /></label
                 ><label
                   >显示名称<input
                     v-model.trim="configurationForm.label"
@@ -12168,6 +14291,58 @@ onMounted(() => {
               </div>
             </section>
           </div>
+          <div v-if="workCalendarFormOpen" class="modal-backdrop">
+            <section
+              class="modal-card configuration-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="work-calendar-modal-title"
+            >
+              <div class="modal-head">
+                <div>
+                  <div class="eyebrow">基础配置 / 工作日历</div>
+                  <h2 id="work-calendar-modal-title">维护工作日历</h2>
+                  <p class="muted">
+                    调休工作日会计入工时并触发提醒；法定假日不计入工时且不提醒。
+                  </p>
+                </div>
+                <button
+                  class="modal-close"
+                  aria-label="关闭弹窗"
+                  @click="workCalendarFormOpen = false"
+                >
+                  ×
+                </button>
+              </div>
+              <div class="form-grid">
+                <label
+                  >日期<input
+                    v-model="workCalendarForm.calendar_date"
+                    type="date" /></label
+                ><label
+                  >类型<select v-model="workCalendarForm.day_type">
+                    <option value="WORKDAY">调休工作日</option>
+                    <option value="HOLIDAY">法定假日</option>
+                  </select></label
+                ><label
+                  >名称<input
+                    v-model.trim="workCalendarForm.name"
+                    placeholder="如 春节 / 国庆调休上班" /></label
+                ><label
+                  >来源/备注<input
+                    v-model.trim="workCalendarForm.source"
+                    placeholder="如 国务院办公厅通知 / 公司临时调整" /></label
+                >
+              </div>
+              <div class="form-footer">
+                <button class="secondary" @click="workCalendarFormOpen = false">
+                  取消</button
+                ><button class="primary" @click="saveWorkCalendarDay">
+                  保存工作日历
+                </button>
+              </div>
+            </section>
+          </div>
           <div v-if="classificationFormOpen" class="modal-backdrop">
             <section
               class="modal-card configuration-modal"
@@ -12177,7 +14352,7 @@ onMounted(() => {
             >
               <div class="modal-head">
                 <div>
-                  <div class="eyebrow">CLASSIFICATION NODE</div>
+                  <div class="eyebrow">分类节点</div>
                   <h2 id="classification-modal-title">
                     {{
                       classificationEditingId
@@ -12220,7 +14395,7 @@ onMounted(() => {
                   >分类编码<input
                     v-model.trim="classificationForm.value"
                     :disabled="Boolean(classificationEditingId)"
-                    placeholder="如 BUSINESS_PROJECT" /></label
+                    placeholder="例如：经营项目" /></label
                 ><label
                   >显示名称<input
                     v-model.trim="classificationForm.label"
@@ -12252,12 +14427,205 @@ onMounted(() => {
           </div>
         </section>
         <section
+          v-else-if="page === 'monthlyWorklogLedger'"
+          class="page-view admin-worklogs-page"
+        >
+          <div class="page-head">
+            <div>
+              <div class="eyebrow">工时管理 / 月度台账</div>
+              <h1>工时月度台账</h1>
+              <p class="muted">
+                默认汇总本月每个项目的工时，可导出汇总，也可以点击项目查看当月明细。
+              </p>
+            </div>
+            <div class="actions">
+              <button class="primary" @click="queryMonthlyLedger">查询</button>
+              <button
+                v-if="canAction('worklogs', 'EXPORT')"
+                class="secondary"
+                @click="exportMonthlyLedgerSummary"
+              >
+                导出汇总
+              </button>
+            </div>
+          </div>
+          <section class="card admin-worklog-filter-card">
+            <div class="admin-worklog-filters">
+              <label>月份<input v-model="monthlyLedgerMonth" type="month" /></label>
+              <label class="admin-project-field">项目<input v-model.trim="monthlyLedgerProjectKeyword" placeholder="项目名称或编号" /></label>
+              <label>项目类型<select v-model="monthlyLedgerProjectType"><option value="">全部类型</option><option v-for="option in projectCategoryOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
+              <label>项目状态<select v-model="monthlyLedgerProjectStatus"><option value="">全部状态</option><option v-for="option in activeConfigOptions('project_status')" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
+              <label>所属部门<select v-model="monthlyLedgerDepartment"><option value="">全部部门</option><option v-for="name in monthlyLedgerDepartmentOptions" :key="name" :value="name">{{ name }}</option></select></label>
+              <label>项目负责人<select v-model.number="monthlyLedgerOwnerId"><option :value="0">全部负责人</option><option v-for="person in demoUsers" :key="person.id" :value="person.id">{{ person.name }} · {{ person.department_name }}</option></select></label>
+            </div>
+            <div class="admin-summary-strip">
+              <span>{{ monthlyLedgerMonth || '本月' }}</span>
+              <span>项目 {{ monthlyLedgerSummary.total_projects || 0 }} 个</span>
+              <span>合计 {{ monthlyLedgerSummary.total_days || 0 }} 天</span>
+              <span>已通过 {{ monthlyLedgerSummary.approved_days || 0 }} 天</span>
+              <span>审批中 {{ monthlyLedgerSummary.pending_days || 0 }} 天</span>
+              <span>已驳回 {{ monthlyLedgerSummary.rejected_days || 0 }} 天</span>
+            </div>
+          </section>
+          <section class="card admin-worklog-list-card">
+            <div class="section-head">
+              <div>
+                <h2>项目月度工时汇总</h2>
+                <p class="muted">按项目汇总月度工时；点击项目名称查看该月明细。</p>
+              </div>
+              <span class="tag teal">总计 {{ monthlyLedgerSummary.total_days || 0 }} 天</span>
+            </div>
+            <div v-if="monthlyLedgerLoading" class="empty">正在查询月度台账…</div>
+            <div v-else-if="!monthlyLedgerItems.length" class="empty">
+              <h2>暂无项目工时</h2>
+              <p>当前月份或筛选条件下没有项目类工时。</p>
+            </div>
+            <div v-else class="table-wrap">
+              <table class="admin-worklog-table">
+                <thead>
+                  <tr>
+                    <th>项目</th>
+                    <th>类型 / 状态</th>
+                    <th>所属部门</th>
+                    <th>负责人</th>
+                    <th>填报人数</th>
+                    <th>已通过</th>
+                    <th>审批中</th>
+                    <th>已驳回</th>
+                    <th>合计</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in monthlyLedgerItems" :key="item.project_id">
+                    <td class="admin-worklog-summary">
+                      <button class="detail-link" @click="openMonthlyLedgerDetails(item)">{{ item.project_name }}</button>
+                      <span>{{ item.project_code }}</span>
+                    </td>
+                    <td><strong>{{ item.project_type_name }}</strong><small>{{ item.project_status_name }}</small></td>
+                    <td>{{ item.department_name }}</td>
+                    <td>{{ item.owner_name || '未配置' }}</td>
+                    <td>{{ item.user_count }} 人</td>
+                    <td class="admin-worklog-quantity"><strong>{{ item.approved_days }}</strong><small>天</small></td>
+                    <td class="admin-worklog-quantity"><strong>{{ item.pending_days }}</strong><small>天</small></td>
+                    <td class="admin-worklog-quantity"><strong>{{ item.rejected_days }}</strong><small>天</small></td>
+                    <td class="admin-worklog-quantity"><strong>{{ item.total_days }}</strong><small>天</small></td>
+                    <td>
+                      <div class="table-actions">
+                        <button class="text-button" @click="openMonthlyLedgerDetails(item)">查看明细</button>
+                        <button class="text-button" @click="openMonthlyLedgerPrint(item)">打印</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section v-if="monthlyLedgerDetails || monthlyLedgerDetailLoading" class="card admin-worklog-list-card">
+            <div class="section-head">
+              <div>
+                <h2>{{ monthlyLedgerDetails?.project_name || '项目工时明细' }}</h2>
+                <p class="muted">{{ monthlyLedgerDetails?.month || monthlyLedgerMonth }} 月工时明细 · 共 {{ monthlyLedgerDetails?.items.length || 0 }} 条</p>
+              </div>
+              <div class="actions">
+                <button class="secondary" @click="monthlyLedgerDetails = null">返回汇总</button>
+                <button v-if="monthlyLedgerDetails && canAction('worklogs', 'EXPORT')" class="secondary" @click="exportMonthlyLedgerDetails">导出明细</button>
+              </div>
+            </div>
+            <div v-if="monthlyLedgerDetailLoading" class="empty">正在加载项目工时明细…</div>
+            <div v-else-if="monthlyLedgerDetails && !monthlyLedgerDetails.items.length" class="empty">该项目本月暂无工时明细。</div>
+            <div v-else-if="monthlyLedgerDetails" class="table-wrap">
+              <table class="admin-worklog-table">
+                <thead>
+                  <tr>
+                    <th>填报 / 工时日期</th>
+                    <th>人员 / 部门</th>
+                    <th>工作内容</th>
+                    <th>阶段</th>
+                    <th>工时</th>
+                    <th>审批人</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in monthlyLedgerDetails.items" :key="item.id">
+                    <td class="admin-worklog-date"><strong>{{ item.fill_date || item.start_date }}</strong><small>{{ item.start_date }}<small v-if="item.end_date !== item.start_date"> 至 {{ item.end_date }}</small></small></td>
+                    <td><strong>{{ item.user_name_snapshot }}</strong><small>{{ item.user_department_name }}</small></td>
+                    <td class="admin-worklog-summary"><strong>{{ workTypeLabel(item.work_type) }}</strong><span>{{ item.description }}</span></td>
+                    <td>{{ item.stage }}<small>{{ workStatusLabel(item.work_status) }}</small></td>
+                    <td class="admin-worklog-quantity"><strong>{{ item.quantity }}</strong><small>天</small></td>
+                    <td>{{ item.approver_name_snapshot || '未配置' }}</td>
+                    <td><span class="tag" :class="statusClass(item.status)">{{ statusLabel(item.status) }}</span><small v-if="item.serial_no">{{ item.serial_no }}</small></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <div v-if="monthlyLedgerPrintOpen" class="modal-backdrop monthly-print-backdrop">
+            <section class="modal-card monthly-print-modal" role="dialog" aria-modal="true">
+              <div class="modal-head monthly-print-toolbar">
+                <div>
+                  <span class="eyebrow">月度台账 / 打印预览</span>
+                  <h2>项目月度工时汇总表</h2>
+                </div>
+                <div class="actions">
+                  <button class="secondary" @click="closeMonthlyLedgerPrint">关闭</button>
+                  <button class="primary" :disabled="monthlyLedgerPrintLoading || !monthlyLedgerPrintData" @click="printMonthlyLedger">打印</button>
+                </div>
+              </div>
+              <div v-if="monthlyLedgerPrintLoading" class="empty">正在生成打印表…</div>
+              <div v-else-if="monthlyLedgerPrintData" class="monthly-print-paper">
+                <div class="monthly-print-title">
+                  <h1>项目月度工时汇总表</h1>
+                  <p>仅统计已审批工时，按人员汇总。</p>
+                </div>
+                <div class="monthly-print-info">
+                  <div><span>项目名称</span><strong>{{ monthlyLedgerPrintData.project_name }}</strong></div>
+                  <div><span>年月</span><strong>{{ monthLabelText(monthlyLedgerPrintData.month) }}</strong></div>
+                  <div><span>项目负责人</span><strong>{{ monthlyLedgerPrintData.project_owner_name || '未配置' }}</strong></div>
+                  <div><span>工时合计</span><strong>{{ monthlyLedgerPrintData.total_quantity }} 天</strong></div>
+                </div>
+                <table class="monthly-print-table">
+                  <thead>
+                    <tr>
+                      <th>序号</th>
+                      <th>人员</th>
+                      <th>工时合计</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in monthlyLedgerPrintData.rows" :key="row.user_id">
+                      <td>{{ row.index }}</td>
+                      <td>{{ row.user_name }}</td>
+                      <td>{{ row.quantity }} 天</td>
+                    </tr>
+                    <tr v-if="!monthlyLedgerPrintData.rows.length">
+                      <td colspan="3">当前项目本月暂无已审批工时。</td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colspan="2">合计</td>
+                      <td>{{ monthlyLedgerPrintData.total_quantity }} 天</td>
+                    </tr>
+                  </tfoot>
+                </table>
+                <div class="monthly-print-footer">
+                  <span>综合项目管理系统</span>
+                  <span>打印人：{{ monthlyLedgerPrintData.printed_by_name }}</span>
+                  <span>生成时间：{{ formatDateTime(monthlyLedgerPrintData.printed_at) }}</span>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+        <section
           v-else-if="page === 'adminWorklogs'"
           class="page-view admin-worklogs-page"
         >
           <div class="page-head">
             <div>
-              <div class="eyebrow">ADMIN / WORKLOGS</div>
+              <div class="eyebrow">系统管理 / 工时台账</div>
               <h1>工时管理</h1>
               <p class="muted">
                 查看和维护全体人员工时，修改不会重置原审批状态。
@@ -12418,11 +14786,13 @@ onMounted(() => {
                     <td>
                       <div class="table-actions">
                         <button
+                          v-if="canAction('worklogs', 'EDIT')"
                           class="text-button"
                           @click="openAdminWorklogEditor(item)"
                         >
                           编辑</button
                         ><button
+                          v-if="canAction('worklogs', 'DELETE')"
                           class="text-button danger-button"
                           @click="deleteAdminWorklog(item)"
                         >
@@ -12465,7 +14835,7 @@ onMounted(() => {
             >
               <div class="modal-head">
                 <div>
-                  <div class="eyebrow">ADMIN WORKLOG</div>
+                  <div class="eyebrow">工时台账</div>
                   <h2 id="admin-worklog-modal-title">编辑工时</h2>
                   <p class="muted">
                     只修改工时内容，当前审批状态和审批记录保持不变。
@@ -12613,7 +14983,7 @@ onMounted(() => {
       <section class="modal-card integration-sync-detail-modal" role="dialog" aria-modal="true" aria-labelledby="integration-sync-detail-title">
         <div class="modal-head">
           <div>
-            <div class="eyebrow">ORGANIZATION SYNC LOG</div>
+            <div class="eyebrow">组织同步记录</div>
             <h2 id="integration-sync-detail-title">组织同步详情</h2>
             <p class="muted">{{ formatDateTime(selectedIntegrationSync.created_at) }}</p>
           </div>
@@ -12642,7 +15012,7 @@ onMounted(() => {
       <section class="modal-card notification-detail-modal" role="dialog" aria-modal="true" aria-labelledby="notification-detail-title">
         <div class="modal-head">
           <div>
-            <div class="eyebrow">NOTIFICATION CENTER</div>
+            <div class="eyebrow">通知中心</div>
             <h2 id="notification-detail-title">{{ integrationNotificationTypeLabel(selectedIntegrationNotification.notification_type) }}</h2>
             <p class="muted">{{ formatDateTime(selectedIntegrationNotification.created_at) }}</p>
           </div>
@@ -12673,7 +15043,7 @@ onMounted(() => {
       <section class="modal-card board-aging-detail-modal" role="dialog" aria-modal="true" aria-labelledby="board-aging-detail-title">
         <div class="modal-head">
           <div>
-            <div class="eyebrow">AGING BREAKDOWN</div>
+            <div class="eyebrow">账龄明细</div>
             <h2 id="board-aging-detail-title">{{ selectedBoardAgingBucket.title }} · {{ selectedBoardAgingBucket.bucket.name }}</h2>
             <p class="muted">合计 {{ moneyText(selectedBoardAgingBucket.bucket.amount) }}，点击项目阶段可进入项目详情</p>
           </div>
@@ -12701,7 +15071,7 @@ onMounted(() => {
       >
         <div class="modal-head">
           <div class="attachment-preview-title">
-            <div class="eyebrow">CONTRACT ATTACHMENT</div>
+            <div class="eyebrow">合同附件</div>
             <h2 id="attachment-preview-title">{{ attachmentPreviewItem?.file_name }}</h2>
             <p class="muted">{{ attachmentPreviewItem ? attachmentKindLabel(attachmentPreviewItem.preview_kind) : "附件" }}预览</p>
           </div>
@@ -12735,7 +15105,7 @@ onMounted(() => {
       <section class="modal-card import-modal" role="dialog" aria-modal="true" aria-labelledby="import-modal-title">
         <div class="modal-head">
           <div>
-            <div class="eyebrow">MASTER DATA IMPORT</div>
+            <div class="eyebrow">基础数据导入</div>
             <h2 id="import-modal-title">导入{{ importResourceLabel(importResource) }}</h2>
             <p class="muted">先下载模板并校验，确认无误后一次性写入系统。</p>
           </div>
@@ -12744,7 +15114,7 @@ onMounted(() => {
         <div class="import-template-links">
           <div>
             <strong>只填写必要信息</strong>
-            <span class="muted">支持 Excel（.xlsx）和 CSV（.csv），单文件最大 5MB。</span>
+            <span class="muted">支持电子表格（.xlsx）和逗号分隔文本（.csv），单文件最大 5MB。</span>
           </div>
           <button type="button" class="secondary" @click="downloadImportTemplate(importResource)">下载{{ importResourceLabel(importResource) }}模板</button>
         </div>
