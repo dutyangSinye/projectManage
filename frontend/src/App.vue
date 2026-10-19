@@ -1594,6 +1594,12 @@ const orgApprovalDepartmentKeyword = ref("");
 const demoUsers = ref<DemoUser[]>([]);
 const departments = ref<OrgDepartment[]>([]);
 const worklogs = ref<Worklog[]>([]);
+const lastCreatedWorklog = computed(() =>
+  worklogs.value.reduce<Worklog | null>(
+    (latest, item) => (!latest || item.id > latest.id ? item : latest),
+    null,
+  ),
+);
 const adminWorklogs = ref<AdminWorklog[]>([]);
 const adminWorklogTotal = ref(0);
 const adminPage = ref(1);
@@ -5500,6 +5506,10 @@ const monthLabelText = (value: string | null | undefined) => {
   const match = value.match(/^(\d{4})-(\d{2})$/);
   return match ? `${match[1]}年${Number(match[2])}月` : value;
 };
+const worklogHoursText = (days: number | null | undefined) => {
+  const hours = Math.round(Number(days || 0) * 8 * 100) / 100;
+  return `${hours.toLocaleString("zh-CN", { maximumFractionDigits: 2 })} 小时`;
+};
 const openMonthlyLedgerPrint = async (item: WorklogMonthlyLedgerItem) => {
   monthlyLedgerPrintOpen.value = true;
   monthlyLedgerPrintLoading.value = true;
@@ -5976,6 +5986,14 @@ const NEW_WORK_TYPE_ORDER = [
   "OTHER_WORK",
 ];
 const LEGACY_WORK_TYPES = ["PROJECT", "MANAGEMENT", "OTHER", "TECH_SERVICE", "OBSERVE_PROMOTE"];
+const reusableWorkType = (value: string, projectType = "") =>
+  ({
+    PROJECT: projectType === "BUSINESS_PROJECT" ? "TECH_SERVICE_WORK" : "RND_PROJECT_WORK",
+    MANAGEMENT: "MANAGEMENT_WORK",
+    OTHER: "OTHER_WORK",
+    TECH_SERVICE: "TECH_SERVICE_WORK",
+    OBSERVE_PROMOTE: "DEMO_PROMOTION_WORK",
+  })[value] || value;
 const isProjectWorkType = (value: string) =>
   value === "PROJECT" || Object.prototype.hasOwnProperty.call(PROJECT_WORK_TYPE_CATEGORY, value);
 const requiredProjectCategoryForWorkType = (value: string) =>
@@ -8164,6 +8182,61 @@ const openEditor = (item?: Worklog | null, presetDate = applicationDate()) => {
   go("editor");
 };
 
+const reuseLastWorklog = () => {
+  const last = lastCreatedWorklog.value;
+  if (!last) return;
+
+  const sourceProject = last.project_id
+    ? projects.value.find((item) => item.id === last.project_id) || null
+    : null;
+  const workType = reusableWorkType(last.work_type, sourceProject?.project_type);
+  const workTypeAvailable = workTypeOptionsForEditor.value.some(
+    (option) => option.value === workType,
+  );
+  if (!workTypeAvailable) {
+    successMessage.value = "";
+    errorMessage.value = "上次工时类型当前不可用，请手动选择工时类型";
+    return;
+  }
+
+  const project = isProjectWorkType(workType)
+    ? fillableProjects.value.find((item) => item.id === last.project_id) || null
+    : null;
+  const workStatus = activeConfigOptions("work_status").some(
+    (option) => option.value === last.work_status,
+  )
+    ? last.work_status
+    : activeConfigOptions("work_status")[0]?.value || "LOCAL";
+  const stage = activeConfigOptions("project_stage").some(
+    (option) => option.value === last.stage,
+  )
+    ? last.stage
+    : activeConfigOptions("project_stage")[0]?.value || "开发";
+
+  Object.assign(form, {
+    project_id: project?.id || 0,
+    project_type:
+      project?.project_type ||
+      requiredProjectCategoryForWorkType(workType) ||
+      projectCategoryOptions.value[0]?.value ||
+      "RND_PROJECT",
+    stage,
+    work_type: workType,
+    work_status: workStatus,
+    description: last.description,
+  });
+  projectQuery.value = "";
+  projectPickerOpen.value = false;
+
+  if (isProjectWorkType(workType) && !project) {
+    successMessage.value = "";
+    errorMessage.value = "已带入上次工时内容，但原项目当前不可填报，请重新选择项目";
+    return;
+  }
+  errorMessage.value = "";
+  successMessage.value = "已带入上次工时内容，当前填报日期保持不变";
+};
+
 const toggleProjectPicker = async () => {
   projectPickerOpen.value = !projectPickerOpen.value;
   if (!projectPickerOpen.value) {
@@ -9849,7 +9922,16 @@ onMounted(() => {
                 先选择工时类型；项目类工时再选择项目名称，非项目类工时只填写事项内容。
               </p>
             </div>
-            <span class="tag teal">工作日天数</span>
+            <div class="actions worklog-editor-head-actions">
+              <button
+                v-if="!editingId"
+                class="secondary worklog-reuse-button"
+                :disabled="!lastCreatedWorklog"
+                title="带入最近创建的一条工时内容"
+                @click="reuseLastWorklog"
+              >带入上次工时</button>
+              <span class="tag teal">工作日天数</span>
+            </div>
           </div>
           <section class="card form-card">
             <div class="mobile-worklog-summary" aria-hidden="true">
@@ -14582,13 +14664,12 @@ onMounted(() => {
               <div v-else-if="monthlyLedgerPrintData" class="monthly-print-paper">
                 <div class="monthly-print-title">
                   <h1>项目月度工时汇总表</h1>
-                  <p>仅统计已审批工时，按人员汇总。</p>
                 </div>
                 <div class="monthly-print-info">
                   <div><span>项目名称</span><strong>{{ monthlyLedgerPrintData.project_name }}</strong></div>
                   <div><span>年月</span><strong>{{ monthLabelText(monthlyLedgerPrintData.month) }}</strong></div>
                   <div><span>项目负责人</span><strong>{{ monthlyLedgerPrintData.project_owner_name || '未配置' }}</strong></div>
-                  <div><span>工时合计</span><strong>{{ monthlyLedgerPrintData.total_quantity }} 天</strong></div>
+                  <div><span>工时合计</span><strong>{{ worklogHoursText(monthlyLedgerPrintData.total_quantity) }}</strong></div>
                 </div>
                 <table class="monthly-print-table">
                   <thead>
@@ -14602,23 +14683,22 @@ onMounted(() => {
                     <tr v-for="row in monthlyLedgerPrintData.rows" :key="row.user_id">
                       <td>{{ row.index }}</td>
                       <td>{{ row.user_name }}</td>
-                      <td>{{ row.quantity }} 天</td>
+                      <td>{{ worklogHoursText(row.quantity) }}</td>
                     </tr>
                     <tr v-if="!monthlyLedgerPrintData.rows.length">
-                      <td colspan="3">当前项目本月暂无已审批工时。</td>
+                      <td colspan="3">当前项目本月暂无工时记录。</td>
                     </tr>
                   </tbody>
                   <tfoot>
                     <tr>
                       <td colspan="2">合计</td>
-                      <td>{{ monthlyLedgerPrintData.total_quantity }} 天</td>
+                      <td>{{ worklogHoursText(monthlyLedgerPrintData.total_quantity) }}</td>
                     </tr>
                   </tfoot>
                 </table>
-                <div class="monthly-print-footer">
-                  <span>综合项目管理系统</span>
-                  <span>打印人：{{ monthlyLedgerPrintData.printed_by_name }}</span>
-                  <span>生成时间：{{ formatDateTime(monthlyLedgerPrintData.printed_at) }}</span>
+                <div class="monthly-print-signatures">
+                  <div><span>项目负责人</span><i aria-hidden="true"></i></div>
+                  <div><span>考勤员</span><i aria-hidden="true"></i></div>
                 </div>
               </div>
             </section>

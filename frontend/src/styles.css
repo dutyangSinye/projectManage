@@ -5926,6 +5926,14 @@ tbody tr:hover td {
 .admin-worklog-modal {
   width: min(860px, 100%);
 }
+.worklog-editor-head-actions {
+  align-items: center;
+  flex-wrap: wrap;
+}
+.worklog-reuse-button {
+  min-height: 40px;
+  white-space: nowrap;
+}
 .monthly-print-modal {
   width: min(980px, 100%);
   max-height: 94vh;
@@ -5950,18 +5958,13 @@ tbody tr:hover td {
   color: #111827;
 }
 .monthly-print-title {
-  margin-bottom: 28px;
+  margin-bottom: 30px;
   text-align: center;
 }
 .monthly-print-title h1 {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 26px;
   letter-spacing: 0.12em;
-}
-.monthly-print-title p {
-  margin: 0;
-  color: #6b7280;
-  font-size: 13px;
 }
 .monthly-print-info {
   display: grid;
@@ -6009,14 +6012,26 @@ tbody tr:hover td {
   background: #f9fafb;
   font-weight: 700;
 }
-.monthly-print-footer {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
+.monthly-print-signatures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 64px;
+  margin-top: 54px;
+  break-inside: avoid;
+}
+.monthly-print-signatures div {
+  display: grid;
+  grid-template-columns: auto minmax(100px, 1fr);
+  align-items: end;
   gap: 12px;
-  margin-top: 24px;
-  color: #6b7280;
-  font-size: 12px;
+  min-height: 32px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.monthly-print-signatures i {
+  display: block;
+  height: 28px;
+  border-bottom: 1px solid #111827;
 }
 @media (max-width: 1100px) {
   .admin-worklog-filters {
@@ -6064,6 +6079,9 @@ tbody tr:hover td {
   }
   .monthly-print-info {
     grid-template-columns: 1fr;
+  }
+  .monthly-print-signatures {
+    gap: 24px;
   }
 }
 
@@ -12829,6 +12847,13 @@ tbody tr:hover td {
   }
   .worklog-editor-page .page-head .muted {
     line-height: 1.6;
+  }
+  .worklog-editor-page .worklog-editor-head-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .worklog-editor-page .worklog-reuse-button {
+    min-height: 44px;
   }
   .worklog-editor-page .form-card {
     padding: 16px 14px 0;
