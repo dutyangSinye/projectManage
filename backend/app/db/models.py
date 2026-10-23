@@ -253,6 +253,27 @@ class Project(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local)
 
 
+class ProjectMember(Base):
+    """项目成员关系；退出项目采用停用而非删除，以保留历史。"""
+
+    __tablename__ = "project_members"
+    __table_args__ = (
+        UniqueConstraint("project_id", "user_id", name="uq_project_member_project_user"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    member_role: Mapped[str] = mapped_column(String(20), default="MEMBER", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, nullable=False)
+    left_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local, onupdate=now_local, nullable=False)
+
+
 class BudgetItemTemplate(Base):
     """后台维护的项目预算项模板，按项目大类自动带入项目。"""
 

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>v3.0.100 项目人员与人天预算 · 原型总览</title>
+  <style>
+    :root {
+      --color-primary:#0f766e; --color-primary-soft:#ccfbf1; --color-success:#15803d;
+      --color-warning:#b45309; --color-error:#b91c1c; --color-info:#2563eb;
+      --color-bg-page:#f6f8fa; --color-bg-card:#ffffff; --color-bg-muted:#eef2f4;
+      --color-text-primary:#17202a; --color-text-body:#344054; --color-text-secondary:#667085;
+      --color-border:#d0d5dd; --color-white:#ffffff; --color-focus:#2563eb;
+      --font-caption:12px; --font-body-sm:14px; --font-body:16px; --font-title:20px; --font-page:24px;
+      --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-6:24px; --space-8:32px;
+      --radius-sm:4px; --radius-md:8px; --shadow:0 8px 24px rgba(23,32,42,.08); --touch:44px;
+    }
+    *{box-sizing:border-box} body{margin:0;background:var(--color-bg-page);color:var(--color-text-body);font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif;font-size:var(--font-body);letter-spacing:0}
+    a{color:inherit;text-decoration:none} button,a{outline:none} button:focus-visible,a:focus-visible{box-shadow:0 0 0 3px var(--color-primary-soft);border-color:var(--color-focus)}
+    .topbar{height:64px;border-bottom:1px solid var(--color-border);background:var(--color-bg-card);display:flex;align-items:center;justify-content:space-between;padding:0 var(--space-6);position:sticky;top:0;z-index:2}
+    .brand{display:flex;align-items:center;gap:var(--space-3);font-weight:700;color:var(--color-text-primary)} .mark{width:32px;height:32px;border-radius:var(--radius-md);background:var(--color-primary);color:var(--color-white);display:grid;place-items:center;font-size:var(--font-body-sm)}
+    .version{font-size:var(--font-caption);color:var(--color-primary);background:var(--color-primary-soft);padding:var(--space-1) var(--space-2);border-radius:var(--radius-sm)}
+    main{max-width:1180px;margin:0 auto;padding:var(--space-8) var(--space-6) 64px}
+    .intro{display:grid;grid-template-columns:1.4fr .8fr;gap:var(--space-8);align-items:end;border-bottom:1px solid var(--color-border);padding-bottom:var(--space-8)}
+    .eyebrow{font-size:var(--font-caption);font-weight:700;color:var(--color-primary);margin-bottom:var(--space-2)} h1{margin:0;color:var(--color-text-primary);font-size:32px;line-height:1.25} .lead{max-width:720px;margin:var(--space-4) 0 0;line-height:1.7;color:var(--color-text-secondary)}
+    .flow-entry{display:flex;justify-content:flex-end}.primary{min-height:var(--touch);display:inline-flex;align-items:center;justify-content:center;padding:0 var(--space-4);border:1px solid var(--color-primary);border-radius:var(--radius-md);background:var(--color-primary);color:var(--color-white);font-weight:600;font-size:var(--font-body-sm)}
+    section{margin-top:var(--space-8)} h2{font-size:var(--font-title);color:var(--color-text-primary);margin:0 0 var(--space-4)}
+    .pages{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-4)} .page-link{background:var(--color-bg-card);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:var(--space-6);min-height:190px;display:flex;flex-direction:column;transition:transform .16s,border-color .16s}.page-link:hover{transform:translateY(-2px);border-color:var(--color-primary)}
+    .page-no{font:600 var(--font-caption)/1 ui-monospace,Consolas,monospace;color:var(--color-primary)} .page-link h3{font-size:var(--font-title);color:var(--color-text-primary);margin:var(--space-6) 0 var(--space-2)} .page-link p{font-size:var(--font-body-sm);color:var(--color-text-secondary);line-height:1.6;margin:0 0 var(--space-4)} .go{margin-top:auto;color:var(--color-primary);font-size:var(--font-body-sm);font-weight:600}
+    .token-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6)} .band{background:var(--color-bg-card);border-top:1px solid var(--color-border);border-bottom:1px solid var(--color-border);padding:var(--space-6)} .band h3{font-size:var(--font-body);margin:0 0 var(--space-4);color:var(--color-text-primary)}
+    .swatches{display:grid;grid-template-columns:repeat(5,1fr);gap:var(--space-2)} .swatch{font-size:var(--font-caption);color:var(--color-text-secondary)} .swatch i{display:block;height:40px;border-radius:var(--radius-sm);margin-bottom:var(--space-2);border:1px solid var(--color-border)}
+    .type-row{display:flex;align-items:baseline;gap:var(--space-4);border-bottom:1px solid var(--color-border);padding:var(--space-2) 0}.type-row:last-child{border:0}.type-row b{width:80px;color:var(--color-text-secondary);font-size:var(--font-caption)}
+    .review{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-3)} .check{display:flex;gap:var(--space-3);align-items:flex-start;background:var(--color-bg-card);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:var(--space-4)} .check i{font-style:normal;color:var(--color-primary);font-weight:700}.check strong{display:block;color:var(--color-text-primary);font-size:var(--font-body-sm)}.check span{display:block;color:var(--color-text-secondary);font-size:var(--font-caption);margin-top:var(--space-1);line-height:1.5}
+    .rail-demo{height:10px;background:var(--color-bg-muted);border-radius:var(--radius-sm);overflow:hidden;margin-top:var(--space-3)}.rail-demo i{display:block;width:72%;height:100%;background:var(--color-primary)}
+    footer{margin-top:var(--space-8);font-size:var(--font-caption);color:var(--color-text-secondary);text-align:center}
+    @media(max-width:760px){.topbar{padding:0 var(--space-4)}main{padding:var(--space-6) var(--space-4) 48px}.intro{grid-template-columns:1fr;gap:var(--space-6)}.flow-entry{justify-content:flex-start}.pages,.token-grid,.review{grid-template-columns:1fr}.swatches{grid-template-columns:repeat(3,1fr)}h1{font-size:var(--font-page)}}
+  </style>
+</head>
+<body>
+  <header class="topbar"><div class="brand"><span class="mark">新</span><span>综合项目管理系统</span></div><span class="version">v3.0.100 原型</span></header>
+  <main>
+    <div class="intro">
+      <div><div class="eyebrow">开发前视觉基准</div><h1>项目人员与人天预算控制</h1><p class="lead">围绕同一条“可用工时轨道”，串联项目人员维护、项目人天预算和工时填报。界面延续现有工作台风格，强调快速扫描、明确权限和预算风险。</p></div>
+      <div class="flow-entry"><a class="primary" href="page-01-project-members.html">从第 1 步开始查看</a></div>
+    </div>
+
+    <section><h2>页面清单</h2><div class="pages">
+      <a class="page-link" href="page-01-project-members.html"><span class="page-no">01 / F1</span><h3>项目人员</h3><p>项目负责人维护有效人员名单，支持搜索、批量添加、移除与五态检查。</p><span class="go">查看页面 →</span></a>
+      <a class="page-link" href="page-02-workday-budget.html"><span class="page-no">02 / F3</span><h3>项目预算项</h3><p>在现有 8 项金额预算上方，独立维护项目人天预算、占用和剩余。</p><span class="go">查看页面 →</span></a>
+      <a class="page-link" href="page-03-worklog-entry.html"><span class="page-no">03 / F2 F4 F5</span><h3>填报工时</h3><p>只选本人所在项目，选择后立即看到剩余人天与提交后预计余额。</p><span class="go">查看页面 →</span></a>
+    </div></section>
+
+    <section><h2>设计 Token</h2><div class="token-grid">
+      <div class="band"><h3>颜色</h3><div class="swatches">
+        <div class="swatch"><i style="background:var(--color-primary)"></i>主色<br>#0f766e</div><div class="swatch"><i style="background:var(--color-success)"></i>成功<br>#15803d</div><div class="swatch"><i style="background:var(--color-warning)"></i>警告<br>#b45309</div><div class="swatch"><i style="background:var(--color-error)"></i>错误<br>#b91c1c</div><div class="swatch"><i style="background:var(--color-info)"></i>信息<br>#2563eb</div>
+      </div><div class="rail-demo" title="预算使用率 72%"><i></i></div></div>
+      <div class="band"><h3>字号与密度</h3><div class="type-row"><b>页面标题</b><span style="font-size:var(--font-page);color:var(--color-text-primary)">24px 项目人员</span></div><div class="type-row"><b>正文</b><span style="font-size:var(--font-body)">16px 核心信息</span></div><div class="type-row"><b>表格</b><span style="font-size:var(--font-body-sm)">14px 高频扫描</span></div><div class="type-row"><b>辅助</b><span style="font-size:var(--font-caption)">12px 状态与说明</span></div></div>
+    </div></section>
+
+    <section><h2>审查清单</h2><div class="review">
+      <div class="check"><i>✓</i><div><strong>视觉一致性</strong><span>青绿色主色、8px 以内圆角、桌面端密集表格是否符合现有系统。</span></div></div>
+      <div class="check"><i>✓</i><div><strong>五态完整</strong><span>每页顶部切换默认、加载、空、错误、成功五种状态。</span></div></div>
+      <div class="check"><i>✓</i><div><strong>关键流程</strong><span>按 01 → 02 → 03 串联检查人员、预算、工时填报。</span></div></div>
+      <div class="check"><i>✓</i><div><strong>移动端</strong><span>将浏览器缩至 390px，检查单列布局、固定操作区和无横向溢出。</span></div></div>
+    </div></section>
+    <footer>纯静态交互原型 · 不连接生产数据 · 状态和操作仅用于设计评审</footer>
+  </main>
+</body>
+</html>

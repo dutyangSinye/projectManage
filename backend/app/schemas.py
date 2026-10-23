@@ -701,6 +701,7 @@ class ProjectView(BaseModel):
     expense_budget_remaining: float = 0
     expense_budget_usage_rate: float | None = None
     execution_status: str = "NOT_STARTED"
+    project_member_count: int = 0
     status: str
     allow_worklog: bool
 
@@ -755,6 +756,68 @@ class ProjectBudgetItemUpdate(BaseModel):
     budget_amount: float = Field(default=0, ge=0)
     is_active: bool = True
     remark: str | None = Field(default=None, max_length=1000)
+
+
+class ProjectMemberView(BaseModel):
+    id: int
+    project_id: int
+    user_id: int
+    user_name: str
+    email: str | None = None
+    department_id: int | None = None
+    department_name: str = "未分配部门"
+    department_path: str = "未分配部门"
+    member_role: Literal["OWNER", "MEMBER"]
+    status: Literal["ACTIVE", "INACTIVE"]
+    joined_at: datetime
+    left_at: datetime | None = None
+
+
+class ProjectMemberBatchAdd(BaseModel):
+    user_ids: list[int] = Field(min_length=1, max_length=100)
+
+    @field_validator("user_ids")
+    @classmethod
+    def unique_user_ids(cls, value: list[int]) -> list[int]:
+        result = list(dict.fromkeys(value))
+        if any(user_id <= 0 for user_id in result):
+            raise ValueError("INVALID_USER_ID")
+        return result
+
+
+class ProjectMemberBatchResult(BaseModel):
+    added_count: int = 0
+    reactivated_count: int = 0
+    existing_count: int = 0
+    members: list[ProjectMemberView] = []
+
+
+class ProjectWorkdayBudgetUpdate(BaseModel):
+    budget_days: float = Field(ge=0, le=1000000)
+
+    @field_validator("budget_days")
+    @classmethod
+    def validate_half_day_precision(cls, value: float) -> float:
+        rounded = round(float(value), 2)
+        if abs(rounded * 2 - round(rounded * 2)) > 1e-8:
+            raise ValueError("WORKDAY_BUDGET_HALF_DAY_REQUIRED")
+        return rounded
+
+
+class ProjectWorkdayBudgetView(BaseModel):
+    project_id: int
+    budget_days: float = 0
+    occupied_days: float = 0
+    actual_days: float = 0
+    remaining_days: float = 0
+    usage_rate: float | None = None
+    status: Literal["NOT_CONFIGURED", "NORMAL", "NEAR_BUDGET", "OVER_BUDGET"]
+
+
+class WorklogProjectOption(ProjectWorkdayBudgetView):
+    project_name: str
+    project_code: str
+    project_type: str
 
 
 class ProjectList(BaseModel):
@@ -1557,6 +1620,7 @@ class OrgUserView(BaseModel):
     id: int
     feishu_user_id: str
     name: str
+    email: str | None = None
     department_name: str
     department_id: int | None = None
     department_path: str = "未分配部门"

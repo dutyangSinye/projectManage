@@ -32,7 +32,7 @@ from sqlalchemy import and_, func, inspect, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .db.models import AdminPermission, ApprovalPosition, ApprovalPositionMember, AuditLog, ApprovalTask, BudgetItemTemplate, CashDocumentAttachment, ConfigOption, Contract, ContractAttachment, ContractStage, Customer, Department, Menu, Notification, NotificationPolicy, OrgSyncLog, Payment, PaymentPlan, PermissionAudit, Project, ProjectBudgetItem, ProjectCostAttachment, ProjectCostEntry, ProjectExpense, ProjectExpenseAttachment, ProjectExpensePayment, ProjectLedgerEntry, Receipt, ReceiptPlan, ReminderEvent, Role, RoleDataScope, RolePermission, Supplier, SystemNotification, Timesheet, User, UserRole, UserRoleScope, WorkCalendarDay, WorkflowActionLog, WorkflowDefinition, WorkflowInstance, WorkflowNode, WorkflowTask, WorkflowVersion, Worklog
+from .db.models import AdminPermission, ApprovalPosition, ApprovalPositionMember, AuditLog, ApprovalTask, BudgetItemTemplate, CashDocumentAttachment, ConfigOption, Contract, ContractAttachment, ContractStage, Customer, Department, Menu, Notification, NotificationPolicy, OrgSyncLog, Payment, PaymentPlan, PermissionAudit, Project, ProjectBudgetItem, ProjectCostAttachment, ProjectCostEntry, ProjectExpense, ProjectExpenseAttachment, ProjectExpensePayment, ProjectLedgerEntry, ProjectMember, Receipt, ReceiptPlan, ReminderEvent, Role, RoleDataScope, RolePermission, Supplier, SystemNotification, Timesheet, User, UserRole, UserRoleScope, WorkCalendarDay, WorkflowActionLog, WorkflowDefinition, WorkflowInstance, WorkflowNode, WorkflowTask, WorkflowVersion, Worklog
 from .db.session import Base, SessionLocal, engine, get_db
 from .time_utils import now_local, today_local
 from .schemas import (
@@ -101,6 +101,11 @@ from .schemas import (
     ProjectBoardRow,
     ProjectBudgetItemUpdate,
     ProjectBudgetItemView,
+    ProjectMemberBatchAdd,
+    ProjectMemberBatchResult,
+    ProjectMemberView,
+    ProjectWorkdayBudgetUpdate,
+    ProjectWorkdayBudgetView,
     ProjectAnalysisCloseoutView,
     ProjectAnalysisContractView,
     ProjectAnalysisCostTrendView,
@@ -177,6 +182,7 @@ from .schemas import (
     WorklogMonthlyLedgerList,
     WorklogMonthlyLedgerPrintRow,
     WorklogMonthlyLedgerPrintView,
+    WorklogProjectOption,
     WorklogUpdate,
     WorkCalendarList,
     WorkCalendarDayView,
@@ -186,7 +192,7 @@ from .schemas import (
 from .services.feishu import FeishuAdapter
 
 
-API_VERSION = "3.0.98"
+API_VERSION = "3.0.100"
 TIMEZONE_DATA_MIGRATION_VERSION = 1
 RBAC_RESET_MARKER = "RBAC_ROLE_RESET_V3_0_24"
 FIRST_FEISHU_ADMIN_MARKER = "FIRST_FEISHU_ADMIN_USER_ID"
@@ -1403,6 +1409,8 @@ QUERY_INDEX_SPECS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("ix_projects_owner_status", "projects", ("owner_user_id", "status")),
     ("ix_projects_department_status", "projects", ("department_id", "status")),
     ("ix_projects_type_status", "projects", ("project_type", "status")),
+    ("ix_project_members_project_status_user", "project_members", ("project_id", "status", "user_id")),
+    ("ix_project_members_user_status_project", "project_members", ("user_id", "status", "project_id")),
     ("ix_config_options_category_active_sort", "config_options", ("category", "is_active", "sort_order", "id")),
     ("ix_config_options_parent_sort", "config_options", ("parent_id", "sort_order", "id")),
     ("ix_budget_templates_category_active_sort", "budget_item_templates", ("project_category", "is_active", "sort_order", "id")),
@@ -1935,6 +1943,94 @@ def repair_legacy_approval_tasks(db: Session, fallback_approver: User | None = N
         db.add(ApprovalTask(worklog_id=item.id, version=item.approval_version, serial_no=f"WL-{item.submitted_at:%Y%m%d}-{item.id:04d}-V{item.approval_version}", submitter_user_id=item.user_id, approver_user_id=approver.id, status="PENDING", submitted_at=item.submitted_at))
 
 
+def ensure_project_owner_membership(
+    db: Session,
+    project: Project,
+    actor_id: int | None = None,
+    former_owner_id: int | None = None,
+) -> ProjectMember | None:
+    """保证负责人始终是有效成员；负责人变更时原负责人降为普通成员。"""
+    if former_owner_id and former_owner_id != project.owner_user_id:
+        former = db.scalar(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id == former_owner_id,
+            )
+        )
+        if former:
+            former.member_role = "MEMBER"
+            former.updated_by = actor_id
+    if not project.owner_user_id:
+        return None
+    member = db.scalar(
+        select(ProjectMember).where(
+            ProjectMember.project_id == project.id,
+            ProjectMember.user_id == project.owner_user_id,
+        )
+    )
+    if not member:
+        member = ProjectMember(
+            project_id=project.id,
+            user_id=project.owner_user_id,
+            member_role="OWNER",
+            status="ACTIVE",
+            created_by=actor_id,
+            updated_by=actor_id,
+        )
+        db.add(member)
+    else:
+        member.member_role = "OWNER"
+        member.status = "ACTIVE"
+        member.left_at = None
+        member.updated_by = actor_id
+    return member
+
+
+def backfill_project_members(db: Session) -> None:
+    """幂等回填项目负责人和历史项目工时填报人。"""
+    projects = {project.id: project for project in db.scalars(select(Project).where(Project.status != "DELETED")).all()}
+    existing = {
+        (member.project_id, member.user_id): member
+        for member in db.scalars(select(ProjectMember)).all()
+    }
+    for project in projects.values():
+        if project.owner_user_id:
+            member = existing.get((project.id, project.owner_user_id))
+            if not member:
+                member = ProjectMember(
+                    project_id=project.id,
+                    user_id=project.owner_user_id,
+                    member_role="OWNER",
+                    status="ACTIVE",
+                )
+                db.add(member)
+                existing[(project.id, project.owner_user_id)] = member
+            else:
+                member.member_role = "OWNER"
+                member.status = "ACTIVE"
+                member.left_at = None
+    historical_pairs = set(
+        db.execute(
+            select(Worklog.project_id, Worklog.user_id).where(Worklog.project_id.is_not(None))
+        ).all()
+    )
+    users = {user.id: user for user in db.scalars(select(User)).all()}
+    for project_id, user_id in historical_pairs:
+        if project_id not in projects or (project_id, user_id) in existing:
+            continue
+        user = users.get(user_id)
+        is_active = bool(user and user.employment_status == "ACTIVE")
+        member = ProjectMember(
+            project_id=project_id,
+            user_id=user_id,
+            member_role="MEMBER",
+            status="ACTIVE" if is_active else "INACTIVE",
+            left_at=None if is_active else now_local(),
+        )
+        db.add(member)
+        existing[(project_id, user_id)] = member
+
+
 def seed_data() -> None:
     """首次启动写入演示数据，并修复旧 MVP 的审批人和审批状态。"""
     upgrade_schema()
@@ -1954,6 +2050,7 @@ def seed_data() -> None:
         normalize_project_categories(db)
         ensure_all_project_budget_items(db)
         backfill_ledger_budget_snapshots(db)
+        backfill_project_members(db)
         db.flush()
         if not demo_seed_enabled():
             repair_legacy_approval_tasks(db)
@@ -1961,6 +2058,7 @@ def seed_data() -> None:
             normalize_project_categories(db)
             ensure_all_project_budget_items(db)
             backfill_ledger_budget_snapshots(db)
+            backfill_project_members(db)
             db.commit()
             return
         demo_departments = {}
@@ -1996,7 +2094,7 @@ def seed_data() -> None:
             if not project:
                 owner_user = owner_users.get(owner)
                 department = demo_departments.get(department_name)
-                project = Project(code=code, name=name, owner_name=owner, owner_user_id=owner_user.id if owner_user else None, owner_open_id=owner_user.open_id if owner_user else None, approver_name=approver_name, department_id=department.id if department else None, department_name=department.name if department else department_name, status=status, allow_worklog=allow_worklog)
+                project = Project(code=code, name=name, owner_name=owner, owner_user_id=owner_user.id if owner_user else None, owner_open_id=owner_user.open_id if owner_user else None, approver_name=approver_name, department_id=department.id if department else None, department_name=department.name if department else department_name, budget_days=120, status=status, allow_worklog=allow_worklog)
                 db.add(project)
             elif not project.department_id:
                 department = demo_departments.get(project.department_name or "")
@@ -2041,6 +2139,7 @@ def seed_data() -> None:
         reset_rbac_configuration(db)
         ensure_all_project_budget_items(db)
         backfill_ledger_budget_snapshots(db)
+        backfill_project_members(db)
         db.commit()
     finally:
         db.close()
@@ -2223,6 +2322,102 @@ def require_system_admin(db: Session, demo_user_id: int | None = None) -> User:
     return require_admin_permission(db, "admins", demo_user_id)
 
 
+def project_member_view(db: Session, member: ProjectMember, department_index: DepartmentIndex | None = None) -> ProjectMemberView:
+    user = db.get(User, member.user_id)
+    if not user:
+        raise HTTPException(404, "USER_NOT_FOUND")
+    department_index = department_index or DepartmentIndex(db.scalars(select(Department)).all())
+    department = db.get(Department, user.department_id) if user.department_id else None
+    return ProjectMemberView(
+        id=member.id,
+        project_id=member.project_id,
+        user_id=member.user_id,
+        user_name=user.name,
+        email=user.email,
+        department_id=user.department_id,
+        department_name=department.name if department else "未分配部门",
+        department_path=department_index.path(user.department_id),
+        member_role=member.member_role,
+        status=member.status,
+        joined_at=member.joined_at,
+        left_at=member.left_at,
+    )
+
+
+def project_workday_budget_view(
+    db: Session,
+    project: Project,
+    *,
+    exclude_worklog_id: int | None = None,
+) -> ProjectWorkdayBudgetView:
+    conditions = [
+        Worklog.project_id == project.id,
+        Worklog.status.in_(("PENDING_APPROVAL", "APPROVED", "LOCKED")),
+    ]
+    if exclude_worklog_id:
+        conditions.append(Worklog.id != exclude_worklog_id)
+    occupied = float(db.scalar(select(func.coalesce(func.sum(Worklog.quantity), 0)).where(*conditions)) or 0)
+    actual = float(
+        db.scalar(
+            select(func.coalesce(func.sum(Worklog.quantity), 0)).where(
+                Worklog.project_id == project.id,
+                Worklog.status.in_(("APPROVED", "LOCKED")),
+                *((Worklog.id != exclude_worklog_id,) if exclude_worklog_id else ()),
+            )
+        )
+        or 0
+    )
+    budget = float(project.budget_days or 0)
+    remaining = round(budget - occupied, 2)
+    usage_rate = round(occupied / budget * 100, 1) if budget > 0 else None
+    if budget <= 0:
+        status = "NOT_CONFIGURED"
+    elif occupied > budget:
+        status = "OVER_BUDGET"
+    elif occupied / budget >= 0.8:
+        status = "NEAR_BUDGET"
+    else:
+        status = "NORMAL"
+    return ProjectWorkdayBudgetView(
+        project_id=project.id,
+        budget_days=round(budget, 2),
+        occupied_days=round(occupied, 2),
+        actual_days=round(actual, 2),
+        remaining_days=remaining,
+        usage_rate=usage_rate,
+        status=status,
+    )
+
+
+def require_active_project_member(db: Session, project_id: int, user_id: int) -> ProjectMember:
+    member = db.scalar(
+        select(ProjectMember).where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == user_id,
+        )
+    )
+    if not member:
+        raise HTTPException(403, "PROJECT_MEMBERSHIP_REQUIRED")
+    if member.status != "ACTIVE":
+        raise HTTPException(403, "PROJECT_MEMBER_INACTIVE")
+    return member
+
+
+def validate_worklog_budget(
+    db: Session,
+    project: Project,
+    quantity: float,
+    *,
+    exclude_worklog_id: int | None = None,
+) -> ProjectWorkdayBudgetView:
+    summary = project_workday_budget_view(db, project, exclude_worklog_id=exclude_worklog_id)
+    if summary.budget_days <= 0:
+        raise HTTPException(409, "WORKDAY_BUDGET_NOT_CONFIGURED")
+    if summary.occupied_days + float(quantity) > summary.budget_days + 1e-8:
+        raise HTTPException(409, "WORKDAY_BUDGET_EXCEEDED")
+    return summary
+
+
 def project_view(db: Session, project: Project) -> ProjectView:
     """返回项目及已审批工时实时汇总，避免审批状态变化造成累计值过期。"""
     actual_days = db.scalar(
@@ -2258,12 +2453,13 @@ def project_view(db: Session, project: Project) -> ProjectView:
     ) or 0
     ensure_project_budget_items(db, project)
     budget_items = project_budget_item_views(db, project.id)
-    budget_days = float(project.budget_days or 0)
+    workday_budget = project_workday_budget_view(db, project)
+    budget_days = workday_budget.budget_days
     budget_cost = project_budget_total(db, project.id)
     labor_budget = next((float(item.budget_amount or 0) for item in budget_items if item.code == "LABOR_COST"), 0.0)
     expense_budget = round(sum(float(item.budget_amount or 0) for item in budget_items if item.is_active and item.code != "LABOR_COST"), 2)
     actual_days = float(actual_days)
-    remaining_days = 0.0
+    remaining_days = workday_budget.remaining_days
     completion_rate = None
     personnel_cost = round(float(personnel_cost), 2)
     contract_cost = round(float(contract_cost), 2)
@@ -2321,6 +2517,15 @@ def project_view(db: Session, project: Project) -> ProjectView:
         expense_budget_remaining=expense_budget_remaining,
         expense_budget_usage_rate=expense_budget_usage_rate,
         execution_status=execution_status,
+        project_member_count=int(
+            db.scalar(
+                select(func.count(ProjectMember.id)).where(
+                    ProjectMember.project_id == project.id,
+                    ProjectMember.status == "ACTIVE",
+                )
+            )
+            or 0
+        ),
     )
     return ProjectView(**payload)
 
@@ -3796,6 +4001,7 @@ def org_user_view(db: Session, user: User) -> OrgUserView:
         id=user.id,
         feishu_user_id=user.feishu_user_id,
         name=user.name,
+        email=user.email,
         department_name=department.name if department else "未分配",
         department_id=department.id if department else None,
         department_path=index.path(department.id if department else None),
@@ -4311,16 +4517,23 @@ def parse_reminder_times(raw: str | None) -> list[str]:
     return slots
 
 
-def is_statutory_workday(db: Session, day: date) -> bool:
+def is_statutory_workday(db: Session | None, day: date) -> bool:
     """判断指定日期是否国家法定工作日；日历覆盖优先，未配置时回退到周一至周五。"""
-    override = db.scalar(select(WorkCalendarDay).where(WorkCalendarDay.calendar_date == day))
+    override = db.scalar(select(WorkCalendarDay).where(WorkCalendarDay.calendar_date == day)) if db else None
     if override:
         return override.day_type == "WORKDAY"
     return day.weekday() in WORKDAY_WEEKDAYS
 
 
-def worklog_workday_count(db: Session, start_date: date, end_date: date) -> int:
+def worklog_workday_count(db_or_start: Session | date, start_or_end: date, end_date: date | None = None) -> int:
     """计算包含首尾日期的国家法定工作日数量；调休上班日计入，法定假日排除。"""
+    if end_date is None:
+        db = None
+        start_date = db_or_start
+        end_date = start_or_end
+    else:
+        db = db_or_start
+        start_date = start_or_end
     if end_date < start_date:
         return 0
     return sum(
@@ -4412,8 +4625,19 @@ def delete_admin_work_calendar_day(
     return {"deleted": True, "calendar_date": calendar_date.isoformat()}
 
 
-def worklog_fill_reminder_due(db: Session, policy: NotificationPolicy, now: datetime) -> str | None:
+def worklog_fill_reminder_due(
+    db_or_policy: Session | NotificationPolicy,
+    policy_or_now: NotificationPolicy | datetime,
+    now: datetime | None = None,
+) -> str | None:
     """判断当前时刻是否命中填报提醒；非国家工作日不提醒。"""
+    if now is None:
+        db = None
+        policy = db_or_policy
+        now = policy_or_now
+    else:
+        db = db_or_policy
+        policy = policy_or_now
     if not is_statutory_workday(db, now.date()):
         return None
     slots = parse_reminder_times(policy.schedule_time) or parse_reminder_times(WORKLOG_FILL_REMINDER_DEFAULT_TIME)
@@ -4481,8 +4705,13 @@ def worklog_reminder_recipients(db: Session, policy: NotificationPolicy) -> list
     return list(db.scalars(query.order_by(User.id)).all())
 
 
-def previous_workday(db: Session, day: date) -> date:
+def previous_workday(db_or_day: Session | date, day: date | None = None) -> date:
     """返回指定日期之前最近的一个国家法定工作日。"""
+    if day is None:
+        db = None
+        day = db_or_day
+    else:
+        db = db_or_day
     cursor = day - timedelta(days=1)
     while not is_statutory_workday(db, cursor):
         cursor -= timedelta(days=1)
@@ -4783,7 +5012,7 @@ def reroute_project_self_approver(
     return rerouted, f"{self_role}为本人，转直属上级"
 
 
-def worklog_project_for_payload(db: Session, work_type: str, project_id: int | None) -> Project | None:
+def worklog_project_for_payload(db: Session, work_type: str, project_id: int | None, user_id: int) -> Project | None:
     """按工时类型校验项目是否必填、可填报和项目大类是否匹配。"""
     if not is_project_work_type(work_type):
         return None
@@ -4795,6 +5024,7 @@ def worklog_project_for_payload(db: Session, work_type: str, project_id: int | N
     expected_category = project_category_for_work_type(work_type)
     if expected_category and project.project_type != expected_category:
         raise HTTPException(400, "PROJECT_TYPE_NOT_MATCH_WORK_TYPE")
+    require_active_project_member(db, project.id, user_id)
     return project
 
 
@@ -4896,8 +5126,22 @@ def validate_worklog_dates(
         raise HTTPException(409, "WORKLOG_DATE_OVERLAP")
 
 
-def validate_worklog_quantity(db: Session, start_date: date, end_date: date, quantity: int) -> None:
+def validate_worklog_quantity(
+    db_or_start: Session | date,
+    start_or_end: date,
+    end_or_quantity: date | int,
+    quantity: int | None = None,
+) -> None:
     """校验工时天数为日期区间内的国家法定工作日数量，禁止手工填写不一致的天数。"""
+    if quantity is None:
+        db = None
+        start_date = db_or_start
+        end_date = start_or_end
+        quantity = int(end_or_quantity)
+    else:
+        db = db_or_start
+        start_date = start_or_end
+        end_date = end_or_quantity
     expected_days = worklog_workday_count(db, start_date, end_date)
     if expected_days == 0:
         raise HTTPException(400, "WORKLOG_NO_WORKDAY")
@@ -4921,6 +5165,16 @@ def task_view(db: Session, task: ApprovalTask) -> ApprovalTaskView:
 
 def submit_item(db: Session, item: Worklog, user: User) -> ApprovalTaskView:
     """提交单条工时，生成独立审批版本并发送飞书提醒。"""
+    item_id = item.id
+    user_id = user.id
+    if db.get_bind().dialect.name == "sqlite":
+        # SQLite 没有行锁；在预算复核前取得写锁，避免多人同时提交后共同超额。
+        db.commit()
+        db.execute(text("BEGIN IMMEDIATE"))
+        item = db.get(Worklog, item_id)
+        user = db.get(User, user_id)
+        if not item or not user:
+            raise HTTPException(404, "WORKLOG_NOT_FOUND")
     if item.user_id != user.id:
         raise HTTPException(404, "WORKLOG_NOT_FOUND")
     if item.status not in ["DRAFT", "REJECTED"]:
@@ -4928,7 +5182,9 @@ def submit_item(db: Session, item: Worklog, user: User) -> ApprovalTaskView:
     validate_worklog_dates(db, item.user_id, item.start_date, item.end_date, item.id)
     validate_worklog_quantity(db, item.start_date, item.end_date, item.quantity)
     validate_worklog_options(db, item.stage, item.work_type, item.work_status)
-    project = worklog_project_for_payload(db, item.work_type, item.project_id)
+    project = worklog_project_for_payload(db, item.work_type, item.project_id, item.user_id)
+    if project:
+        validate_worklog_budget(db, project, float(item.quantity), exclude_worklog_id=item.id)
     chain = worklog_approval_chain(db, item, user)
     approver, step_name, resolved_reason = chain[0]
     old_status = item.status
@@ -5105,9 +5361,18 @@ def list_org_users(keyword: str | None = None, active_only: bool = True, db: Ses
     query = select(User).order_by(User.name, User.id)
     if active_only:
         query = query.where(User.employment_status == "ACTIVE")
-    if keyword:
-        query = query.where(User.name.contains(keyword) | User.email.contains(keyword))
-    return [org_user_view(db, user) for user in db.scalars(query).all()]
+    rows = [org_user_view(db, user) for user in db.scalars(query).all()]
+    if keyword and keyword.strip():
+        needle = keyword.strip().lower()
+        rows = [
+            item
+            for item in rows
+            if needle in item.name.lower()
+            or needle in (item.email or "").lower()
+            or needle in item.department_name.lower()
+            or needle in item.department_path.lower()
+        ]
+    return rows
 
 
 @app.get("/api/v1/org/departments", response_model=list[OrgDepartmentView])
@@ -6062,6 +6327,7 @@ def create_project(payload: ProjectCreate, x_demo_user_id: int | None = Header(d
     apply_project_users(project, db, payload.owner_user_id, payload.approver_user_id, payload.leader_user_id)
     db.add(project)
     db.flush()
+    ensure_project_owner_membership(db, project, user.id)
     ensure_project_budget_items(db, project)
     audit(db, "project", project.id, "CREATE", user.id, None, project.status)
     db.commit()
@@ -6124,6 +6390,163 @@ def list_project_budget_items(project_id: int, x_demo_user_id: int | None = Head
     ensure_project_budget_items(db, project)
     db.commit()
     return project_budget_item_views(db, project.id)
+
+
+@app.get("/api/v1/projects/{project_id}/members", response_model=list[ProjectMemberView])
+def list_project_members(
+    project_id: int,
+    include_inactive: bool = False,
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> list[ProjectMemberView]:
+    user = require_access(db, "projects", "VIEW", x_demo_user_id)
+    project = ensure_project_in_scope(db, user, project_id)
+    ensure_project_owner_membership(db, project)
+    query = select(ProjectMember).where(ProjectMember.project_id == project.id)
+    if not include_inactive:
+        query = query.where(ProjectMember.status == "ACTIVE")
+    members = db.scalars(
+        query.order_by(ProjectMember.member_role.desc(), ProjectMember.joined_at, ProjectMember.id)
+    ).all()
+    db.commit()
+    department_index = DepartmentIndex(db.scalars(select(Department)).all())
+    return [project_member_view(db, member, department_index) for member in members]
+
+
+@app.post("/api/v1/projects/{project_id}/members", response_model=ProjectMemberBatchResult)
+def add_project_members(
+    project_id: int,
+    payload: ProjectMemberBatchAdd,
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> ProjectMemberBatchResult:
+    actor = require_access(db, "projects", "EDIT", x_demo_user_id)
+    project = ensure_project_in_scope(db, actor, project_id)
+    users = {user.id: user for user in db.scalars(select(User).where(User.id.in_(payload.user_ids))).all()}
+    if len(users) != len(payload.user_ids) or any(user.employment_status != "ACTIVE" for user in users.values()):
+        raise HTTPException(400, "USER_NOT_ACTIVE")
+    existing = {
+        member.user_id: member
+        for member in db.scalars(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id.in_(payload.user_ids),
+            )
+        ).all()
+    }
+    added = reactivated = unchanged = 0
+    now = now_local()
+    for user_id in payload.user_ids:
+        member = existing.get(user_id)
+        if not member:
+            db.add(
+                ProjectMember(
+                    project_id=project.id,
+                    user_id=user_id,
+                    member_role="OWNER" if user_id == project.owner_user_id else "MEMBER",
+                    status="ACTIVE",
+                    joined_at=now,
+                    created_by=actor.id,
+                    updated_by=actor.id,
+                )
+            )
+            added += 1
+        elif member.status != "ACTIVE":
+            member.status = "ACTIVE"
+            member.member_role = "OWNER" if user_id == project.owner_user_id else "MEMBER"
+            member.joined_at = now
+            member.left_at = None
+            member.updated_by = actor.id
+            reactivated += 1
+        else:
+            unchanged += 1
+    db.flush()
+    ensure_project_owner_membership(db, project, actor.id)
+    audit(
+        db,
+        "project",
+        project.id,
+        "ADD_MEMBERS",
+        actor.id,
+        None,
+        project.status,
+        f"新增 {added} 人，重新加入 {reactivated} 人，已存在 {unchanged} 人",
+    )
+    db.commit()
+    members = list_project_members(project.id, False, x_demo_user_id, db)
+    return ProjectMemberBatchResult(
+        added_count=added,
+        reactivated_count=reactivated,
+        existing_count=unchanged,
+        members=members,
+    )
+
+
+@app.delete("/api/v1/projects/{project_id}/members/{user_id}")
+def remove_project_member(
+    project_id: int,
+    user_id: int,
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    actor = require_access(db, "projects", "EDIT", x_demo_user_id)
+    project = ensure_project_in_scope(db, actor, project_id)
+    if user_id == project.owner_user_id:
+        raise HTTPException(409, "PROJECT_OWNER_CANNOT_REMOVE")
+    member = db.scalar(
+        select(ProjectMember).where(
+            ProjectMember.project_id == project.id,
+            ProjectMember.user_id == user_id,
+        )
+    )
+    if not member:
+        raise HTTPException(404, "PROJECT_MEMBER_NOT_FOUND")
+    if member.status == "ACTIVE":
+        member.status = "INACTIVE"
+        member.left_at = now_local()
+        member.updated_by = actor.id
+        audit(db, "project", project.id, "REMOVE_MEMBER", actor.id, "ACTIVE", "INACTIVE", str(user_id))
+        db.commit()
+    return {"removed": True, "project_id": project.id, "user_id": user_id}
+
+
+@app.get("/api/v1/projects/{project_id}/workday-budget", response_model=ProjectWorkdayBudgetView)
+def get_project_workday_budget(
+    project_id: int,
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> ProjectWorkdayBudgetView:
+    user = require_access(db, "projects", "VIEW", x_demo_user_id)
+    project = ensure_project_in_scope(db, user, project_id)
+    return project_workday_budget_view(db, project)
+
+
+@app.patch("/api/v1/projects/{project_id}/workday-budget", response_model=ProjectWorkdayBudgetView)
+def update_project_workday_budget(
+    project_id: int,
+    payload: ProjectWorkdayBudgetUpdate,
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> ProjectWorkdayBudgetView:
+    actor = require_access(db, "projects", "EDIT", x_demo_user_id)
+    project = ensure_project_in_scope(db, actor, project_id)
+    summary = project_workday_budget_view(db, project)
+    if payload.budget_days + 1e-8 < summary.occupied_days:
+        raise HTTPException(409, "WORKDAY_BUDGET_BELOW_OCCUPIED")
+    old_budget = float(project.budget_days or 0)
+    project.budget_days = payload.budget_days
+    audit(
+        db,
+        "project",
+        project.id,
+        "UPDATE_WORKDAY_BUDGET",
+        actor.id,
+        f"{old_budget:g}",
+        f"{payload.budget_days:g}",
+    )
+    db.commit()
+    db.refresh(project)
+    return project_workday_budget_view(db, project)
 
 
 @app.post("/api/v1/projects/{project_id}/budget-items/initialize", response_model=list[ProjectBudgetItemView])
@@ -6674,6 +7097,7 @@ def update_project(project_id: int, payload: ProjectUpdate, x_demo_user_id: int 
     major, sub_category = resolve_project_classification(db, payload.project_type, payload.project_sub_category)
     old_status = project.status
     old_category = project.project_type
+    old_owner_user_id = project.owner_user_id
     project.code = payload.code
     project.name = payload.name
     project.project_type = major
@@ -6688,6 +7112,7 @@ def update_project(project_id: int, payload: ProjectUpdate, x_demo_user_id: int 
     project.allow_worklog = payload.allow_worklog
     apply_project_master_fields(project, db, payload)
     apply_project_users(project, db, payload.owner_user_id, payload.approver_user_id, payload.leader_user_id)
+    ensure_project_owner_membership(db, project, user.id, old_owner_user_id)
     if old_category != major:
         # 项目大类切换后按新大类的模板补齐预算项，已有预算金额保持不变。
         ensure_project_budget_items(db, project)
@@ -9211,6 +9636,42 @@ def export_admin_worklogs(
     return StreamingResponse(iter([output.getvalue().encode("utf-8-sig")]), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
+@app.get("/api/v1/worklogs/project-options", response_model=list[WorklogProjectOption])
+def list_worklog_project_options(
+    work_type: str = Query(pattern="^(RND_PROJECT_WORK|TECH_SERVICE_WORK|PROJECT)$"),
+    x_demo_user_id: int | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> list[WorklogProjectOption]:
+    """返回当前填报人有效参与且符合工时类型的可填报项目。"""
+    user = current_user(db, x_demo_user_id)
+    query = (
+        select(Project)
+        .join(ProjectMember, ProjectMember.project_id == Project.id)
+        .where(
+            ProjectMember.user_id == user.id,
+            ProjectMember.status == "ACTIVE",
+            Project.status.in_(("ACTIVE", "PRE_APPROVAL")),
+            Project.allow_worklog.is_(True),
+        )
+        .order_by(Project.name, Project.id)
+    )
+    expected_category = project_category_for_work_type(work_type)
+    if expected_category:
+        query = query.where(Project.project_type == expected_category)
+    result: list[WorklogProjectOption] = []
+    for project in db.scalars(query).all():
+        summary = project_workday_budget_view(db, project)
+        result.append(
+            WorklogProjectOption(
+                **summary.model_dump(),
+                project_name=project.name,
+                project_code=project.code,
+                project_type=project.project_type,
+            )
+        )
+    return result
+
+
 @app.patch("/api/v1/admin/worklogs/{worklog_id}", response_model=AdminWorklogView)
 def update_admin_worklog(worklog_id: int, payload: WorklogUpdate, x_demo_user_id: int | None = Header(default=None), db: Session = Depends(get_db)) -> AdminWorklogView:
     """管理员修改工时内容，保留现有审批状态和审批任务。"""
@@ -9220,7 +9681,9 @@ def update_admin_worklog(worklog_id: int, payload: WorklogUpdate, x_demo_user_id
     if not item:
         raise HTTPException(404, "WORKLOG_NOT_FOUND")
     ensure_worklog_in_scope(db, admin, item, "worklogs")
-    project = worklog_project_for_payload(db, payload.work_type, payload.project_id)
+    project = worklog_project_for_payload(db, payload.work_type, payload.project_id, item.user_id)
+    if project and item.status in {"PENDING_APPROVAL", "APPROVED", "LOCKED"}:
+        validate_worklog_budget(db, project, float(payload.quantity), exclude_worklog_id=item.id)
     validate_worklog_dates(db, item.user_id, payload.start_date, payload.end_date, item.id)
     validate_worklog_quantity(db, payload.start_date, payload.end_date, payload.quantity)
     validate_worklog_options(db, payload.stage, payload.work_type, payload.work_status)
@@ -9318,7 +9781,7 @@ def create_worklog(payload: WorklogCreate, x_demo_user_id: int | None = Header(d
     validate_worklog_dates(db, user.id, payload.start_date, payload.end_date)
     validate_worklog_quantity(db, payload.start_date, payload.end_date, payload.quantity)
     validate_worklog_options(db, payload.stage, payload.work_type, payload.work_status)
-    project = worklog_project_for_payload(db, payload.work_type, payload.project_id)
+    project = worklog_project_for_payload(db, payload.work_type, payload.project_id, user.id)
     item = Worklog(user_id=user.id, user_name_snapshot=user.name, project_id=project.id if project else None, project_name_snapshot=project.name if project else "非项目工时", stage=payload.stage, work_type=payload.work_type, work_status=payload.work_status, fill_date=payload.fill_date or payload.start_date, start_date=payload.start_date, end_date=payload.end_date, quantity=payload.quantity, unit=payload.unit, description=payload.description, status="DRAFT")
     db.add(item)
     db.commit()
@@ -9340,7 +9803,7 @@ def update_worklog(worklog_id: int, payload: WorklogUpdate, x_demo_user_id: int 
     validate_worklog_dates(db, user.id, payload.start_date, payload.end_date, item.id)
     validate_worklog_quantity(db, payload.start_date, payload.end_date, payload.quantity)
     validate_worklog_options(db, payload.stage, payload.work_type, payload.work_status)
-    project = worklog_project_for_payload(db, payload.work_type, payload.project_id)
+    project = worklog_project_for_payload(db, payload.work_type, payload.project_id, user.id)
     for key, value in payload.model_dump(exclude={"fill_date", "project_id"}).items():
         setattr(item, key, value)
     item.fill_date = payload.fill_date or payload.start_date

@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>差旅标准查询</title>
+<style>
+  :root { --bg:#f5f7fa; --panel:#ffffff; --ink:#1f2329; --sub:#7a869a; --line:#e5e8ef;
+          --brand:#2f7cff; --brand-d:#1f63d6; --red:#d9302b; --green:#1a8a3a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .wrap { max-width:560px; margin:0 auto; padding:18px 16px 40px; }
+  h1 { font-size:20px; margin:6px 0 2px; }
+  .tip { color:var(--sub); font-size:13px; margin-bottom:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; }
+  label { display:block; font-size:13px; color:var(--sub); margin:0 0 6px; }
+  input, select { width:100%; padding:12px; font-size:16px; border:1px solid var(--line);
+                  border-radius:10px; background:#fff; color:var(--ink); outline:none; }
+  input:focus, select:focus { border-color:var(--brand); }
+  input:focus-visible, select:focus-visible, button:focus-visible {
+    outline:3px solid rgba(47,124,255,.22); outline-offset:2px;
+  }
+  .row { display:flex; gap:10px; align-items:flex-end; }
+  .row .col { flex:1; }
+  .fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:14px; }
+  .swap { height:44px; border:1px solid var(--line); background:#fff; border-radius:10px; padding:0 14px;
+          color:var(--brand); font-size:14px; cursor:pointer; white-space:nowrap; }
+  .btn { width:100%; margin-top:16px; padding:14px; background:var(--brand); color:#fff;
+         border:none; border-radius:11px; font-size:16px; font-weight:600; cursor:pointer; }
+  .btn:active { background:var(--brand-d); }
+  .result { margin-top:18px; }
+  .tag { display:inline-block; padding:4px 10px; border-radius:999px; font-size:13px; margin-bottom:10px; }
+  .t-green { background:#e6f4ea; color:var(--green); }
+  .t-blue  { background:#e8f0ff; color:var(--brand); }
+  .t-purple{ background:#f3eaff; color:#7a3bd6; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .item { background:#fafbfc; border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .item.full { grid-column:1 / -1; }
+  .item.hl { background:#fff5f5; border-color:#f3d4d4; }
+  .k { font-size:12px; color:var(--sub); }
+  .v { font-size:17px; font-weight:600; margin-top:3px; }
+  .v.red { color:var(--red); }
+  .empty { padding:24px; text-align:center; color:var(--sub); line-height:1.7; }
+  .note { color:var(--sub); font-size:12px; margin-top:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>差旅标准查询</h1>
+  <div class="tip">输入出发地、目的地、职级，自动带出里程·地区·折扣·限价·住宿·补助。表内城市按精确标准；未收录城市按「三类地区」推算。里程 &gt;1000km 推荐坐飞机，住宿补助按最终到达地点为准。<br><b style="color:#c0392b">⚠️ 机票价格仅供参考，一切以实际为准</b></div>
+
+  <div class="card">
+    <div class="row">
+      <div class="col">
+        <label for="from">出发地</label>
+        <input id="from" list="cityList" placeholder="如：成都 / 北京 / 雄安">
+      </div>
+      <button class="swap" id="swapBtn">⇄ 交换</button>
+    </div>
+    <div style="height:12px"></div>
+    <label for="to">目的地</label>
+    <input id="to" list="cityList" placeholder="如：北京 / 雄安 / 开封">
+    <div class="fields">
+      <div>
+        <label for="level">员工职级</label>
+        <select id="level"></select>
+      </div>
+      <div>
+        <label for="from2">&nbsp;</label>
+        <button class="btn" id="searchBtn" style="margin-top:0">查 询</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="result" id="result"></div>
+
+  <datalist id="cityList"></datalist>
+  <div style="text-align:center;font-size:12px;color:#8a8f99;margin-top:14px">标准版本：2026-10-21　火车舱位按新标准</div>
+</div>
+
+<script>
+window.STANDARDS = [{"from": "成都", "to": "北京", "level": "A 总经理", "mileage": 2048, "region": "一类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2950, "maxPrice": 2950, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 480, "allowance": 150}, {"from": "成都", "to": "北京", "level": "B 副总 / 高级专家", "mileage": 2048, "region": "一类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2950, "maxPrice": 2065, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 480, "allowance": 150}, {"from": "成都", "to": "北京", "level": "C 普通员工", "mileage": 2048, "region": "一类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2950, "maxPrice": 1475, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 430, "allowance": 150}, {"from": "成都", "to": "天津", "level": "A 总经理", "mileage": 2126, "region": "一类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2610, "maxPrice": 2610, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 480, "allowance": 150}, {"from": "成都", "to": "天津", "level": "B 副总 / 高级专家", "mileage": 2126, "region": "一类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2610, "maxPrice": 1827, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 480, "allowance": 150}, {"from": "成都", "to": "天津", "level": "C 普通员工", "mileage": 2126, "region": "一类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2610, "maxPrice": 1305, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 430, "allowance": 150}, {"from": "成都", "to": "上海", "level": "A 总经理", "mileage": 2351, "region": "一类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2560, "maxPrice": 2560, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 480, "allowance": 150}, {"from": "成都", "to": "上海", "level": "B 副总 / 高级专家", "mileage": 2351, "region": "一类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2560, "maxPrice": 1792, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 480, "allowance": 150}, {"from": "成都", "to": "上海", "level": "C 普通员工", "mileage": 2351, "region": "一类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2560, "maxPrice": 1280, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 430, "allowance": 150}, {"from": "成都", "to": "重庆", "level": "A 总经理", "mileage": 340, "region": "一类", "transport": "推荐乘坐高铁/火车", "discount": "不限折扣", "fullPrice": "/", "maxPrice": "/", "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 480, "allowance": 150}, {"from": "成都", "to": "重庆", "level": "B 副总 / 高级专家", "mileage": 340, "region": "一类", "transport": "推荐乘坐高铁/火车", "discount": "7 折（含）", "fullPrice": "/", "maxPrice": "/", "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 480, "allowance": 150}, {"from": "成都", "to": "重庆", "level": "C 普通员工", "mileage": 340, "region": "一类", "transport": "推荐乘坐高铁/火车", "discount": "5 折（含）", "fullPrice": "/", "maxPrice": "/", "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 430, "allowance": 150}, {"from": "成都", "to": "石家庄", "level": "A 总经理", "mileage": 1804, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2010, "maxPrice": 2010, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "石家庄", "level": "B 副总 / 高级专家", "mileage": 1804, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2010, "maxPrice": 1407, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "石家庄", "level": "C 普通员工", "mileage": 1804, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2010, "maxPrice": 1005, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "太原", "level": "A 总经理", "mileage": 1559, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 1630, "maxPrice": 1630, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "太原", "level": "B 副总 / 高级专家", "mileage": 1559, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 1630, "maxPrice": 1141, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "太原", "level": "C 普通员工", "mileage": 1559, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 1630, "maxPrice": 815, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "呼和浩特", "level": "A 总经理", "mileage": 2036, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 1930, "maxPrice": 1930, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "呼和浩特", "level": "B 副总 / 高级专家", "mileage": 2036, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 1930, "maxPrice": 1351, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "呼和浩特", "level": "C 普通员工", "mileage": 2036, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 1930, "maxPrice": 965, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "沈阳", "level": "A 总经理", "mileage": 2669, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2690, "maxPrice": 2690, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "沈阳", "level": "B 副总 / 高级专家", "mileage": 2669, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2690, "maxPrice": 1883, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "沈阳", "level": "C 普通员工", "mileage": 2669, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2690, "maxPrice": 1345, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "长春", "level": "A 总经理", "mileage": 2976, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2460, "maxPrice": 2460, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "长春", "level": "B 副总 / 高级专家", "mileage": 2976, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2460, "maxPrice": 1722, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "长春", "level": "C 普通员工", "mileage": 2976, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2460, "maxPrice": 1230, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "哈尔滨", "level": "A 总经理", "mileage": 3218, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2730, "maxPrice": 2730, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "哈尔滨", "level": "B 副总 / 高级专家", "mileage": 3218, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2730, "maxPrice": 1911, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "哈尔滨", "level": "C 普通员工", "mileage": 3218, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2730, "maxPrice": 1365, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "南京", "level": "A 总经理", "mileage": 2194, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2840, "maxPrice": 2840, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "南京", "level": "B 副总 / 高级专家", "mileage": 2194, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2840, "maxPrice": 1988, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "南京", "level": "C 普通员工", "mileage": 2194, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2840, "maxPrice": 1420, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "杭州", "level": "A 总经理", "mileage": 2645, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2690, "maxPrice": 2690, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "杭州", "level": "B 副总 / 高级专家", "mileage": 2645, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2690, "maxPrice": 1883, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "杭州", "level": "C 普通员工", "mileage": 2645, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2690, "maxPrice": 1345, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "合肥", "level": "A 总经理", "mileage": 2134, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 1720, "maxPrice": 1720, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "合肥", "level": "B 副总 / 高级专家", "mileage": 2134, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 1720, "maxPrice": 1204, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "合肥", "level": "C 普通员工", "mileage": 2134, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 1720, "maxPrice": 860, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "福州", "level": "A 总经理", "mileage": 2546, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2110, "maxPrice": 2110, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "福州", "level": "B 副总 / 高级专家", "mileage": 2546, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2110, "maxPrice": 1477, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "福州", "level": "C 普通员工", "mileage": 2546, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2110, "maxPrice": 1055, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "南昌", "level": "A 总经理", "mileage": 1666, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 1408, "maxPrice": 1408, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "南昌", "level": "B 副总 / 高级专家", "mileage": 1666, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 1408, "maxPrice": 985.6, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "南昌", "level": "C 普通员工", "mileage": 1666, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 1408, "maxPrice": 704, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "济南", "level": "A 总经理", "mileage": 1769, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2530, "maxPrice": 2530, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "济南", "level": "B 副总 / 高级专家", "mileage": 1769, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2530, "maxPrice": 1771, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "济南", "level": "C 普通员工", "mileage": 1769, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2530, "maxPrice": 1265, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "郑州", "level": "A 总经理", "mileage": 1367, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 1610, "maxPrice": 1610, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "郑州", "level": "B 副总 / 高级专家", "mileage": 1367, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 1610, "maxPrice": 1127, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "郑州", "level": "C 普通员工", "mileage": 1367, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 1610, "maxPrice": 805, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "武汉", "level": "A 总经理", "mileage": 1100, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 1610, "maxPrice": 1610, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "武汉", "level": "B 副总 / 高级专家", "mileage": 1100, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 1610, "maxPrice": 1127, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "武汉", "level": "C 普通员工", "mileage": 1100, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 1610, "maxPrice": 805, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "长沙", "level": "A 总经理", "mileage": 1226, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 1770, "maxPrice": 1770, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "长沙", "level": "B 副总 / 高级专家", "mileage": 1226, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 1770, "maxPrice": 1239, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "长沙", "level": "C 普通员工", "mileage": 1226, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 1770, "maxPrice": 885, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "广州", "level": "A 总经理", "mileage": 1574, "region": "一类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2270, "maxPrice": 2270, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 480, "allowance": 150}, {"from": "成都", "to": "广州", "level": "B 副总 / 高级专家", "mileage": 1574, "region": "一类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2270, "maxPrice": 1589, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 480, "allowance": 150}, {"from": "成都", "to": "广州", "level": "C 普通员工", "mileage": 1574, "region": "一类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2270, "maxPrice": 1135, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 430, "allowance": 150}, {"from": "成都", "to": "南宁", "level": "A 总经理", "mileage": 1403, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 1570, "maxPrice": 1570, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "南宁", "level": "B 副总 / 高级专家", "mileage": 1403, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 1570, "maxPrice": 1099, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "南宁", "level": "C 普通员工", "mileage": 1403, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 1570, "maxPrice": 785, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "海口", "level": "A 总经理", "mileage": 1726, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2530, "maxPrice": 2530, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "海口", "level": "B 副总 / 高级专家", "mileage": 1726, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2530, "maxPrice": 1771, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "海口", "level": "C 普通员工", "mileage": 1726, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2530, "maxPrice": 1265, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "贵阳", "level": "A 总经理", "mileage": 620, "region": "二类", "transport": "推荐乘坐高铁/火车", "discount": "不限折扣", "fullPrice": "/", "maxPrice": "/", "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "贵阳", "level": "B 副总 / 高级专家", "mileage": 620, "region": "二类", "transport": "推荐乘坐高铁/火车", "discount": "7 折（含）", "fullPrice": "/", "maxPrice": "/", "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "贵阳", "level": "C 普通员工", "mileage": 620, "region": "二类", "transport": "推荐乘坐高铁/火车", "discount": "5 折（含）", "fullPrice": "/", "maxPrice": "/", "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "昆明", "level": "A 总经理", "mileage": 1100, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 1530, "maxPrice": 1530, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "昆明", "level": "B 副总 / 高级专家", "mileage": 1100, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 1530, "maxPrice": 1071, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "昆明", "level": "C 普通员工", "mileage": 1100, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 1530, "maxPrice": 765, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "拉萨", "level": "A 总经理", "mileage": 3070, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2840, "maxPrice": 2840, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "拉萨", "level": "B 副总 / 高级专家", "mileage": 3070, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2840, "maxPrice": 1988, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "拉萨", "level": "C 普通员工", "mileage": 3070, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2840, "maxPrice": 1420, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "西安", "level": "A 总经理", "mileage": 790, "region": "二类", "transport": "推荐乘坐高铁/火车", "discount": "不限折扣", "fullPrice": "/", "maxPrice": "/", "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "西安", "level": "B 副总 / 高级专家", "mileage": 790, "region": "二类", "transport": "推荐乘坐高铁/火车", "discount": "7 折（含）", "fullPrice": "/", "maxPrice": "/", "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "西安", "level": "C 普通员工", "mileage": 790, "region": "二类", "transport": "推荐乘坐高铁/火车", "discount": "5 折（含）", "fullPrice": "/", "maxPrice": "/", "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "兰州", "level": "A 总经理", "mileage": 860, "region": "二类", "transport": "推荐乘坐高铁/火车", "discount": "不限折扣", "fullPrice": 1340, "maxPrice": 1340, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "兰州", "level": "B 副总 / 高级专家", "mileage": 860, "region": "二类", "transport": "推荐乘坐高铁/火车", "discount": "7 折（含）", "fullPrice": 1340, "maxPrice": 938, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "兰州", "level": "C 普通员工", "mileage": 860, "region": "二类", "transport": "推荐乘坐高铁/火车", "discount": "5 折（含）", "fullPrice": 1340, "maxPrice": 670, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "西宁", "level": "A 总经理", "mileage": 1049, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 1690, "maxPrice": 1690, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "西宁", "level": "B 副总 / 高级专家", "mileage": 1049, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 1690, "maxPrice": 1183, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "西宁", "level": "C 普通员工", "mileage": 1049, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 1690, "maxPrice": 845, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "银川", "level": "A 总经理", "mileage": 1230, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 1510, "maxPrice": 1510, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "银川", "level": "B 副总 / 高级专家", "mileage": 1230, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 1510, "maxPrice": 1057, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "银川", "level": "C 普通员工", "mileage": 1230, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 1510, "maxPrice": 755, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "乌鲁木齐", "level": "A 总经理", "mileage": 2784, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 3140, "maxPrice": 3140, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "乌鲁木齐", "level": "B 副总 / 高级专家", "mileage": 2784, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 3140, "maxPrice": 2198, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "乌鲁木齐", "level": "C 普通员工", "mileage": 2784, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 3140, "maxPrice": 1570, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "深圳", "level": "A 总经理", "mileage": 1750, "region": "一类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2580, "maxPrice": 2580, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 480, "allowance": 150}, {"from": "成都", "to": "深圳", "level": "B 副总 / 高级专家", "mileage": 1750, "region": "一类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2580, "maxPrice": 1806, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 480, "allowance": 150}, {"from": "成都", "to": "深圳", "level": "C 普通员工", "mileage": 1750, "region": "一类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2580, "maxPrice": 1290, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 430, "allowance": 150}, {"from": "成都", "to": "青岛", "level": "A 总经理", "mileage": 2028, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2230, "maxPrice": 2230, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "青岛", "level": "B 副总 / 高级专家", "mileage": 2028, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2230, "maxPrice": 1561, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "青岛", "level": "C 普通员工", "mileage": 2028, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2230, "maxPrice": 1115, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "宁波", "level": "A 总经理", "mileage": 2685, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2140, "maxPrice": 2140, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "宁波", "level": "B 副总 / 高级专家", "mileage": 2685, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2140, "maxPrice": 1498, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "宁波", "level": "C 普通员工", "mileage": 2685, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2140, "maxPrice": 1070, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "大连", "level": "A 总经理", "mileage": 3080, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2130, "maxPrice": 2130, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "大连", "level": "B 副总 / 高级专家", "mileage": 3080, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2130, "maxPrice": 1491, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "大连", "level": "C 普通员工", "mileage": 3080, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2130, "maxPrice": 1065, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "厦门", "level": "A 总经理", "mileage": 2103, "region": "二类", "transport": "推荐乘坐飞机", "discount": "不限折扣", "fullPrice": 2480, "maxPrice": 2480, "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "厦门", "level": "B 副总 / 高级专家", "mileage": 2103, "region": "二类", "transport": "推荐乘坐飞机", "discount": "7 折（含）", "fullPrice": 2480, "maxPrice": 1736, "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 400, "allowance": 120}, {"from": "成都", "to": "厦门", "level": "C 普通员工", "mileage": 2103, "region": "二类", "transport": "推荐乘坐飞机", "discount": "5 折（含）", "fullPrice": 2480, "maxPrice": 1240, "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 360, "allowance": 120}, {"from": "成都", "to": "其他", "level": "A 总经理", "mileage": "/", "region": "三类", "transport": "推荐乘坐高铁/火车", "discount": "不限折扣", "fullPrice": "/", "maxPrice": "/", "train": "商务座/一等软座/动卧", "ship": "一等舱", "hotel": 300, "allowance": 90}, {"from": "成都", "to": "其他", "level": "B 副总 / 高级专家", "mileage": "/", "region": "三类", "transport": "推荐乘坐高铁/火车", "discount": "7 折（含）", "fullPrice": "/", "maxPrice": "/", "train": "一等座/动卧/二等卧", "ship": "≤二等舱", "hotel": 300, "allowance": 90}, {"from": "成都", "to": "其他", "level": "C 普通员工", "mileage": "/", "region": "三类", "transport": "推荐乘坐高铁/火车", "discount": "5 折（含）", "fullPrice": "/", "maxPrice": "/", "train": "二等座/硬卧", "ship": "≤二等舱", "hotel": 250, "allowance": 90}];
+window.REGION = {"北京": "一类", "天津": "一类", "上海": "一类", "重庆": "一类", "石家庄": "二类", "太原": "二类", "呼和浩特": "二类", "沈阳": "二类", "长春": "二类", "哈尔滨": "二类", "南京": "二类", "杭州": "二类", "合肥": "二类", "福州": "二类", "南昌": "二类", "济南": "二类", "郑州": "二类", "武汉": "二类", "长沙": "二类", "广州": "一类", "南宁": "二类", "海口": "二类", "成都": "二类", "贵阳": "二类", "昆明": "二类", "拉萨": "二类", "西安": "二类", "兰州": "二类", "西宁": "二类", "银川": "二类", "乌鲁木齐": "二类", "深圳": "一类", "青岛": "二类", "宁波": "二类", "大连": "二类", "厦门": "二类", "其他": "三类"};
+window.LEVEL_RULE = {"A 总经理": {"discount": "不限折扣", "train": "商务座/一等软座/动卧", "ship": "一等舱"}, "B 副总 / 高级专家": {"discount": "7 折（含）", "train": "一等座/动卧/二等卧", "ship": "≤二等舱"}, "C 普通员工": {"discount": "5 折（含）", "train": "二等座/硬卧", "ship": "≤二等舱"}};
+window.HOTEL = {"一类": {"ab": 480, "c": 430, "allowance": 150}, "二类": {"ab": 400, "c": 360, "allowance": 120}, "三类": {"ab": 300, "c": 250, "allowance": 90}};
+window.MILEAGE = {"成都": {"北京": 2048, "天津": 2126, "上海": 2351, "重庆": 340, "石家庄": 1804, "太原": 1559, "呼和浩特": 2036, "沈阳": 2669, "长春": 2976, "哈尔滨": 3218, "南京": 2194, "杭州": 2645, "合肥": 2134, "福州": 2546, "南昌": 1666, "济南": 1769, "郑州": 1367, "武汉": 1100, "长沙": 1226, "广州": 1574, "南宁": 1403, "海口": 1726, "贵阳": 620, "昆明": 1100, "拉萨": 3070, "西安": 790, "兰州": 860, "西宁": 1049, "银川": 1230, "乌鲁木齐": 2784, "深圳": 1750, "青岛": 2028, "宁波": 2685, "大连": 3080, "厦门": 2103, "其他": "/"}};
+window.REF_CITY = {};
+window.CITY_TO_PROVINCE = {"北京": "北京", "天津": "天津", "上海": "上海", "重庆": "重庆", "石家庄": "河北", "唐山": "河北", "秦皇岛": "河北", "邯郸": "河北", "邢台": "河北", "保定": "河北", "张家口": "河北", "承德": "河北", "沧州": "河北", "廊坊": "河北", "衡水": "河北", "雄安": "河北", "雄安新区": "河北", "太原": "山西", "大同": "山西", "阳泉": "山西", "长治": "山西", "晋城": "山西", "朔州": "山西", "晋中": "山西", "运城": "山西", "忻州": "山西", "临汾": "山西", "吕梁": "山西", "沈阳": "辽宁", "大连": "辽宁", "鞍山": "辽宁", "抚顺": "辽宁", "本溪": "辽宁", "丹东": "辽宁", "锦州": "辽宁", "营口": "辽宁", "阜新": "辽宁", "辽阳": "辽宁", "盘锦": "辽宁", "铁岭": "辽宁", "朝阳": "辽宁", "葫芦岛": "辽宁", "长春": "吉林", "吉林": "吉林", "四平": "吉林", "辽源": "吉林", "通化": "吉林", "白山": "吉林", "松原": "吉林", "白城": "吉林", "延边": "吉林", "哈尔滨": "黑龙江", "齐齐哈尔": "黑龙江", "鸡西": "黑龙江", "鹤岗": "黑龙江", "双鸭山": "黑龙江", "大庆": "黑龙江", "伊春": "黑龙江", "佳木斯": "黑龙江", "七台河": "黑龙江", "牡丹江": "黑龙江", "黑河": "黑龙江", "绥化": "黑龙江", "大兴安岭": "黑龙江", "南京": "江苏", "无锡": "江苏", "徐州": "江苏", "常州": "江苏", "苏州": "江苏", "南通": "江苏", "连云港": "江苏", "淮安": "江苏", "盐城": "江苏", "扬州": "江苏", "镇江": "江苏", "泰州": "江苏", "宿迁": "江苏", "杭州": "浙江", "宁波": "浙江", "温州": "浙江", "嘉兴": "浙江", "湖州": "浙江", "绍兴": "浙江", "金华": "浙江", "衢州": "浙江", "舟山": "浙江", "台州": "浙江", "丽水": "浙江", "合肥": "安徽", "芜湖": "安徽", "蚌埠": "安徽", "淮南": "安徽", "马鞍山": "安徽", "淮北": "安徽", "铜陵": "安徽", "安庆": "安徽", "黄山": "安徽", "滁州": "安徽", "阜阳": "安徽", "宿州": "安徽", "六安": "安徽", "亳州": "安徽", "池州": "安徽", "宣城": "安徽", "福州": "福建", "厦门": "福建", "莆田": "福建", "三明": "福建", "泉州": "福建", "漳州": "福建", "南平": "福建", "龙岩": "福建", "宁德": "福建", "南昌": "江西", "景德镇": "江西", "萍乡": "江西", "九江": "江西", "新余": "江西", "鹰潭": "江西", "赣州": "江西", "吉安": "江西", "宜春": "江西", "抚州": "江西", "上饶": "江西", "济南": "山东", "青岛": "山东", "淄博": "山东", "枣庄": "山东", "东营": "山东", "烟台": "山东", "潍坊": "山东", "济宁": "山东", "泰安": "山东", "威海": "山东", "日照": "山东", "临沂": "山东", "德州": "山东", "聊城": "山东", "滨州": "山东", "菏泽": "山东", "郑州": "河南", "开封": "河南", "洛阳": "河南", "平顶山": "河南", "安阳": "河南", "鹤壁": "河南", "新乡": "河南", "焦作": "河南", "濮阳": "河南", "许昌": "河南", "漯河": "河南", "三门峡": "河南", "南阳": "河南", "商丘": "河南", "信阳": "河南", "周口": "河南", "驻马店": "河南", "济源": "河南", "武汉": "湖北", "黄石": "湖北", "十堰": "湖北", "宜昌": "湖北", "襄阳": "湖北", "鄂州": "湖北", "荆门": "湖北", "孝感": "湖北", "荆州": "湖北", "黄冈": "湖北", "咸宁": "湖北", "随州": "湖北", "恩施": "湖北", "长沙": "湖南", "株洲": "湖南", "湘潭": "湖南", "衡阳": "湖南", "邵阳": "湖南", "岳阳": "湖南", "常德": "湖南", "张家界": "湖南", "益阳": "湖南", "郴州": "湖南", "永州": "湖南", "怀化": "湖南", "娄底": "湖南", "湘西": "湖南", "广州": "广东", "深圳": "广东", "珠海": "广东", "汕头": "广东", "佛山": "广东", "韶关": "广东", "湛江": "广东", "肇庆": "广东", "江门": "广东", "茂名": "广东", "惠州": "广东", "梅州": "广东", "汕尾": "广东", "河源": "广东", "阳江": "广东", "清远": "广东", "东莞": "广东", "中山": "广东", "潮州": "广东", "揭阳": "广东", "云浮": "广东", "海口": "海南", "三亚": "海南", "三沙": "海南", "儋州": "海南", "成都": "四川", "自贡": "四川", "攀枝花": "四川", "泸州": "四川", "德阳": "四川", "绵阳": "四川", "广元": "四川", "遂宁": "四川", "内江": "四川", "乐山": "四川", "南充": "四川", "眉山": "四川", "宜宾": "四川", "广安": "四川", "达州": "四川", "雅安": "四川", "巴中": "四川", "资阳": "四川", "阿坝": "四川", "甘孜": "四川", "凉山": "四川", "贵阳": "贵州", "六盘水": "贵州", "遵义": "贵州", "安顺": "贵州", "毕节": "贵州", "铜仁": "贵州", "黔西南": "贵州", "黔东南": "贵州", "黔南": "贵州", "昆明": "云南", "曲靖": "云南", "玉溪": "云南", "保山": "云南", "昭通": "云南", "丽江": "云南", "普洱": "云南", "临沧": "云南", "楚雄": "云南", "红河": "云南", "文山": "云南", "西双版纳": "云南", "大理": "云南", "德宏": "云南", "怒江": "云南", "迪庆": "云南", "西安": "陕西", "铜川": "陕西", "宝鸡": "陕西", "咸阳": "陕西", "渭南": "陕西", "延安": "陕西", "汉中": "陕西", "榆林": "陕西", "安康": "陕西", "商洛": "陕西", "兰州": "甘肃", "嘉峪关": "甘肃", "金昌": "甘肃", "白银": "甘肃", "天水": "甘肃", "武威": "甘肃", "张掖": "甘肃", "平凉": "甘肃", "酒泉": "甘肃", "庆阳": "甘肃", "定西": "甘肃", "陇南": "甘肃", "临夏": "甘肃", "甘南": "甘肃", "西宁": "青海", "海东": "青海", "海北": "青海", "黄南": "青海", "海南州": "青海", "果洛": "青海", "玉树": "青海", "海西": "青海", "台北": "台湾", "高雄": "台湾", "台中": "台湾", "台南": "台湾", "新北": "台湾", "桃园": "台湾", "基隆": "台湾", "新竹": "台湾", "嘉义": "台湾", "宜兰": "台湾", "花莲": "台湾", "台东": "台湾", "屏东": "台湾", "澎湖": "台湾", "金门": "台湾", "连江": "台湾", "呼和浩特": "内蒙古", "包头": "内蒙古", "乌海": "内蒙古", "赤峰": "内蒙古", "通辽": "内蒙古", "鄂尔多斯": "内蒙古", "呼伦贝尔": "内蒙古", "巴彦淖尔": "内蒙古", "乌兰察布": "内蒙古", "兴安盟": "内蒙古", "锡林郭勒盟": "内蒙古", "阿拉善盟": "内蒙古", "南宁": "广西", "柳州": "广西", "桂林": "广西", "梧州": "广西", "北海": "广西", "防城港": "广西", "钦州": "广西", "贵港": "广西", "玉林": "广西", "百色": "广西", "贺州": "广西", "河池": "广西", "来宾": "广西", "崇左": "广西", "拉萨": "西藏", "日喀则": "西藏", "昌都": "西藏", "林芝": "西藏", "山南": "西藏", "那曲": "西藏", "阿里": "西藏", "银川": "宁夏", "石嘴山": "宁夏", "吴忠": "宁夏", "固原": "宁夏", "中卫": "宁夏", "乌鲁木齐": "新疆", "克拉玛依": "新疆", "吐鲁番": "新疆", "哈密": "新疆", "昌吉": "新疆", "博尔塔拉": "新疆", "巴音郭楞": "新疆", "阿克苏": "新疆", "克孜勒苏": "新疆", "喀什": "新疆", "和田": "新疆", "伊犁": "新疆", "塔城": "新疆", "阿勒泰": "新疆"};
+window.PROVINCE_CAPITAL = {"北京": "北京", "天津": "天津", "上海": "上海", "重庆": "重庆", "河北": "石家庄", "山西": "太原", "辽宁": "沈阳", "吉林": "长春", "黑龙江": "哈尔滨", "江苏": "南京", "浙江": "杭州", "安徽": "合肥", "福建": "福州", "江西": "南昌", "山东": "济南", "河南": "郑州", "湖北": "武汉", "湖南": "长沙", "广东": "广州", "海南": "海口", "四川": "成都", "贵州": "贵阳", "云南": "昆明", "陕西": "西安", "甘肃": "兰州", "青海": "西宁", "台湾": "台北", "内蒙古": "呼和浩特", "广西": "南宁", "西藏": "拉萨", "宁夏": "银川", "新疆": "乌鲁木齐"};
+window.DEFAULT_REGION = "三类";
+window.DEFAULT_FROM = "成都";
+</script>
+<script>
+const STANDARDS = window.STANDARDS || [];
+const REGION = window.REGION || {};
+const LEVEL_RULE = window.LEVEL_RULE || {};
+const HOTEL = window.HOTEL || {};
+const MILEAGE = window.MILEAGE || {};
+const CITY_PROV = window.CITY_PROV || window.CITY_TO_PROVINCE || {};
+const CITY_TO_PROVINCE = window.CITY_TO_PROVINCE || CITY_PROV;
+const REF_CITY = window.REF_CITY || {};
+const PROVINCE_CAPITAL = window.PROVINCE_CAPITAL || {};
+const DEFAULT_REGION = window.DEFAULT_REGION || '三类';
+const DEFAULT_FROM = window.DEFAULT_FROM || '成都';
+const $ = id => document.getElementById(id);
+const norm = s => (s || '').trim();
+const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({
+  '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'
+})[char]);
+
+// 表外城市参考城市查找：优先显式 REF_CITY 覆盖，否则取其省会/直辖市
+function getRefCity(city){
+  if (REF_CITY[city]) return REF_CITY[city];
+  const prov = CITY_TO_PROVINCE[city];
+  if (prov && PROVINCE_CAPITAL[prov]) return PROVINCE_CAPITAL[prov];
+  return null;
+}
+
+// 动态生成职级下拉（与数据一致），默认选中「C 普通员工」
+const LEVELS = Object.keys(LEVEL_RULE);
+$('level').innerHTML = LEVELS.map(l => `<option value="${l}">${l}</option>`).join('');
+if(LEVELS.includes('C 普通员工')) $('level').value = 'C 普通员工';
+document.getElementById('cnt') && ($('cnt').textContent = STANDARDS.length);
+
+// 城市下拉建议
+(function buildCityList(){
+  const set = new Set();
+  STANDARDS.forEach(r => { set.add(r.from); set.add(r.to); });
+  $('cityList').innerHTML = [...set].sort().map(c => `<option value="${c}">`).join('');
+})();
+
+function lookup(from, to, level){
+  const nf = norm(from), nt = norm(to);
+  let row = STANDARDS.find(r => norm(r.from)===nf && norm(r.to)===nt && norm(r.level)===level);
+  if(row) return { row, mode:'精确', note:'', from, to, level };
+  let rev = STANDARDS.find(r => norm(r.from)===nt && norm(r.to)===nf && norm(r.level)===level);
+  if(rev) return { row:rev, mode:'反向', note:`（按反向 ${nt}→${nf} 匹配，请核对方向）`, from, to, level };
+
+  // 推算：表外城市 / 表内但无该路线。住宿/补助按最终到达地点判定（REGION[到达城市]）
+  const region = REGION[nt] || DEFAULT_REGION;
+  const lr = LEVEL_RULE[level] || LEVEL_RULE['C 普通员工'];
+  const hr = HOTEL[region] || HOTEL[DEFAULT_REGION];
+
+  // 里程：原表 → 到达地表外按参考城市（用省会/直辖市，REF_CITY 可覆盖）→
+  //       出发地表外按参考城市 → 兜底「公司常驻出发地（成都）→ 参考城市」
+  let m = (MILEAGE[nf] && MILEAGE[nf][nt]) || (MILEAGE[nt] && MILEAGE[nt][nf]) || null;
+  let refCity = null, refUsed = false, refFrom = null;
+  if(m == null && !REGION[nt]){
+    const rc = getRefCity(nt);
+    if(rc && rc !== nf){
+      refCity = rc;
+      if(MILEAGE[nf] && MILEAGE[nf][refCity]) { m = MILEAGE[nf][refCity]; refUsed = true; }
+      else if(MILEAGE[refCity] && MILEAGE[refCity][nf]) { m = MILEAGE[refCity][nf]; refUsed = true; }
+    } else if(rc === nf){
+      // 目的地参考城市=出发地（省内），不取兜底里程，由下方"省内例外"分支判定高铁
+      refCity = rc;
+    }
+  }
+  if(m == null && !REGION[nf]){
+    const rc = getRefCity(nf);
+    if(rc && rc !== nt){
+      refCity = rc;
+      if(MILEAGE[refCity] && MILEAGE[refCity][nt]) { m = MILEAGE[refCity][nt]; refUsed = true; }
+      else if(MILEAGE[nt] && MILEAGE[nt][refCity]) { m = MILEAGE[nt][refCity]; refUsed = true; }
+    } else if(rc === nt){
+      refCity = rc;
+    }
+  }
+  if(m == null && refCity && DEFAULT_FROM && DEFAULT_FROM !== nf && DEFAULT_FROM !== refCity && refCity !== nf && refCity !== nt){
+    refFrom = DEFAULT_FROM;
+    if(MILEAGE[refFrom] && MILEAGE[refFrom][refCity]) { m = MILEAGE[refFrom][refCity]; refUsed = true; }
+    else if(MILEAGE[refCity] && MILEAGE[refCity][refFrom]) { m = MILEAGE[refCity][refFrom]; refUsed = true; }
+  }
+
+  // 交通推荐：有里程 → 严格按里程 >1000km 推荐飞机；
+  // 无里程 + 目的地的参考城市=出发地（省内）→ 高铁；
+  // 其余无里程 + 含表外城市 → 飞机+高铁长途差旅；
+  // 两端表内但无里程 → 高铁+提示
+  let transport, note = '';
+  if(m != null){
+    transport = (m >= 1000) ? '推荐乘坐飞机' : '推荐乘坐高铁/火车';
+  } else if(refCity && refCity === nf){
+    transport = '推荐乘坐高铁/火车';
+    note = '（目的地在出发地所在省（参考城市一致），按省内短途推荐高铁）';
+  } else if(!REGION[nt] || !REGION[nf]){
+    transport = '✈️ 飞机 + 🚄 高铁（长途差旅：先飞至参考城市/枢纽，再转高铁）';
+    note = '（两地未收录里程；按「飞机到省会/直辖市再高铁接驳」处理，折扣按职级、住宿补助按到达地）';
+  } else {
+    transport = '推荐乘坐高铁/火车';
+    note = '（两地里程未维护，交通建议仅供参考，请核实）';
+  }
+  const hotel = (level === 'C 普通员工') ? hr.c : hr.ab;
+  const r = {
+    from, to, level,
+    mileage: m == null ? '—' : m,
+    region,
+    transport,
+    discount: lr.discount,
+    fullPrice: '—',
+    maxPrice: '—',
+    train: lr.train,
+    ship: lr.ship || '—',
+    hotel,
+    allowance: hr.allowance
+  };
+
+  // 推荐飞机且用到参考城市：按参考城市回填机票全价、最高限价（含公司常驻出发地兜底）
+  if(transport.includes('飞机') && refCity){
+    let refRow = STANDARDS.find(x => norm(x.from)===nf && norm(x.to)===refCity && norm(x.level)===level);
+    if(!refRow) refRow = STANDARDS.find(x => norm(x.from)===refCity && norm(x.to)===nt && norm(x.level)===level);
+    if(!refRow) refRow = STANDARDS.find(x => norm(x.from)===refCity && norm(x.to)===nf && norm(x.level)===level);
+    if(!refRow) refRow = STANDARDS.find(x => norm(x.from)===nt && norm(x.to)===refCity && norm(x.level)===level);
+    if(!refRow && refFrom) refRow = STANDARDS.find(x => norm(x.from)===refFrom && norm(x.to)===refCity && norm(x.level)===level);
+    if(!refRow && refFrom) refRow = STANDARDS.find(x => norm(x.from)===refCity && norm(x.to)===refFrom && norm(x.level)===level);
+    if(refRow){
+      r.fullPrice = refRow.fullPrice;
+      r.maxPrice = refRow.maxPrice;
+      refUsed = true;
+    }
+  }
+  if(refUsed && !note.includes('参考城市')){
+    if(refFrom) note += `（参考价按公司常驻出发地 ${refFrom} → 参考城市 ${refCity} 计算）`;
+    else note += `（按参考城市 ${refCity} 计算）`;
+  }
+
+  return { row:r, mode:'推算', note, from, to, level };
+}
+
+function fmtMoney(n){
+  if(typeof n === 'number') return '¥' + n;
+  if(n === '' || n == null) return '—';
+  return n;
+}
+
+function render(res){
+  const box = $('result');
+  const key = `${res.from||'？'} → ${res.to||'？'} · ${res.level||'未选择职级'}`;
+  const safeKey = escapeHtml(key);
+  if(!res.row){
+    box.innerHTML = `<div class="card"><div class="empty">😕 未找到匹配标准<br><br>查询条件：<b>${safeKey}</b><br><br>请检查城市名称或职级是否录入正确。</div></div>`;
+    return;
+  }
+  const tagClass = res.mode==='精确' ? 't-green' : (res.mode==='反向' ? 't-blue' : 't-purple');
+  const tagText = res.mode==='精确' ? '✅ 精确匹配' : (res.mode==='反向' ? '🔁 反向匹配' : '🟣 按地区推算');
+  const r = res.row;
+  box.innerHTML = `<div class="card">
+    <span class="tag ${tagClass}">${tagText}：${safeKey}</span>
+    <div class="grid">
+      <div class="item"><div class="k">两地里程</div><div class="v">${escapeHtml(r.mileage)} ${r.mileage!=='—'?'km':''}</div></div>
+      <div class="item"><div class="k">地区等级</div><div class="v">${escapeHtml(r.region)}${res.mode==='推算'?'（按到达地判定）':''}</div></div>
+      <div class="item full"><div class="k">交通推荐方案</div><div class="v">${escapeHtml(r.transport)}</div></div>
+      <div class="item hl"><div class="k">允许机票折扣</div><div class="v red">${escapeHtml(r.discount)}</div></div>
+      <div class="item hl"><div class="k">机票最高限价</div><div class="v red">${escapeHtml(fmtMoney(r.maxPrice))}</div></div>
+      <div class="item"><div class="k">机票全价</div><div class="v">${escapeHtml(fmtMoney(r.fullPrice))}</div></div>
+      <div class="item"><div class="k">允许火车舱位</div><div class="v">${escapeHtml(r.train)}</div></div>
+      <div class="item full"><div class="k">允许轮船舱位（如涉及水路）</div><div class="v">${escapeHtml(r.ship || '—')}</div></div>
+      <div class="item"><div class="k">单日住宿标准</div><div class="v">${escapeHtml(fmtMoney(r.hotel))}</div></div>
+      <div class="item"><div class="k">单日出差补助</div><div class="v">${escapeHtml(fmtMoney(r.allowance))}</div></div>
+    </div>
+    ${res.note ? `<div class="note">⚠️ ${escapeHtml(res.note)}</div>` : ''}
+    <div class="note" style="margin-top:4px">⚠️ 机票价格仅供参考，一切以实际为准</div>
+  </div>`;
+}
+
+function doSearch(){
+  const from = norm($('from').value);
+  const to   = norm($('to').value);
+  const level= $('level').value;
+  if(!from || !to){ render({row:null}); return; }
+  render(lookup(from, to, level));
+}
+$('searchBtn').addEventListener('click', doSearch);
+$('swapBtn').addEventListener('click', () => {
+  const f = $('from').value; $('from').value = $('to').value; $('to').value = f;
+});
+['from','to'].forEach(id => $(id).addEventListener('keydown', e => { if(e.key==='Enter') doSearch(); }));
+</script>
+</body>
+</html>

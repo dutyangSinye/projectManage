@@ -135,6 +135,7 @@ type AdminPermissionField =
 type DemoUser = {
   id: number;
   name: string;
+  email?: string | null;
   department_name: string;
   department_id?: number | null;
   department_path?: string;
@@ -595,6 +596,34 @@ type ProjectBudgetItem = {
   is_active: boolean;
   remark: string | null;
 };
+type ProjectMember = {
+  id: number;
+  project_id: number;
+  user_id: number;
+  user_name: string;
+  email: string | null;
+  department_id: number | null;
+  department_name: string;
+  department_path: string;
+  member_role: "OWNER" | "MEMBER";
+  status: "ACTIVE" | "INACTIVE";
+  joined_at: string;
+  left_at: string | null;
+};
+type ProjectWorkdayBudget = {
+  project_id: number;
+  budget_days: number;
+  occupied_days: number;
+  actual_days: number;
+  remaining_days: number;
+  usage_rate: number | null;
+  status: "NOT_CONFIGURED" | "NORMAL" | "NEAR_BUDGET" | "OVER_BUDGET";
+};
+type WorklogProjectOption = ProjectWorkdayBudget & {
+  project_name: string;
+  project_code: string;
+  project_type: string;
+};
 type WorkbenchProjectRow = {
   id: number;
   code: string;
@@ -689,6 +718,7 @@ type Project = {
   expense_budget_remaining: number;
   expense_budget_usage_rate: number | null;
   execution_status: string;
+  project_member_count: number;
   status: string;
   allow_worklog: boolean;
 };
@@ -1781,6 +1811,9 @@ const selectedTask = ref<ApprovalTask | null>(null);
 const selectedStatus = ref("");
 const projectQuery = ref("");
 const projectPickerOpen = ref(false);
+const worklogProjectOptions = ref<WorklogProjectOption[]>([]);
+const worklogProjectOptionsLoading = ref(false);
+let worklogProjectOptionsRequest = 0;
 const projectSearchInput = ref<HTMLInputElement | null>(null);
 const projectOptionsList = ref<HTMLElement | null>(null);
 const reportDepartment = ref("");
@@ -1870,6 +1903,20 @@ const projectBudgetModalOpen = ref(false);
 const projectBudgetLoading = ref(false);
 const selectedBudgetProject = ref<Project | null>(null);
 const projectBudgetItems = ref<ProjectBudgetItem[]>([]);
+const projectWorkdayBudget = ref<ProjectWorkdayBudget | null>(null);
+const projectWorkdayBudgetInput = ref(0);
+const projectWorkdayBudgetSaving = ref(false);
+const projectMembersModalOpen = ref(false);
+const projectMembersLoading = ref(false);
+const selectedMembersProject = ref<Project | null>(null);
+const projectMembers = ref<ProjectMember[]>([]);
+const projectMembersKeyword = ref("");
+const projectMembersIncludeInactive = ref(false);
+const organizationPickerOpen = ref(false);
+const organizationPickerKeyword = ref("");
+const organizationPickerDepartmentId = ref(0);
+const organizationPickerSelectedIds = ref<number[]>([]);
+const organizationPickerSaving = ref(false);
 const stageFormOpen = ref(false);
 const stageListOpen = ref(false);
 const stageContractId = ref(0);
@@ -2172,6 +2219,14 @@ const backendErrorLabel = (code: string) =>
     PROJECT_CODE_EXISTS: "项目编号已存在",
     PROJECT_ALREADY_DELETED: "项目已删除",
     PROJECT_NOT_FILLABLE: "该项目当前不允许填报工时",
+    PROJECT_MEMBERSHIP_REQUIRED: "你不在该项目的有效人员名单中",
+    PROJECT_MEMBER_INACTIVE: "你已退出该项目，不能继续填报",
+    PROJECT_MEMBER_NOT_FOUND: "项目人员记录不存在",
+    PROJECT_OWNER_CANNOT_REMOVE: "项目负责人不能移除，请先变更负责人",
+    WORKDAY_BUDGET_NOT_CONFIGURED: "项目尚未配置人天预算，不能提交工时",
+    WORKDAY_BUDGET_EXCEEDED: "本次填报将超过项目剩余人天",
+    WORKDAY_BUDGET_BELOW_OCCUPIED: "人天预算不能低于当前已占用人天",
+    WORKDAY_BUDGET_HALF_DAY_REQUIRED: "人天预算必须按 0.5 人天递增",
     BUDGET_ITEM_REQUIRED: "请选择预算项",
     LABOR_BUDGET_ITEM_REQUIRED: "请先配置人工费用预算项",
     BUDGET_ITEM_NOT_FOUND: "预算项不存在",
@@ -2993,6 +3048,9 @@ watch(
     rbacUserRoleFormOpen,
     rbacEffectiveOpen,
     integrationPolicyEditOpen,
+    projectMembersModalOpen,
+    organizationPickerOpen,
+    projectBudgetModalOpen,
   ],
   ([
     projectOpen,
@@ -3003,6 +3061,9 @@ watch(
     rbacUserRoleOpen,
     rbacEffectiveDialogOpen,
     integrationPolicyOpen,
+    projectMembersOpen,
+    organizationPickerDialogOpen,
+    projectBudgetOpen,
   ]) => {
     document.body.style.overflow =
       projectOpen ||
@@ -3012,7 +3073,10 @@ watch(
       rbacRoleOpen ||
       rbacUserRoleOpen ||
       rbacEffectiveDialogOpen ||
-      integrationPolicyOpen
+      integrationPolicyOpen ||
+      projectMembersOpen ||
+      organizationPickerDialogOpen ||
+      projectBudgetOpen
         ? "hidden"
         : "";
   },
@@ -3029,16 +3093,10 @@ watch(
         activeConfigOptions("project_stage")[0]?.value ||
         "管理";
       projectPickerOpen.value = false;
+      worklogProjectOptions.value = [];
       return;
     }
-    if (
-      form.project_id &&
-      !fillableProjects.value.some(
-        (project) => project.id === Number(form.project_id),
-      )
-    ) {
-      form.project_id = 0;
-    }
+    if (page.value === "editor") void loadWorklogProjectOptions(workType);
   },
 );
 watch(
@@ -6638,14 +6696,8 @@ const worklogCalendarWeeks = computed(() => {
   return weeks;
 });
 const fillableProjects = computed(() =>
-  projects.value.filter(
-    (item) =>
-      ["ACTIVE", "PRE_APPROVAL"].includes(item.status) &&
-      item.allow_worklog &&
-      isProjectWorkType(form.work_type) &&
-      (!requiredProjectCategoryForWorkType(form.work_type) ||
-        item.project_type === requiredProjectCategoryForWorkType(form.work_type)) &&
-      (!form.project_type || item.project_type === form.project_type),
+  projects.value.filter((item) =>
+    worklogProjectOptions.value.some((option) => option.project_id === item.id),
   ),
 );
 const filteredProjects = computed(() => {
@@ -7120,6 +7172,66 @@ const selectedProject = computed(
   () =>
     projects.value.find((item) => item.id === Number(form.project_id)) || null,
 );
+const selectedWorklogProjectOption = computed(
+  () =>
+    worklogProjectOptions.value.find(
+      (item) => item.project_id === Number(form.project_id),
+    ) || null,
+);
+const worklogOptionFor = (projectId: number) =>
+  worklogProjectOptions.value.find((item) => item.project_id === projectId) || null;
+const worklogExpectedRemaining = computed(() =>
+  selectedWorklogProjectOption.value
+    ? Number(
+        (
+          selectedWorklogProjectOption.value.remaining_days - Number(form.quantity || 0)
+        ).toFixed(2),
+      )
+    : null,
+);
+const worklogBudgetSubmitBlocked = computed(() => {
+  if (!isProjectWorkType(form.work_type)) return false;
+  const option = selectedWorklogProjectOption.value;
+  return !option || option.budget_days <= 0 || Number(worklogExpectedRemaining.value) < 0;
+});
+const filteredProjectMembers = computed(() => {
+  const keyword = projectMembersKeyword.value.trim().toLowerCase();
+  return projectMembers.value.filter((member) => {
+    if (!projectMembersIncludeInactive.value && member.status !== "ACTIVE") return false;
+    if (!keyword) return true;
+    return [member.user_name, member.email || "", member.department_name, member.department_path]
+      .some((value) => value.toLowerCase().includes(keyword));
+  });
+});
+const activeProjectMemberIds = computed(
+  () => new Set(projectMembers.value.filter((member) => member.status === "ACTIVE").map((member) => member.user_id)),
+);
+const organizationDepartmentIds = computed(() => {
+  const selectedId = organizationPickerDepartmentId.value;
+  if (!selectedId) return null;
+  const result = new Set<number>([selectedId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    departments.value.forEach((department) => {
+      if (department.parent_id && result.has(department.parent_id) && !result.has(department.id)) {
+        result.add(department.id);
+        changed = true;
+      }
+    });
+  }
+  return result;
+});
+const organizationPickerUsers = computed(() => {
+  const keyword = organizationPickerKeyword.value.trim().toLowerCase();
+  const departmentIds = organizationDepartmentIds.value;
+  return demoUsers.value.filter((person) => {
+    if (departmentIds && (!person.department_id || !departmentIds.has(person.department_id))) return false;
+    if (!keyword) return true;
+    return [person.name, person.email || "", person.department_name, person.department_path || ""]
+      .some((value) => value.toLowerCase().includes(keyword));
+  });
+});
 const optionLabel = (category: string, value: string) =>
   activeConfigOptions(category).find((option) => option.value === value)
     ?.label || value;
@@ -8141,7 +8253,35 @@ const actualApproverName = computed(() => {
   return project.approver_name || "未配置";
 });
 
-const openEditor = (item?: Worklog | null, presetDate = applicationDate()) => {
+const loadWorklogProjectOptions = async (workType: string, preferredProjectId = 0) => {
+  if (!isProjectWorkType(workType)) {
+    worklogProjectOptions.value = [];
+    form.project_id = 0;
+    return;
+  }
+  const requestId = ++worklogProjectOptionsRequest;
+  worklogProjectOptionsLoading.value = true;
+  try {
+    const options = await api<WorklogProjectOption[]>(
+      `/api/v1/worklogs/project-options?work_type=${encodeURIComponent(workType)}`,
+    );
+    if (requestId !== worklogProjectOptionsRequest) return;
+    worklogProjectOptions.value = options;
+    const targetId = preferredProjectId || Number(form.project_id);
+    form.project_id = options.some((option) => option.project_id === targetId)
+      ? targetId
+      : options[0]?.project_id || 0;
+  } catch (error) {
+    if (requestId !== worklogProjectOptionsRequest) return;
+    worklogProjectOptions.value = [];
+    form.project_id = 0;
+    errorMessage.value = error instanceof Error ? error.message : "可填报项目加载失败";
+  } finally {
+    if (requestId === worklogProjectOptionsRequest) worklogProjectOptionsLoading.value = false;
+  }
+};
+
+const openEditor = async (item?: Worklog | null, presetDate = applicationDate()) => {
   editingId.value = item?.id || null;
   projectQuery.value = "";
   projectPickerOpen.value = false;
@@ -8178,11 +8318,14 @@ const openEditor = (item?: Worklog | null, presetDate = applicationDate()) => {
       unit: "DAY",
       description: "",
     });
-  if (!item && isProjectWorkType(form.work_type)) form.project_id = fillableProjects.value[0]?.id || 0;
+  await loadWorklogProjectOptions(form.work_type, item?.project_id || 0);
+  if (item?.project_id && !worklogProjectOptions.value.some((option) => option.project_id === item.project_id)) {
+    errorMessage.value = "原项目当前不在你的有效项目人员名单中，请重新选择项目";
+  }
   go("editor");
 };
 
-const reuseLastWorklog = () => {
+const reuseLastWorklog = async () => {
   const last = lastCreatedWorklog.value;
   if (!last) return;
 
@@ -8199,6 +8342,7 @@ const reuseLastWorklog = () => {
     return;
   }
 
+  await loadWorklogProjectOptions(workType, last.project_id || 0);
   const project = isProjectWorkType(workType)
     ? fillableProjects.value.find((item) => item.id === last.project_id) || null
     : null;
@@ -8268,6 +8412,12 @@ const saveWorklog = async (submit: boolean) => {
   const dateError = validateWorklogDateRange(form.start_date, form.end_date);
   if (dateError) {
     errorMessage.value = dateError;
+    return;
+  }
+  if (submit && worklogBudgetSubmitBlocked.value) {
+    errorMessage.value = selectedWorklogProjectOption.value?.budget_days
+      ? "本次填报将超过项目剩余人天，只能先保存草稿"
+      : "项目尚未配置人天预算，只能先保存草稿";
     return;
   }
   try {
@@ -8567,12 +8717,119 @@ const openProjectDetail = async (project: Project) => {
 const openProjectBudgetModal = async (project: Project) => {
   selectedBudgetProject.value = project;
   projectBudgetModalOpen.value = true;
-  await loadProjectBudgetItems(project.id);
+  const [, summary] = await Promise.all([
+    loadProjectBudgetItems(project.id),
+    api<ProjectWorkdayBudget>(`/api/v1/projects/${project.id}/workday-budget`),
+  ]);
+  projectWorkdayBudget.value = summary;
+  projectWorkdayBudgetInput.value = summary.budget_days;
 };
 const closeProjectBudgetModal = () => {
   projectBudgetModalOpen.value = false;
   selectedBudgetProject.value = null;
   projectBudgetItems.value = [];
+  projectWorkdayBudget.value = null;
+};
+const saveProjectWorkdayBudget = async () => {
+  if (!selectedBudgetProject.value || projectWorkdayBudgetSaving.value) return;
+  const value = Number(projectWorkdayBudgetInput.value || 0);
+  if (value === 0 && projectWorkdayBudget.value?.budget_days !== 0) {
+    const confirmed = window.confirm("将人天预算设为 0 后，项目工时只能保存草稿，不能提交。确认继续吗？");
+    if (!confirmed) return;
+  }
+  projectWorkdayBudgetSaving.value = true;
+  try {
+    projectWorkdayBudget.value = await api<ProjectWorkdayBudget>(
+      `/api/v1/projects/${selectedBudgetProject.value.id}/workday-budget`,
+      { method: "PATCH", body: JSON.stringify({ budget_days: value }) },
+    );
+    projectWorkdayBudgetInput.value = projectWorkdayBudget.value.budget_days;
+    successMessage.value = "项目人天预算已保存";
+    await refreshProjectPage();
+    if (selectedManagedProject.value?.id === selectedBudgetProject.value.id) {
+      selectedManagedProject.value = await api<Project>(`/api/v1/projects/${selectedBudgetProject.value.id}`);
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "项目人天预算保存失败";
+  } finally {
+    projectWorkdayBudgetSaving.value = false;
+  }
+};
+const openProjectMembersModal = async (project: Project) => {
+  selectedMembersProject.value = project;
+  projectMembersModalOpen.value = true;
+  projectMembersKeyword.value = "";
+  projectMembersIncludeInactive.value = false;
+  projectMembersLoading.value = true;
+  try {
+    projectMembers.value = await api<ProjectMember[]>(
+      `/api/v1/projects/${project.id}/members?include_inactive=true`,
+    );
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "项目人员加载失败";
+  } finally {
+    projectMembersLoading.value = false;
+  }
+};
+const closeProjectMembersModal = () => {
+  if (organizationPickerSaving.value) return;
+  organizationPickerOpen.value = false;
+  projectMembersModalOpen.value = false;
+  selectedMembersProject.value = null;
+  projectMembers.value = [];
+};
+const openOrganizationPicker = () => {
+  organizationPickerKeyword.value = "";
+  organizationPickerDepartmentId.value = 0;
+  organizationPickerSelectedIds.value = [];
+  organizationPickerOpen.value = true;
+};
+const closeOrganizationPicker = () => {
+  if (organizationPickerSaving.value) return;
+  organizationPickerOpen.value = false;
+  organizationPickerSelectedIds.value = [];
+};
+const toggleOrganizationUser = (userId: number) => {
+  if (activeProjectMemberIds.value.has(userId)) return;
+  const selected = organizationPickerSelectedIds.value;
+  organizationPickerSelectedIds.value = selected.includes(userId)
+    ? selected.filter((id) => id !== userId)
+    : [...selected, userId];
+};
+const addSelectedProjectMembers = async () => {
+  if (!selectedMembersProject.value || !organizationPickerSelectedIds.value.length) return;
+  organizationPickerSaving.value = true;
+  try {
+    const result = await api<{ members: ProjectMember[]; added_count: number; reactivated_count: number }>(
+      `/api/v1/projects/${selectedMembersProject.value.id}/members`,
+      { method: "POST", body: JSON.stringify({ user_ids: organizationPickerSelectedIds.value }) },
+    );
+    projectMembers.value = result.members;
+    organizationPickerOpen.value = false;
+    organizationPickerSelectedIds.value = [];
+    successMessage.value = `项目人员已更新，新增 ${result.added_count + result.reactivated_count} 人`;
+    await refreshProjectPage();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "项目人员添加失败";
+  } finally {
+    organizationPickerSaving.value = false;
+  }
+};
+const removeProjectMember = async (member: ProjectMember) => {
+  if (!selectedMembersProject.value || member.member_role === "OWNER") return;
+  const confirmed = window.confirm(
+    `确认移除 ${member.user_name} 吗？移除后不能再向本项目新增或重新提交工时，历史记录不受影响。`,
+  );
+  if (!confirmed) return;
+  try {
+    await api(`/api/v1/projects/${selectedMembersProject.value.id}/members/${member.user_id}`, { method: "DELETE" });
+    member.status = "INACTIVE";
+    member.left_at = new Date().toISOString();
+    successMessage.value = "项目人员已移除";
+    await refreshProjectPage();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "项目人员移除失败";
+  }
 };
 const projectBudgetTotals = computed(() => {
   const activeRows = projectBudgetItems.value.filter((item) => item.is_active);
@@ -9497,6 +9754,18 @@ onMounted(() => {
               <h1>{{ workbenchGreeting }}，{{ user.name }}</h1>
               <p class="muted">{{ todayLabel }}</p>
             </div>
+            <a
+              class="secondary workbench-travel-link"
+              href="/travel.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="在新标签页打开"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <use href="/menu-icons.svg#cost"></use>
+              </svg>
+              <span>差旅费标准查询</span>
+            </a>
           </div>
 
           <section class="card worklog-calendar-card">
@@ -10021,7 +10290,8 @@ onMounted(() => {
                           ><strong>{{ project.name }}</strong
                           ><small
                             >{{ project.code }} ·
-                            {{ projectCategoryLabelOf(project.project_type) }}</small
+                            {{ projectCategoryLabelOf(project.project_type) }} ·
+                            剩余 {{ formatProjectDays(worklogOptionFor(project.id)?.remaining_days || 0) }} 人天</small
                           ></span
                         ><b
                           v-if="project.id === Number(form.project_id)"
@@ -10030,7 +10300,13 @@ onMounted(() => {
                         >
                       </button>
                       <p
-                        v-if="!filteredProjects.length"
+                        v-if="worklogProjectOptionsLoading"
+                        class="project-picker-empty"
+                      >
+                        正在加载你的项目…
+                      </p>
+                      <p
+                        v-else-if="!filteredProjects.length"
                         class="project-picker-empty"
                       >
                         没有匹配的可填报项目
@@ -10047,6 +10323,22 @@ onMounted(() => {
                   "
                   >实际审批人：{{ actualApproverName }}</small
                 >
+              </div>
+              <div
+                v-if="isProjectWorkType(form.work_type) && selectedWorklogProjectOption"
+                class="worklog-budget-status full"
+                :class="{
+                  warning: selectedWorklogProjectOption.status === 'NEAR_BUDGET' || worklogExpectedRemaining === 0,
+                  danger: selectedWorklogProjectOption.status === 'NOT_CONFIGURED' || Number(worklogExpectedRemaining) < 0,
+                }"
+              >
+                <div><span>项目人天预算</span><strong>{{ formatProjectDays(selectedWorklogProjectOption.budget_days) }} 人天</strong></div>
+                <div><span>已占用</span><strong>{{ formatProjectDays(selectedWorklogProjectOption.occupied_days) }} 人天</strong></div>
+                <div><span>当前剩余</span><strong>{{ formatProjectDays(selectedWorklogProjectOption.remaining_days) }} 人天</strong></div>
+                <div><span>本次提交后</span><strong>{{ formatProjectDays(Number(worklogExpectedRemaining)) }} 人天</strong></div>
+                <p v-if="selectedWorklogProjectOption.budget_days <= 0">请联系项目负责人设置项目人天预算；当前仍可保存草稿。</p>
+                <p v-else-if="Number(worklogExpectedRemaining) < 0">本次填报超出剩余预算 {{ formatProjectDays(Math.abs(Number(worklogExpectedRemaining))) }} 人天；当前仍可保存草稿。</p>
+                <p v-else-if="worklogExpectedRemaining === 0">提交后项目人天预算将刚好用完。</p>
               </div>
               <div v-if="isSelfApprover" class="notice warning full">
                 <strong>本人填报</strong
@@ -10098,7 +10390,7 @@ onMounted(() => {
               <button class="secondary" @click="go('worklogs')">取消</button
               ><button class="secondary" @click="saveWorklog(false)">
                 保存草稿</button
-              ><button class="primary" @click="saveWorklog(true)">
+              ><button class="primary" :disabled="worklogBudgetSubmitBlocked" @click="saveWorklog(true)">
                 保存并提交
               </button>
             </div>
@@ -11084,6 +11376,7 @@ onMounted(() => {
                     <th>状态</th>
                     <th>类型</th>
                     <th>负责人</th>
+                    <th>项目人员</th>
                     <th>所属部门</th>
                     <th>客户</th>
                     <th>工时填报</th>
@@ -11123,6 +11416,7 @@ onMounted(() => {
                     <td>
                       <strong>{{ project.owner_name }}</strong>
                     </td>
+                    <td>{{ project.project_member_count || 0 }} 人</td>
                     <td>
                       <span class="project-path">{{
                         project.department_path ||
@@ -11147,6 +11441,13 @@ onMounted(() => {
                           @click="openProjectDetail(project)"
                         >
                           查看
+                        </button>
+                        <button
+                          v-if="canAction('projects', 'EDIT')"
+                          class="text-button"
+                          @click="openProjectMembersModal(project)"
+                        >
+                          项目人员
                         </button>
                         <button
                           v-if="canAction('projects', 'EDIT')"
@@ -11414,6 +11715,88 @@ onMounted(() => {
           </div>
         </section>
 
+        <div v-if="projectMembersModalOpen && selectedMembersProject" class="modal-backdrop">
+          <section class="modal-card wide-modal project-members-modal" @click.stop>
+            <div class="modal-head">
+              <div>
+                <div class="eyebrow">项目人员</div>
+                <h2>{{ selectedMembersProject.name }}</h2>
+                <p class="muted">{{ selectedMembersProject.code }} · 负责人 {{ selectedMembersProject.owner_name }} · 有效人员 {{ projectMembers.filter(item => item.status === 'ACTIVE').length }} 人</p>
+              </div>
+              <button class="modal-close" aria-label="关闭项目人员" @click="closeProjectMembersModal">×</button>
+            </div>
+            <div class="project-members-toolbar">
+              <input v-model.trim="projectMembersKeyword" type="search" placeholder="搜索姓名、邮箱或部门" />
+              <label class="member-history-toggle"><input v-model="projectMembersIncludeInactive" type="checkbox" />查看已退出人员</label>
+              <button class="primary" @click="openOrganizationPicker">＋ 添加项目人员</button>
+            </div>
+            <div v-if="projectMembersLoading" class="empty-state">正在加载项目人员…</div>
+            <div v-else class="table-wrap">
+              <table class="data-table project-members-table">
+                <thead><tr><th>人员</th><th>部门</th><th>角色</th><th>加入时间</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody>
+                  <tr v-for="member in filteredProjectMembers" :key="member.id">
+                    <td><strong>{{ member.user_name }}</strong><small>{{ member.email || '未配置邮箱' }}</small></td>
+                    <td>{{ member.department_path || member.department_name }}</td>
+                    <td><span class="tag" :class="member.member_role === 'OWNER' ? 'teal' : 'neutral'">{{ member.member_role === 'OWNER' ? '项目负责人' : '项目成员' }}</span></td>
+                    <td>{{ formatDateTime(member.joined_at) }}</td>
+                    <td><span class="tag" :class="member.status === 'ACTIVE' ? 'success' : 'neutral'">{{ member.status === 'ACTIVE' ? '有效' : '已退出' }}</span></td>
+                    <td>
+                      <span v-if="member.member_role === 'OWNER'" class="muted">固定</span>
+                      <button v-else-if="member.status === 'ACTIVE'" class="text-button danger-button" @click="removeProjectMember(member)">移除</button>
+                      <button v-else class="text-button" @click="openOrganizationPicker">重新加入</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-if="!filteredProjectMembers.length" class="empty">暂无符合条件的项目人员</div>
+            </div>
+          </section>
+        </div>
+
+        <div v-if="organizationPickerOpen && selectedMembersProject" class="modal-backdrop organization-picker-backdrop">
+          <section class="modal-card wide-modal organization-picker-modal" @click.stop>
+            <div class="modal-head">
+              <div><div class="eyebrow">添加项目人员</div><h2>从组织架构选择人员</h2><p class="muted">可跨部门多选；已加入项目的人员不可重复选择。</p></div>
+              <button class="modal-close" aria-label="关闭人员选择" @click="closeOrganizationPicker">×</button>
+            </div>
+            <div class="organization-picker-layout">
+              <aside class="organization-department-list">
+                <button :class="{ active: organizationPickerDepartmentId === 0 }" @click="organizationPickerDepartmentId = 0">全部人员 <span>{{ demoUsers.length }}</span></button>
+                <button
+                  v-for="node in projectDepartmentTree"
+                  :key="node.department.id"
+                  :class="{ active: organizationPickerDepartmentId === node.department.id }"
+                  :style="{ paddingLeft: `${10 + node.depth * 14}px` }"
+                  @click="organizationPickerDepartmentId = node.department.id"
+                >{{ node.department.name }}</button>
+              </aside>
+              <div class="organization-user-panel">
+                <input v-model.trim="organizationPickerKeyword" type="search" placeholder="搜索姓名、邮箱或部门" />
+                <div class="organization-user-summary">在职人员 {{ organizationPickerUsers.length }} 人 · 已选择 {{ organizationPickerSelectedIds.length }} 人</div>
+                <div class="organization-user-list">
+                  <label v-for="person in organizationPickerUsers" :key="person.id" :class="{ disabled: activeProjectMemberIds.has(person.id) }">
+                    <input
+                      type="checkbox"
+                      :checked="organizationPickerSelectedIds.includes(person.id)"
+                      :disabled="activeProjectMemberIds.has(person.id)"
+                      @change="toggleOrganizationUser(person.id)"
+                    />
+                    <span><strong>{{ person.name }}</strong><small>{{ person.department_path || person.department_name }}<template v-if="person.email"> · {{ person.email }}</template></small></span>
+                    <em v-if="activeProjectMemberIds.has(person.id)">已加入</em>
+                  </label>
+                  <div v-if="!organizationPickerUsers.length" class="empty">没有匹配的在职人员</div>
+                </div>
+              </div>
+            </div>
+            <div class="form-footer organization-picker-footer">
+              <span>已选择 {{ organizationPickerSelectedIds.length }} 人</span>
+              <button class="secondary" @click="closeOrganizationPicker">取消</button>
+              <button class="primary" :disabled="!organizationPickerSelectedIds.length || organizationPickerSaving" @click="addSelectedProjectMembers">{{ organizationPickerSaving ? '添加中…' : '添加所选人员' }}</button>
+            </div>
+          </section>
+        </div>
+
         <div v-if="projectBudgetModalOpen && selectedBudgetProject" class="modal-backdrop">
           <section class="modal-card wide-modal budget-items-modal" @click.stop>
             <div class="modal-head">
@@ -11424,6 +11807,26 @@ onMounted(() => {
               </div>
               <button class="modal-close" aria-label="关闭预算项" @click="closeProjectBudgetModal">×</button>
             </div>
+            <section class="workday-budget-section">
+              <div class="workday-budget-head">
+                <div><h3>工时预算</h3><p>按项目总人天控制工时提交，审批中工时已计入占用。</p></div>
+                <div class="workday-budget-editor">
+                  <label>项目人天预算<input v-model.number="projectWorkdayBudgetInput" type="number" min="0" step="0.5" /></label>
+                  <span>人天</span>
+                  <button class="primary compact-button" :disabled="projectWorkdayBudgetSaving" @click="saveProjectWorkdayBudget">
+                    {{ projectWorkdayBudgetSaving ? '保存中…' : '保存工时预算' }}
+                  </button>
+                </div>
+              </div>
+              <div v-if="projectWorkdayBudget" class="workday-budget-metrics">
+                <div><span>已占用</span><strong>{{ formatProjectDays(projectWorkdayBudget.occupied_days) }} 人天</strong></div>
+                <div><span>已发生</span><strong>{{ formatProjectDays(projectWorkdayBudget.actual_days) }} 人天</strong></div>
+                <div><span>剩余</span><strong :class="projectWorkdayBudget.remaining_days < 0 ? 'negative-number' : 'positive-number'">{{ formatProjectDays(projectWorkdayBudget.remaining_days) }} 人天</strong></div>
+                <div><span>使用率</span><strong>{{ projectWorkdayBudget.usage_rate === null ? '未配置' : formatProjectDays(projectWorkdayBudget.usage_rate) + '%' }}</strong></div>
+              </div>
+              <div v-if="projectWorkdayBudget" class="workday-budget-track"><i :style="{ width: `${Math.min(100, Math.max(0, projectWorkdayBudget.usage_rate || 0))}%` }"></i></div>
+            </section>
+            <div class="budget-money-heading"><h3>金额预算</h3><span>固定 8 项预算</span></div>
             <div class="project-kpi-row compact-kpis">
               <section><span>总预算</span><strong>{{ moneyText(projectBudgetTotals.budget) }}</strong></section>
               <section><span>已发生</span><strong>{{ moneyText(projectBudgetTotals.actual) }}</strong></section>
@@ -11660,14 +12063,15 @@ onMounted(() => {
               <div class="section-head">
                 <div>
                   <h2>人员与工时</h2>
-                  <p class="muted">审批链来自项目配置，工时明细按已审批口径汇总</p>
+                  <p class="muted">项目人员决定可填报范围，工时明细按已审批口径汇总</p>
                 </div>
-                <button class="secondary" @click="editProject(selectedManagedProject)">编辑人员配置</button>
+                <button class="secondary" @click="openProjectMembersModal(selectedManagedProject)">管理项目人员</button>
               </div>
               <dl class="project-info-list project-team-list">
                 <div><dt>项目负责人</dt><dd>{{ selectedManagedProject.owner_name }}</dd></div>
                 <div><dt>项目审批人</dt><dd>{{ selectedManagedProject.approver_name || "未配置" }}</dd></div>
                 <div><dt>上级领导</dt><dd>{{ selectedManagedProject.leader_name || "未配置" }}</dd></div>
+                <div><dt>有效项目人员</dt><dd>{{ selectedManagedProject.project_member_count || 0 }} 人</dd></div>
                 <div><dt>已发生人天</dt><dd>{{ formatProjectDays(selectedManagedProject.actual_days) }} 天</dd></div>
               </dl>
               <div class="project-tab-subhead">

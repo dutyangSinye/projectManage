@@ -3114,6 +3114,310 @@ textarea:focus {
   accent-color: var(--ui-teal);
 }
 
+/* v3.0.100 project members and workday budget */
+.worklog-budget-status {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid #cfe2dd;
+  border-radius: 7px;
+  background: #cfe2dd;
+}
+.worklog-budget-status > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  background: #f7fbfa;
+}
+.worklog-budget-status span,
+.workday-budget-metrics span {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+.worklog-budget-status strong {
+  color: var(--ui-ink);
+  font-size: 15px;
+}
+.worklog-budget-status > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 9px 14px;
+  background: #fff8e8;
+  color: #8a5a10;
+  font-size: 12px;
+}
+.worklog-budget-status.danger {
+  border-color: #efc2bd;
+  background: #efc2bd;
+}
+.worklog-budget-status.danger > p {
+  background: #fff2f0;
+  color: #a63b32;
+}
+.workday-budget-section {
+  margin-bottom: 18px;
+  padding: 18px 0;
+  border-top: 1px solid var(--ui-line);
+  border-bottom: 1px solid var(--ui-line);
+}
+.workday-budget-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+}
+.workday-budget-head h3,
+.budget-money-heading h3 {
+  margin: 0 0 4px;
+  color: var(--ui-ink);
+  font-size: 15px;
+}
+.workday-budget-head p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.workday-budget-editor {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.workday-budget-editor label {
+  display: grid;
+  gap: 5px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+.workday-budget-editor input {
+  width: 150px;
+}
+.workday-budget-editor > span {
+  padding-bottom: 11px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.workday-budget-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.workday-budget-metrics > div {
+  display: grid;
+  gap: 4px;
+}
+.workday-budget-metrics strong {
+  color: var(--ui-ink);
+  font-size: 18px;
+}
+.workday-budget-track {
+  height: 6px;
+  margin-top: 12px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #e7eeec;
+}
+.workday-budget-track i {
+  display: block;
+  height: 100%;
+  background: #25846d;
+}
+.budget-money-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 4px 0 12px;
+}
+.budget-money-heading span {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+.project-members-modal,
+.organization-picker-modal {
+  width: min(1040px, calc(100vw - 48px));
+}
+.project-members-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.member-history-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.project-members-modal > .table-wrap {
+  min-height: 0;
+  overflow: auto;
+}
+.project-members-table td:first-child {
+  min-width: 140px;
+}
+.project-members-table td:first-child,
+.project-members-table td:first-child > * {
+  display: block;
+}
+.project-members-table td:first-child small {
+  margin-top: 3px;
+  color: var(--color-text-secondary);
+}
+.organization-picker-backdrop {
+  z-index: 60;
+  background: rgba(16, 40, 37, 0.52);
+}
+.organization-picker-layout {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: 230px minmax(0, 1fr);
+  border: 1px solid var(--ui-line);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.organization-department-list {
+  max-height: 56vh;
+  overflow: auto;
+  padding: 8px;
+  border-right: 1px solid var(--ui-line);
+  background: #f7faf9;
+}
+.organization-department-list button {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ui-body);
+  text-align: left;
+}
+.organization-department-list button:hover,
+.organization-department-list button.active {
+  background: #e4f3ef;
+  color: var(--ui-teal);
+}
+.organization-user-panel {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto auto 1fr;
+  padding: 14px;
+}
+.organization-user-summary {
+  padding: 9px 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.organization-user-list {
+  min-height: 260px;
+  max-height: 46vh;
+  overflow: auto;
+  border-top: 1px solid var(--ui-line);
+}
+.organization-user-list label {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 8px 6px;
+  border-bottom: 1px solid #e8efed;
+}
+.organization-user-list label.disabled {
+  opacity: 0.58;
+}
+.organization-user-list label > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+.organization-user-list small {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.organization-user-list em {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+}
+.organization-picker-footer {
+  align-items: center;
+}
+.organization-picker-footer > span {
+  margin-right: auto;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .worklog-budget-status {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .workday-budget-head,
+  .workday-budget-editor {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .workday-budget-editor > span {
+    display: none;
+  }
+  .workday-budget-editor input {
+    width: 100%;
+  }
+  .workday-budget-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .project-members-modal,
+  .organization-picker-modal {
+    width: 100%;
+  }
+  .project-members-toolbar {
+    grid-template-columns: 1fr;
+  }
+  .project-members-table {
+    min-width: 760px;
+  }
+  .organization-picker-layout {
+    grid-template-columns: 1fr;
+  }
+  .organization-department-list {
+    display: flex;
+    max-height: none;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--ui-line);
+  }
+  .organization-department-list button {
+    width: auto;
+    min-width: max-content;
+    padding: 7px 10px;
+  }
+  .organization-user-panel {
+    padding: 10px;
+  }
+  .organization-user-list {
+    min-height: 220px;
+    max-height: 44vh;
+  }
+  .organization-picker-footer {
+    grid-template-columns: 1fr 1fr;
+  }
+  .organization-picker-footer > span {
+    grid-column: 1 / -1;
+  }
+}
+
 @media print {
   body * {
     visibility: hidden !important;
@@ -5310,6 +5614,17 @@ body {
 }
 .workbench-page .page-head > .primary {
   margin-bottom: 2px;
+}
+.workbench-travel-link {
+  gap: 8px;
+  margin-bottom: 2px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.workbench-travel-link svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
 }
 .workbench-page .two-columns {
   gap: 18px;
